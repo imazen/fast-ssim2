@@ -4,6 +4,8 @@
 //! (bit manipulation + Newton-Raphson in f64 doesn't vectorize well); SIMD is used
 //! for the matrix multiply, clamp, and XYB transform surrounding it.
 
+#[cfg(target_arch = "x86_64")]
+use archmage::arcane;
 use archmage::incant;
 #[cfg(target_arch = "x86_64")]
 use magetypes::simd::f32x8;
@@ -91,6 +93,7 @@ fn convert_pixel_scalar(pix: &mut [f32; 3], absorbance_bias: f32) {
 
 /// AVX2 XYB conversion — processes 8 pixels at a time.
 #[cfg(target_arch = "x86_64")]
+#[arcane]
 fn linear_rgb_to_xyb_inner_v3(token: archmage::X64V3Token, input: &mut [[f32; 3]]) {
     let absorbance_bias = -cbrtf_fast(OPSIN_ABSORBANCE_BIAS);
 

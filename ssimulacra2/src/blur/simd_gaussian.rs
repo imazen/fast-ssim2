@@ -1,3 +1,5 @@
+#[cfg(target_arch = "x86_64")]
+use archmage::arcane;
 /// SIMD-optimized Recursive Gaussian blur
 ///
 /// Uses archmage/magetypes for cross-platform SIMD in the vertical pass.
@@ -154,6 +156,7 @@ fn vertical_pass(input: &[f32], output: &mut [f32], width: usize, height: usize)
 
 /// AVX2 vertical pass — processes 8 columns at a time.
 #[cfg(target_arch = "x86_64")]
+#[arcane]
 fn vertical_pass_inner_v3(
     token: archmage::X64V3Token,
     input: &[f32],

@@ -1,3 +1,5 @@
+#[cfg(target_arch = "x86_64")]
+use archmage::arcane;
 /// SIMD-optimized operations for SSIMULACRA2 computation
 ///
 /// Uses archmage/magetypes for cross-platform SIMD with runtime dispatch.
@@ -16,6 +18,7 @@ const LANES: usize = 8;
 
 /// AVX2 SSIM map computation — processes 8 pixels at a time.
 #[cfg(target_arch = "x86_64")]
+#[arcane]
 #[allow(clippy::too_many_arguments)]
 fn ssim_map_inner_v3(
     token: archmage::X64V3Token,
@@ -161,6 +164,7 @@ pub(crate) fn ssim_map_simd(
 
 /// AVX2 edge difference map — processes 8 pixels at a time.
 #[cfg(target_arch = "x86_64")]
+#[arcane]
 fn edge_diff_map_inner_v3(
     token: archmage::X64V3Token,
     width: usize,
@@ -304,6 +308,7 @@ pub(crate) fn edge_diff_map_simd(
 
 /// AVX2 image multiplication — processes 8 pixels at a time.
 #[cfg(target_arch = "x86_64")]
+#[arcane]
 fn image_multiply_inner_v3(
     token: archmage::X64V3Token,
     img1: &[Vec<f32>; 3],
