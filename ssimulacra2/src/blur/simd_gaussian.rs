@@ -3,7 +3,7 @@ use archmage::arcane;
 /// SIMD-optimized Recursive Gaussian blur
 ///
 /// Uses archmage/magetypes for cross-platform SIMD in the vertical pass.
-/// Horizontal pass is a scalar IIR filter (no SIMD benefit for sequential IIR).
+/// Horizontal pass dispatches via `incant!()` to enable FMA for `mul_add`.
 use archmage::incant;
 #[cfg(target_arch = "x86_64")]
 use magetypes::simd::f32x8;
@@ -59,21 +59,47 @@ impl SimdGaussian {
             self.max_size = size;
         }
 
-        // Horizontal pass: scalar IIR filter
+        // Horizontal pass: dispatched for FMA
         horizontal_pass(plane, &mut self.temp_buffer[..size], width);
 
-        // Vertical pass: SIMD-dispatched
+        // Vertical pass: SIMD-dispatched, processes all columns per height traversal
         vertical_pass(&self.temp_buffer[..size], out, width, height);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Horizontal pass — scalar IIR filter
+// Horizontal pass — scalar IIR filter, dispatched via incant!() for FMA
 // ---------------------------------------------------------------------------
 
 fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
     assert_eq!(input.len(), output.len());
+    incant!(horizontal_pass_inner(input, output, width))
+}
 
+/// AVX2+FMA horizontal pass — enables FMA for mul_add in the IIR filter.
+/// Closures inherit #[target_feature] from the enclosing #[arcane] function.
+#[cfg(target_arch = "x86_64")]
+#[arcane]
+fn horizontal_pass_inner_v3(
+    _token: archmage::X64V3Token,
+    input: &[f32],
+    output: &mut [f32],
+    width: usize,
+) {
+    horizontal_pass_rows(input, output, width);
+}
+
+fn horizontal_pass_inner_scalar(
+    _token: archmage::ScalarToken,
+    input: &[f32],
+    output: &mut [f32],
+    width: usize,
+) {
+    horizontal_pass_rows(input, output, width);
+}
+
+#[inline(always)]
+fn horizontal_pass_rows(input: &[f32], output: &mut [f32], width: usize) {
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
@@ -146,7 +172,7 @@ fn horizontal_row(input: &[f32], output: &mut [f32], width: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// Vertical pass — SIMD IIR filter processing LANES columns in parallel
+// Vertical pass — SIMD IIR filter processing all columns per height traversal
 // ---------------------------------------------------------------------------
 
 fn vertical_pass(input: &[f32], output: &mut [f32], width: usize, height: usize) {
@@ -154,7 +180,10 @@ fn vertical_pass(input: &[f32], output: &mut [f32], width: usize, height: usize)
     incant!(vertical_pass_inner(input, output, width, height))
 }
 
-/// AVX2 vertical pass — processes 8 columns at a time.
+/// AVX2 vertical pass — processes all SIMD-able columns in a single height traversal.
+///
+/// Uses flat f32 state arrays so all column groups are processed per row,
+/// avoiding repeated height traversals (which kills cache performance).
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn vertical_pass_inner_v3(
@@ -165,7 +194,9 @@ fn vertical_pass_inner_v3(
     height: usize,
 ) {
     let big_n = consts::RADIUS as isize;
+    let groups = width / LANES;
 
+    // SIMD constants
     let mul_in_1 = f32x8::splat(token, consts::VERT_MUL_IN_1);
     let mul_in_3 = f32x8::splat(token, consts::VERT_MUL_IN_3);
     let mul_in_5 = f32x8::splat(token, consts::VERT_MUL_IN_5);
@@ -174,30 +205,42 @@ fn vertical_pass_inner_v3(
     let mul_prev_5 = f32x8::splat(token, consts::VERT_MUL_PREV_5);
     let zeroes = f32x8::zero(token);
 
-    let mut x = 0;
+    // State arrays: 6 IIR state variables × (groups × LANES) floats each.
+    // Allocated once, stays hot in L1 cache throughout the height traversal.
+    let state_size = groups * LANES;
+    let mut prev_1 = vec![0.0f32; state_size];
+    let mut prev_3 = vec![0.0f32; state_size];
+    let mut prev_5 = vec![0.0f32; state_size];
+    let mut prev2_1 = vec![0.0f32; state_size];
+    let mut prev2_3 = vec![0.0f32; state_size];
+    let mut prev2_5 = vec![0.0f32; state_size];
 
-    while x + LANES <= width {
-        let mut prev_1 = zeroes;
-        let mut prev_3 = zeroes;
-        let mut prev_5 = zeroes;
-        let mut prev2_1 = zeroes;
-        let mut prev2_3 = zeroes;
-        let mut prev2_5 = zeroes;
+    let mut n = (-big_n) + 1;
+    while n < height as isize {
+        let top = n - big_n - 1;
+        let bottom = n + big_n - 1;
 
-        let mut n = (-big_n) + 1;
-        while n < height as isize {
-            let top = n - big_n - 1;
-            let bottom = n + big_n - 1;
+        let top_valid = top >= 0 && (top as usize) < height;
+        let bottom_valid = bottom >= 0 && (bottom as usize) < height;
+        let top_row_start = if top_valid { top as usize * width } else { 0 };
+        let bottom_row_start = if bottom_valid {
+            bottom as usize * width
+        } else {
+            0
+        };
 
-            let top_vals = if top >= 0 && (top as usize) < height {
-                let idx = top as usize * width + x;
+        for g in 0..groups {
+            let col = g * LANES;
+
+            let top_vals = if top_valid {
+                let idx = top_row_start + col;
                 f32x8::from_array(token, input[idx..][..LANES].try_into().unwrap())
             } else {
                 zeroes
             };
 
-            let bottom_vals = if bottom >= 0 && (bottom as usize) < height {
-                let idx = bottom as usize * width + x;
+            let bottom_vals = if bottom_valid {
+                let idx = bottom_row_start + col;
                 f32x8::from_array(token, input[idx..][..LANES].try_into().unwrap())
             } else {
                 zeroes
@@ -205,35 +248,41 @@ fn vertical_pass_inner_v3(
 
             let sum = top_vals + bottom_vals;
 
-            let out1 = prev_1.mul_add(mul_prev_1, prev2_1);
-            let out3 = prev_3.mul_add(mul_prev_3, prev2_3);
-            let out5 = prev_5.mul_add(mul_prev_5, prev2_5);
+            let p1 = f32x8::from_array(token, prev_1[col..][..LANES].try_into().unwrap());
+            let p3 = f32x8::from_array(token, prev_3[col..][..LANES].try_into().unwrap());
+            let p5 = f32x8::from_array(token, prev_5[col..][..LANES].try_into().unwrap());
+            let p21 = f32x8::from_array(token, prev2_1[col..][..LANES].try_into().unwrap());
+            let p23 = f32x8::from_array(token, prev2_3[col..][..LANES].try_into().unwrap());
+            let p25 = f32x8::from_array(token, prev2_5[col..][..LANES].try_into().unwrap());
+
+            let out1 = p1.mul_add(mul_prev_1, p21);
+            let out3 = p3.mul_add(mul_prev_3, p23);
+            let out5 = p5.mul_add(mul_prev_5, p25);
 
             let out1 = sum.mul_add(mul_in_1, -out1);
             let out3 = sum.mul_add(mul_in_3, -out3);
             let out5 = sum.mul_add(mul_in_5, -out5);
 
-            prev2_1 = prev_1;
-            prev2_3 = prev_3;
-            prev2_5 = prev_5;
-            prev_1 = out1;
-            prev_3 = out3;
-            prev_5 = out5;
+            // Update state: prev2 = prev, prev = out
+            prev2_1[col..col + LANES].copy_from_slice(&p1.to_array());
+            prev2_3[col..col + LANES].copy_from_slice(&p3.to_array());
+            prev2_5[col..col + LANES].copy_from_slice(&p5.to_array());
+            prev_1[col..col + LANES].copy_from_slice(&out1.to_array());
+            prev_3[col..col + LANES].copy_from_slice(&out3.to_array());
+            prev_5[col..col + LANES].copy_from_slice(&out5.to_array());
 
             if n >= 0 {
                 let result = out1 + out3 + out5;
-                let out_start = n as usize * width + x;
+                let out_start = n as usize * width + col;
                 output[out_start..out_start + LANES].copy_from_slice(&result.to_array());
             }
-
-            n += 1;
         }
 
-        x += LANES;
+        n += 1;
     }
 
     // Scalar remainder for leftover columns
-    vertical_pass_scalar_columns(input, output, width, height, x);
+    vertical_pass_scalar_columns(input, output, width, height, groups * LANES);
 }
 
 /// Scalar fallback for vertical pass.
