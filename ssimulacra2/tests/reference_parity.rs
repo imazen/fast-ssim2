@@ -9,7 +9,7 @@
 //! Run tests with: cargo test --test reference_parity
 
 use fast_ssim2::compute_frame_ssimulacra2;
-use fast_ssim2::reference_data::{ReferenceCase, REFERENCE_CASES};
+use fast_ssim2::reference_data::{REFERENCE_CASES, ReferenceCase};
 use sha2::{Digest, Sha256};
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -128,11 +128,7 @@ fn gen_edge(width: usize, height: usize, vertical: bool) -> Vec<u8> {
     for y in 0..height {
         for x in 0..width {
             let val = if vertical {
-                if x < width / 2 {
-                    0
-                } else {
-                    255
-                }
+                if x < width / 2 { 0 } else { 255 }
             } else if y < height / 2 {
                 0
             } else {

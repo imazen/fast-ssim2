@@ -9,7 +9,7 @@
 //! C++ reference binary: libjxl/build/tools/ssimulacra2
 //! Captured: 2026-01-04
 
-use fast_ssim2::{compute_frame_ssimulacra2, Ssimulacra2Config};
+use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::Rgb;
@@ -157,8 +157,6 @@ fn test_jpeg_quality_with_configs() {
     let configs = [
         ("scalar", Ssimulacra2Config::scalar()),
         ("simd", Ssimulacra2Config::simd()),
-        #[cfg(feature = "unsafe-simd")]
-        ("unsafe-simd", Ssimulacra2Config::unsafe_simd()),
     ];
 
     for (name, config) in configs {

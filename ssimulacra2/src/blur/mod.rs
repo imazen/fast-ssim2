@@ -1,22 +1,15 @@
 mod gaussian;
 mod simd_gaussian;
 
-#[cfg(feature = "unsafe-simd")]
-mod unsafe_simd_gaussian;
-
 use crate::SimdImpl;
 use gaussian::RecursiveGaussian;
 use simd_gaussian::SimdGaussian;
-
-#[cfg(feature = "unsafe-simd")]
-use unsafe_simd_gaussian::UnsafeSimdGaussian;
 
 /// Structure handling image blur with selectable implementation.
 ///
 /// Supports runtime switching between:
 /// - Scalar: f64 IIR baseline (most accurate)
-/// - SIMD: Safe SIMD via wide crate
-/// - UnsafeSimd: Raw x86 intrinsics (fastest)
+/// - SIMD: archmage cross-platform SIMD (AVX2, AVX-512, NEON, WASM128)
 pub struct Blur {
     width: usize,
     height: usize,
@@ -24,11 +17,8 @@ pub struct Blur {
     // Scalar backend
     scalar_kernel: RecursiveGaussian,
     scalar_temp: Vec<f32>,
-    // Safe SIMD backend
+    // SIMD backend (archmage)
     simd: SimdGaussian,
-    // Unsafe SIMD backend
-    #[cfg(feature = "unsafe-simd")]
-    unsafe_simd: UnsafeSimdGaussian,
 }
 
 impl Blur {
@@ -48,8 +38,6 @@ impl Blur {
             scalar_kernel: RecursiveGaussian,
             scalar_temp: vec![0.0f32; width * height],
             simd: SimdGaussian::new(width),
-            #[cfg(feature = "unsafe-simd")]
-            unsafe_simd: UnsafeSimdGaussian::new(width),
         }
     }
 
@@ -67,8 +55,6 @@ impl Blur {
     pub fn shrink_to(&mut self, width: usize, height: usize) {
         self.scalar_temp.truncate(width * height);
         self.simd.shrink_to(width, height);
-        #[cfg(feature = "unsafe-simd")]
-        self.unsafe_simd.shrink_to(width, height);
         self.width = width;
         self.height = height;
     }
@@ -99,8 +85,6 @@ impl Blur {
         match self.impl_type {
             SimdImpl::Scalar => self.blur_plane_scalar_into(plane, out),
             SimdImpl::Simd => self.blur_plane_simd_into(plane, out),
-            #[cfg(feature = "unsafe-simd")]
-            SimdImpl::UnsafeSimd => self.blur_plane_unsafe_simd_into(plane, out),
         }
     }
 
@@ -117,12 +101,6 @@ impl Blur {
 
     fn blur_plane_simd_into(&mut self, plane: &[f32], out: &mut [f32]) {
         self.simd
-            .blur_single_plane_into(plane, out, self.width, self.height);
-    }
-
-    #[cfg(feature = "unsafe-simd")]
-    fn blur_plane_unsafe_simd_into(&mut self, plane: &[f32], out: &mut [f32]) {
-        self.unsafe_simd
             .blur_single_plane_into(plane, out, self.width, self.height);
     }
 }

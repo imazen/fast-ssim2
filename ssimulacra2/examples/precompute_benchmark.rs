@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --release --example precompute_benchmark
 
-use fast_ssim2::{compute_frame_ssimulacra2, Ssimulacra2Reference};
+use fast_ssim2::{Ssimulacra2Reference, compute_frame_ssimulacra2};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 

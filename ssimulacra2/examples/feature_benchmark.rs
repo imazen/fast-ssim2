@@ -3,10 +3,9 @@
 //! Run with:
 //! ```bash
 //! cargo run --release --example feature_benchmark
-//! cargo run --release --example feature_benchmark --features unsafe-simd
 //! ```
 
-use fast_ssim2::{compute_frame_ssimulacra2_with_config, Ssimulacra2Config};
+use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -113,27 +112,13 @@ fn main() {
         "Scalar", mean, median, p95, score
     );
 
-    // Safe SIMD (wide crate)
+    // SIMD (archmage)
     let config = Ssimulacra2Config::simd();
     let (mean, median, p95, score) = benchmark_config(&source, &distorted, config, iterations);
     println!(
         "{:<25} {:>10.3} {:>10.3} {:>10.3} {:>12.6}",
-        "SIMD (wide crate)", mean, median, p95, score
+        "SIMD (archmage)", mean, median, p95, score
     );
 
-    // Unsafe SIMD (raw intrinsics)
-    #[cfg(feature = "unsafe-simd")]
-    {
-        let config = Ssimulacra2Config::unsafe_simd();
-        let (mean, median, p95, score) = benchmark_config(&source, &distorted, config, iterations);
-        println!(
-            "{:<25} {:>10.3} {:>10.3} {:>10.3} {:>12.6}",
-            "Unsafe SIMD (raw)", mean, median, p95, score
-        );
-    }
-
     println!();
-
-    #[cfg(not(feature = "unsafe-simd"))]
-    println!("Note: Run with --features unsafe-simd to benchmark raw intrinsics path");
 }

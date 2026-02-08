@@ -1,12 +1,11 @@
-//! Benchmark comparing all blur implementations and full SSIMULACRA2 pipeline
+//! Benchmark comparing blur implementations and full SSIMULACRA2 pipeline
 //!
 //! Run with:
-//!   cargo run --release --example benchmark_unsafe_simd
-//!   cargo run --release --example benchmark_unsafe_simd --features unsafe-simd
+//!   cargo run --release --example benchmark_simd
 
 use std::time::Instant;
 
-use fast_ssim2::{compute_frame_ssimulacra2_with_config, Blur, SimdImpl, Ssimulacra2Config};
+use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
 fn create_test_image(width: usize, height: usize, seed: u64) -> Rgb {
@@ -97,33 +96,19 @@ fn main() {
 
     // Blur-only benchmarks
     println!("Blur-only benchmark (3 planes):");
-    println!(
-        "{:20} {:>12} {:>12} {:>12}",
-        "Size", "Scalar", "SIMD", "Unsafe"
-    );
-    println!("{:-<60}", "");
+    println!("{:20} {:>12} {:>12}", "Size", "Scalar", "SIMD");
+    println!("{:-<48}", "");
 
     for (width, height, name, iters) in sizes.iter() {
         let scalar_ms = benchmark_blur(*width, *height, SimdImpl::Scalar, *iters);
         let simd_ms = benchmark_blur(*width, *height, SimdImpl::Simd, *iters);
 
-        #[cfg(feature = "unsafe-simd")]
-        let unsafe_ms = benchmark_blur(*width, *height, SimdImpl::UnsafeSimd, *iters);
-        #[cfg(not(feature = "unsafe-simd"))]
-        let unsafe_ms = f64::NAN;
-
-        println!(
-            "{:20} {:>12.3} {:>12.3} {:>12.3}",
-            name, scalar_ms, simd_ms, unsafe_ms
-        );
+        println!("{:20} {:>12.3} {:>12.3}", name, scalar_ms, simd_ms);
     }
 
     println!("\nFull SSIMULACRA2 benchmark:");
-    println!(
-        "{:20} {:>12} {:>12} {:>12}",
-        "Size", "Scalar", "SIMD", "Unsafe"
-    );
-    println!("{:-<60}", "");
+    println!("{:20} {:>12} {:>12}", "Size", "Scalar", "SIMD");
+    println!("{:-<48}", "");
 
     for (width, height, name, iters) in sizes.iter() {
         let iters = iters / 2;
@@ -132,20 +117,8 @@ fn main() {
             benchmark_full_ssimulacra2(*width, *height, Ssimulacra2Config::scalar(), iters);
         let simd_ms = benchmark_full_ssimulacra2(*width, *height, Ssimulacra2Config::simd(), iters);
 
-        #[cfg(feature = "unsafe-simd")]
-        let unsafe_ms =
-            benchmark_full_ssimulacra2(*width, *height, Ssimulacra2Config::unsafe_simd(), iters);
-        #[cfg(not(feature = "unsafe-simd"))]
-        let unsafe_ms = f64::NAN;
-
-        println!(
-            "{:20} {:>12.3} {:>12.3} {:>12.3}",
-            name, scalar_ms, simd_ms, unsafe_ms
-        );
+        println!("{:20} {:>12.3} {:>12.3}", name, scalar_ms, simd_ms);
     }
 
     println!("\nDone.");
-
-    #[cfg(not(feature = "unsafe-simd"))]
-    println!("\nNote: Unsafe column shows NaN - run with --features unsafe-simd to enable");
 }

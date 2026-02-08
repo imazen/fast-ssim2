@@ -115,11 +115,7 @@ impl TestImageGenerator {
         for y in 0..height {
             for x in 0..width {
                 let val = if vertical {
-                    if x < width / 2 {
-                        0
-                    } else {
-                        255
-                    }
+                    if x < width / 2 { 0 } else { 255 }
                 } else if y < height / 2 {
                     0
                 } else {
@@ -282,10 +278,10 @@ fn call_cpp_ssimulacra2(bin_path: &Path, source: &Path, distorted: &Path) -> Res
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Parse score from output (format: "score: 12.345" or just "12.345")
     for line in stdout.lines() {
-        if let Some(score_str) = line.split_whitespace().last() {
-            if let Ok(score) = score_str.parse::<f64>() {
-                return Ok(score);
-            }
+        if let Some(score_str) = line.split_whitespace().last()
+            && let Ok(score) = score_str.parse::<f64>()
+        {
+            return Ok(score);
         }
     }
 

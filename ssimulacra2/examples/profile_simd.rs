@@ -1,8 +1,8 @@
-//! Profile unsafe SIMD implementation to identify optimization opportunities
+//! Profile SIMD implementation performance
 //!
-//! Run with: cargo run --release --example profile_unsafe_simd
+//! Run with: cargo run --release --example profile_simd
 
-use fast_ssim2::{compute_frame_ssimulacra2_with_config, Blur, SimdImpl, Ssimulacra2Config};
+use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -75,8 +75,8 @@ fn benchmark_config(
 }
 
 fn main() {
-    println!("SSIMULACRA2 Unsafe SIMD Profiler");
-    println!("================================\n");
+    println!("SSIMULACRA2 SIMD Profiler");
+    println!("=========================\n");
 
     let sizes = [(256, 256), (512, 512), (1024, 1024), (2048, 2048)];
     let iterations = 20;
@@ -98,30 +98,16 @@ fn main() {
             iterations,
         );
         let simd_ms = benchmark_config(
-            "SIMD (wide)",
+            "SIMD (archmage)",
             Ssimulacra2Config::simd(),
             &source,
             &distorted,
             iterations,
         );
 
-        #[cfg(feature = "unsafe-simd")]
-        let unsafe_ms = benchmark_config(
-            "Unsafe SIMD",
-            Ssimulacra2Config::unsafe_simd(),
-            &source,
-            &distorted,
-            iterations,
-        );
-
         println!();
-        println!("  Speedups vs Scalar:");
-        println!("    SIMD:        {:.2}x", scalar_ms / simd_ms);
-        #[cfg(feature = "unsafe-simd")]
-        println!("    Unsafe SIMD: {:.2}x", scalar_ms / unsafe_ms);
-
-        #[cfg(feature = "unsafe-simd")]
-        println!("  Unsafe SIMD vs SIMD: {:.2}x", simd_ms / unsafe_ms);
+        println!("  Speedup vs Scalar:");
+        println!("    SIMD: {:.2}x", scalar_ms / simd_ms);
 
         println!();
     }
@@ -163,24 +149,8 @@ fn blur_profile(width: usize, height: usize) {
     }
     let simd_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
     println!(
-        "  SIMD (wide):     {:.3}ms ({:.2}x vs scalar)",
+        "  SIMD (archmage): {:.3}ms ({:.2}x vs scalar)",
         simd_ms,
         scalar_ms / simd_ms
     );
-
-    #[cfg(feature = "unsafe-simd")]
-    {
-        let mut blur_unsafe = Blur::with_simd_impl(width, height, SimdImpl::UnsafeSimd);
-        let start = Instant::now();
-        for _ in 0..iterations {
-            let _ = blur_unsafe.blur(&planar);
-        }
-        let unsafe_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
-        println!(
-            "  Unsafe SIMD:     {:.3}ms ({:.2}x vs scalar, {:.2}x vs SIMD)",
-            unsafe_ms,
-            scalar_ms / unsafe_ms,
-            simd_ms / unsafe_ms
-        );
-    }
 }
