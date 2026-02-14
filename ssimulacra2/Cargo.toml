@@ -20,8 +20,8 @@ imgref = { version = "1.12", optional = true }
 multiversion = "0.8"
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
-safe_unaligned_simd = { version = "0.2.3", optional = true }
-thiserror = "2.0.9"
+safe_unaligned_simd = { version = "0.2.4", optional = true }
+thiserror = "2.0.18"
 wide = "1.1.1"
 yuvxyb = "0.4.1"
 
@@ -29,12 +29,12 @@ yuvxyb = "0.4.1"
 version = "0.1"
 
 [dev-dependencies]
-criterion = "0.5.0"
-image = "0.25.0"
-rand = "0.8.5"
+criterion = "0.8.0"
+image = "0.25.9"
+rand = "0.10"
 chrono = "0.4"
-png = "0.17"
-which = "7.0"
+png = "0.18"
+which = "8.0"
 sha2 = "0.10"
 
 [features]

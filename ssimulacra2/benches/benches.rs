@@ -1,10 +1,11 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use fast_ssim2::{
     compute_frame_ssimulacra2, Blur, ColorPrimaries, Frame, MatrixCoefficients, Plane,
     TransferCharacteristic, Yuv, YuvConfig,
 };
 use num_traits::clamp;
-use rand::Rng;
+use rand::RngExt;
+use std::hint::black_box;
 
 fn make_yuv(
     ss: (u8, u8),
@@ -36,10 +37,10 @@ fn make_yuv(
             ),
         ],
     };
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for (i, plane) in data.planes.iter_mut().enumerate() {
         for val in plane.data_origin_mut().iter_mut() {
-            *val = rng.gen_range(if full_range {
+            *val = rng.random_range(if full_range {
                 0..=255
             } else if i == 0 {
                 16..=235
@@ -64,7 +65,7 @@ fn make_yuv(
 }
 
 fn distort_yuv(input: &Yuv<u8>) -> Yuv<u8> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut planes = [
         input.data()[0].clone(),
         input.data()[1].clone(),
@@ -72,7 +73,7 @@ fn distort_yuv(input: &Yuv<u8>) -> Yuv<u8> {
     ];
     for plane in &mut planes {
         for pix in plane.data_origin_mut() {
-            *pix = clamp(i16::from(*pix) + rng.gen_range(-16..=16), 0, 255) as u8;
+            *pix = clamp(i16::from(*pix) + rng.random_range(-16..=16), 0, 255) as u8;
         }
     }
     let data: Frame<u8> = Frame { planes };
