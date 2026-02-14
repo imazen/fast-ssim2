@@ -3,8 +3,8 @@ name = "fast-ssim2-cli"
 version = "0.6.0"
 edition = "2021"
 description = "CLI for the fast-ssim2 (SSIMULACRA2) image quality metric"
-repository = "https://github.com/imazen/ssimulacra2"
-homepage = "https://github.com/imazen/ssimulacra2"
+repository = "https://github.com/imazen/fast-ssim2"
+homepage = "https://github.com/imazen/fast-ssim2"
 license = "BSD-2-Clause"
 
 # When changing MSRV: Also update .github/workflows/rust.yml
