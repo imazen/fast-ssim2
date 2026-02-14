@@ -4,9 +4,15 @@
 //! (bit manipulation + Newton-Raphson in f64 doesn't vectorize well); SIMD is used
 //! for the matrix multiply, clamp, and XYB transform surrounding it.
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
+))]
 use archmage::arcane;
 use archmage::incant;
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
+use magetypes::simd::f32x4;
 #[cfg(target_arch = "x86_64")]
 use magetypes::simd::f32x8;
 
@@ -173,6 +179,106 @@ fn linear_rgb_to_xyb_inner_v3(token: archmage::X64V3Token, input: &mut [[f32; 3]
     for pix in &mut input[chunks * LANES..] {
         convert_pixel_scalar(pix, absorbance_bias);
     }
+}
+
+/// 128-bit SIMD XYB conversion body — shared between NEON and WASM SIMD128.
+#[cfg(any(target_arch = "aarch64", target_arch = "wasm32"))]
+macro_rules! linear_rgb_to_xyb_128_body {
+    ($token:ident, $input:ident) => {{
+        const LANES: usize = 4;
+        let absorbance_bias = -cbrtf_fast(OPSIN_ABSORBANCE_BIAS);
+
+        let m00 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[0]);
+        let m01 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[1]);
+        let m02 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[2]);
+        let m10 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[3]);
+        let m11 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[4]);
+        let m12 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[5]);
+        let m20 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[6]);
+        let m21 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[7]);
+        let m22 = f32x4::splat($token, OPSIN_ABSORBANCE_MATRIX[8]);
+        let bias = f32x4::splat($token, OPSIN_ABSORBANCE_BIAS);
+        let zero = f32x4::zero($token);
+        let absorb_bias = f32x4::splat($token, absorbance_bias);
+        let half = f32x4::splat($token, 0.5);
+
+        let chunks = $input.len() / LANES;
+
+        for chunk_idx in 0..chunks {
+            let base = chunk_idx * LANES;
+
+            // AoS -> SoA transpose
+            let mut r_arr = [0.0f32; LANES];
+            let mut g_arr = [0.0f32; LANES];
+            let mut b_arr = [0.0f32; LANES];
+            for i in 0..LANES {
+                let p = $input[base + i];
+                r_arr[i] = p[0];
+                g_arr[i] = p[1];
+                b_arr[i] = p[2];
+            }
+
+            let r = f32x4::from_array($token, r_arr);
+            let g = f32x4::from_array($token, g_arr);
+            let b = f32x4::from_array($token, b_arr);
+
+            // Matrix multiply with FMA
+            let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
+            let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
+            let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias)));
+
+            // Clamp to zero
+            let mixed0 = mixed0.max(zero);
+            let mixed1 = mixed1.max(zero);
+            let mixed2 = mixed2.max(zero);
+
+            // Extract, apply scalar cbrt, reload
+            let mut m0_arr = mixed0.to_array();
+            let mut m1_arr = mixed1.to_array();
+            let mut m2_arr = mixed2.to_array();
+            for i in 0..LANES {
+                m0_arr[i] = cbrtf_fast(m0_arr[i]);
+                m1_arr[i] = cbrtf_fast(m1_arr[i]);
+                m2_arr[i] = cbrtf_fast(m2_arr[i]);
+            }
+
+            let mixed0 = f32x4::from_array($token, m0_arr) + absorb_bias;
+            let mixed1 = f32x4::from_array($token, m1_arr) + absorb_bias;
+            let mixed2 = f32x4::from_array($token, m2_arr) + absorb_bias;
+
+            // XYB transform
+            let x = half * (mixed0 - mixed1);
+            let y = half * (mixed0 + mixed1);
+            let b_out = mixed2;
+
+            // SoA -> AoS transpose and store
+            let x_arr = x.to_array();
+            let y_arr = y.to_array();
+            let b_arr = b_out.to_array();
+            for i in 0..LANES {
+                $input[base + i] = [x_arr[i], y_arr[i], b_arr[i]];
+            }
+        }
+
+        // Scalar remainder
+        for pix in &mut $input[chunks * LANES..] {
+            convert_pixel_scalar(pix, absorbance_bias);
+        }
+    }};
+}
+
+/// NEON XYB conversion — 4 pixels at a time.
+#[cfg(target_arch = "aarch64")]
+#[arcane]
+fn linear_rgb_to_xyb_inner_neon(token: archmage::NeonToken, input: &mut [[f32; 3]]) {
+    linear_rgb_to_xyb_128_body!(token, input)
+}
+
+/// WASM SIMD128 XYB conversion — 4 pixels at a time.
+#[cfg(target_arch = "wasm32")]
+#[arcane]
+fn linear_rgb_to_xyb_inner_wasm128(token: archmage::Wasm128Token, input: &mut [[f32; 3]]) {
+    linear_rgb_to_xyb_128_body!(token, input)
 }
 
 /// Scalar fallback for XYB conversion.
