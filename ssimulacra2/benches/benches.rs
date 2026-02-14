@@ -7,18 +7,19 @@ use num_traits::clamp;
 use rand::RngExt;
 use std::hint::black_box;
 
-fn make_yuv(
+fn make_yuv_sized(
+    width: usize,
+    height: usize,
     ss: (u8, u8),
     full_range: bool,
     mc: MatrixCoefficients,
     tc: TransferCharacteristic,
     cp: ColorPrimaries,
 ) -> Yuv<u8> {
-    let y_dims = (320usize, 240usize);
-    let uv_dims = (y_dims.0 >> ss.0, y_dims.1 >> ss.1);
+    let uv_dims = (width >> ss.0, height >> ss.1);
     let mut data: Frame<u8> = Frame {
         planes: [
-            Plane::new(y_dims.0, y_dims.1, 0, 0, 0, 0),
+            Plane::new(width, height, 0, 0, 0, 0),
             Plane::new(
                 uv_dims.0,
                 uv_dims.1,
@@ -80,22 +81,41 @@ fn distort_yuv(input: &Yuv<u8>) -> Yuv<u8> {
     Yuv::new(data, input.config()).unwrap()
 }
 
+fn make_test_pair(width: usize, height: usize) -> (Yuv<u8>, Yuv<u8>) {
+    let input = make_yuv_sized(
+        width,
+        height,
+        (0, 0),
+        true,
+        MatrixCoefficients::BT709,
+        TransferCharacteristic::BT1886,
+        ColorPrimaries::BT709,
+    );
+    let distorted = distort_yuv(&input);
+    (input, distorted)
+}
+
 fn bench_ssimulacra2(c: &mut Criterion) {
-    c.bench_function("ssimulacra2", |b| {
-        let input = make_yuv(
-            (0, 0),
-            true,
-            MatrixCoefficients::BT709,
-            TransferCharacteristic::BT1886,
-            ColorPrimaries::BT709,
-        );
-        let distorted = distort_yuv(&input);
+    // 320x240 (legacy)
+    let (input, distorted) = make_test_pair(320, 240);
+    c.bench_function("ssimulacra2_320x240", |b| {
+        b.iter(|| compute_frame_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
+    });
+
+    // 1920x1080 (FHD)
+    let (input, distorted) = make_test_pair(1920, 1080);
+    c.bench_function("ssimulacra2_1920x1080", |b| {
+        b.iter(|| compute_frame_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
+    });
+
+    // 3840x2160 (4K)
+    let (input, distorted) = make_test_pair(3840, 2160);
+    c.bench_function("ssimulacra2_3840x2160", |b| {
         b.iter(|| compute_frame_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
     });
 }
 
 fn read_image(path: &str) -> ([Vec<f32>; 3], usize, usize) {
-    // Read in test_data/tank_source.png
     let img = image::open(path).unwrap();
 
     let img = match img {
@@ -105,7 +125,6 @@ fn read_image(path: &str) -> ([Vec<f32>; 3], usize, usize) {
 
     let (width, height) = img.dimensions();
 
-    // Convert ImageBuffer to [Vec<f32>; 3]
     let mut img_vec = [Vec::new(), Vec::new(), Vec::new()];
     for pixel in img.pixels() {
         img_vec[0].push(pixel[0] as f32);
@@ -119,10 +138,7 @@ fn read_image(path: &str) -> ([Vec<f32>; 3], usize, usize) {
 fn bench_blur(c: &mut Criterion) {
     c.bench_function("blur", |b| {
         let (image, width, height) = read_image("test_data/tank_source.png");
-
-        // Blur the image
         let mut blur = Blur::new(width, height);
-
         b.iter(|| blur.blur(black_box(&image)))
     });
 }
