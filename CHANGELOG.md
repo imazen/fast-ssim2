@@ -1,3 +1,22 @@
+## Version 0.7.0
+
+- Update all dependencies to latest versions
+- criterion 0.5 → 0.8, rand 0.8 → 0.10, png 0.17 → 0.18, which 7 → 8
+- crossterm 0.27 → 0.29, indicatif 0.17 → 0.18, statrs 0.17 → 0.18
+- safe_unaligned_simd 0.2.3 → 0.2.4, thiserror 2.0.9 → 2.0.18
+
+## Version 0.6.0
+
+- Rename crate from `ssimulacra2` to `fast-ssim2`
+- Add `imgref` support and simplified input API
+- Add precomputed reference API (`Ssimulacra2Reference`) for batch comparisons
+- Add runtime SIMD backend selection via `Ssimulacra2Config`
+- Add unsafe SIMD backend with x86 intrinsics for best performance
+- Reduce memory allocations by 77% and memory usage by 36%
+- Add C++ reference parity tests and JPEG quality regression tests
+- Update multiversion to 0.8
+- Improve API documentation and README
+
 ## Version 0.5.1
 
 - Remove nalgebra-macros and update criterion

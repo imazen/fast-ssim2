@@ -12,7 +12,7 @@ Fast SIMD-accelerated Rust implementation of [SSIMULACRA2](https://github.com/cl
 
 ```toml
 [dependencies]
-fast-ssim2 = { version = "0.6", features = ["imgref"] }
+fast-ssim2 = { version = "0.7", features = ["imgref"] }
 ```
 
 ```rust
