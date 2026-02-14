@@ -78,23 +78,24 @@ for distorted in compressed_variants {
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `simd` | Yes | Safe SIMD via `wide` crate |
-| `unsafe-simd` | Yes | x86_64 AVX2 intrinsics (fastest) |
 | `imgref` | No | Support for `imgref` image types |
 | `rayon` | No | Parallel computation |
 
+SIMD is always available — runtime CPU detection via [archmage](https://crates.io/crates/archmage) selects the best backend automatically (AVX2+FMA on x86_64, NEON on aarch64, SIMD128 on wasm32, scalar fallback elsewhere).
+
 ## Performance
 
-Benchmarked on AMD Ryzen (x86_64), full SSIMULACRA2 computation:
+Benchmarked on AMD Ryzen 9 7950X (x86_64, AVX2+FMA), full SSIMULACRA2 computation vs upstream [ssimulacra2](https://crates.io/crates/ssimulacra2) crate:
 
-| Resolution | Scalar | SIMD | Unsafe SIMD |
-|------------|--------|------|-------------|
-| 1920x1080 | 1083ms | 434ms (2.5x) | 370ms (2.9x) |
-| 3840x2160 | 4256ms | 1612ms (2.6x) | 1422ms (3.0x) |
+| Resolution | ssimulacra2 (scalar) | fast-ssim2 (SIMD) | Speedup |
+|------------|---------------------|-------------------|---------|
+| 320x240 | 139ms | 8.7ms | **16x** |
+| 1920x1080 | 1,006ms | 316ms | **3.2x** |
+| 3840x2160 | 3,615ms | 1,317ms | **2.7x** |
 
 Run your own benchmarks:
 ```bash
-cargo run --release --features "simd unsafe-simd" --example benchmark_unsafe_simd
+cargo bench -p fast-ssim2
 ```
 
 ## Advanced Usage
@@ -125,12 +126,11 @@ impl ToLinearRgb for MyImage {
 ```rust
 use fast_ssim2::{compute_ssimulacra2_with_config, Ssimulacra2Config};
 
-// Force scalar (most portable)
+// Force scalar (for comparison/debugging)
 let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::scalar())?;
 
-// Force unsafe SIMD (fastest on x86_64)
-#[cfg(feature = "unsafe-simd")]
-let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::unsafe_simd())?;
+// Use SIMD (default — auto-detects AVX2/NEON/WASM128)
+let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::simd())?;
 ```
 
 ### Using yuvxyb Types Directly
@@ -157,7 +157,7 @@ let score = compute_ssimulacra2(source, distorted)?;
 
 Fork of [rust-av/ssimulacra2](https://github.com/rust-av/ssimulacra2). Thank you to the rust-av team for the original implementation.
 
-**What's different:** SIMD acceleration (via `wide` crate and x86 intrinsics), precomputed reference API, `imgref` support. These come with trade-offs: higher MSRV and more complex code.
+**What's different:** Cross-platform SIMD acceleration (x86_64/aarch64/wasm32 via [archmage](https://crates.io/crates/archmage)), precomputed reference API, `imgref` support, `#![forbid(unsafe_code)]`.
 
 ## License
 
