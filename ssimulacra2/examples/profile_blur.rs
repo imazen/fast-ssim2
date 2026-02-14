@@ -173,65 +173,67 @@ unsafe fn vertical_column_avx2(
     height: usize,
     x: usize,
 ) {
-    let big_n = RADIUS;
-    let height_i = height as isize;
+    unsafe {
+        let big_n = RADIUS;
+        let height_i = height as isize;
 
-    let mul_in_1 = _mm256_set1_ps(VERT_MUL_IN_1);
-    let mul_in_3 = _mm256_set1_ps(VERT_MUL_IN_3);
-    let mul_in_5 = _mm256_set1_ps(VERT_MUL_IN_5);
-    let mul_prev_1 = _mm256_set1_ps(VERT_MUL_PREV_1);
-    let mul_prev_3 = _mm256_set1_ps(VERT_MUL_PREV_3);
-    let mul_prev_5 = _mm256_set1_ps(VERT_MUL_PREV_5);
+        let mul_in_1 = _mm256_set1_ps(VERT_MUL_IN_1);
+        let mul_in_3 = _mm256_set1_ps(VERT_MUL_IN_3);
+        let mul_in_5 = _mm256_set1_ps(VERT_MUL_IN_5);
+        let mul_prev_1 = _mm256_set1_ps(VERT_MUL_PREV_1);
+        let mul_prev_3 = _mm256_set1_ps(VERT_MUL_PREV_3);
+        let mul_prev_5 = _mm256_set1_ps(VERT_MUL_PREV_5);
 
-    let zeroes = _mm256_setzero_ps();
+        let zeroes = _mm256_setzero_ps();
 
-    let mut prev_1 = zeroes;
-    let mut prev_3 = zeroes;
-    let mut prev_5 = zeroes;
-    let mut prev2_1 = zeroes;
-    let mut prev2_3 = zeroes;
-    let mut prev2_5 = zeroes;
+        let mut prev_1 = zeroes;
+        let mut prev_3 = zeroes;
+        let mut prev_5 = zeroes;
+        let mut prev2_1 = zeroes;
+        let mut prev2_3 = zeroes;
+        let mut prev2_5 = zeroes;
 
-    let mut n = (-big_n) + 1;
-    while n < height_i {
-        let top = n - big_n - 1;
-        let bottom = n + big_n - 1;
+        let mut n = (-big_n) + 1;
+        while n < height_i {
+            let top = n - big_n - 1;
+            let bottom = n + big_n - 1;
 
-        let top_vals = if top >= 0 && top < height_i {
-            _mm256_loadu_ps(input.as_ptr().add(top as usize * width + x))
-        } else {
-            zeroes
-        };
+            let top_vals = if top >= 0 && top < height_i {
+                _mm256_loadu_ps(input.as_ptr().add(top as usize * width + x))
+            } else {
+                zeroes
+            };
 
-        let bottom_vals = if bottom >= 0 && bottom < height_i {
-            _mm256_loadu_ps(input.as_ptr().add(bottom as usize * width + x))
-        } else {
-            zeroes
-        };
+            let bottom_vals = if bottom >= 0 && bottom < height_i {
+                _mm256_loadu_ps(input.as_ptr().add(bottom as usize * width + x))
+            } else {
+                zeroes
+            };
 
-        let sum = _mm256_add_ps(top_vals, bottom_vals);
+            let sum = _mm256_add_ps(top_vals, bottom_vals);
 
-        let out1 = _mm256_fmadd_ps(prev_1, mul_prev_1, prev2_1);
-        let out3 = _mm256_fmadd_ps(prev_3, mul_prev_3, prev2_3);
-        let out5 = _mm256_fmadd_ps(prev_5, mul_prev_5, prev2_5);
+            let out1 = _mm256_fmadd_ps(prev_1, mul_prev_1, prev2_1);
+            let out3 = _mm256_fmadd_ps(prev_3, mul_prev_3, prev2_3);
+            let out5 = _mm256_fmadd_ps(prev_5, mul_prev_5, prev2_5);
 
-        let out1 = _mm256_fmsub_ps(sum, mul_in_1, out1);
-        let out3 = _mm256_fmsub_ps(sum, mul_in_3, out3);
-        let out5 = _mm256_fmsub_ps(sum, mul_in_5, out5);
+            let out1 = _mm256_fmsub_ps(sum, mul_in_1, out1);
+            let out3 = _mm256_fmsub_ps(sum, mul_in_3, out3);
+            let out5 = _mm256_fmsub_ps(sum, mul_in_5, out5);
 
-        prev2_1 = prev_1;
-        prev2_3 = prev_3;
-        prev2_5 = prev_5;
-        prev_1 = out1;
-        prev_3 = out3;
-        prev_5 = out5;
+            prev2_1 = prev_1;
+            prev2_3 = prev_3;
+            prev2_5 = prev_5;
+            prev_1 = out1;
+            prev_3 = out3;
+            prev_5 = out5;
 
-        if n >= 0 {
-            let result = _mm256_add_ps(_mm256_add_ps(out1, out3), out5);
-            _mm256_storeu_ps(output.as_mut_ptr().add(n as usize * width + x), result);
+            if n >= 0 {
+                let result = _mm256_add_ps(_mm256_add_ps(out1, out3), out5);
+                _mm256_storeu_ps(output.as_mut_ptr().add(n as usize * width + x), result);
+            }
+
+            n += 1;
         }
-
-        n += 1;
     }
 }
 
@@ -244,65 +246,67 @@ unsafe fn vertical_column_sse2(
     height: usize,
     x: usize,
 ) {
-    let big_n = RADIUS;
-    let height_i = height as isize;
+    unsafe {
+        let big_n = RADIUS;
+        let height_i = height as isize;
 
-    let mul_in_1 = _mm_set1_ps(VERT_MUL_IN_1);
-    let mul_in_3 = _mm_set1_ps(VERT_MUL_IN_3);
-    let mul_in_5 = _mm_set1_ps(VERT_MUL_IN_5);
-    let mul_prev_1 = _mm_set1_ps(VERT_MUL_PREV_1);
-    let mul_prev_3 = _mm_set1_ps(VERT_MUL_PREV_3);
-    let mul_prev_5 = _mm_set1_ps(VERT_MUL_PREV_5);
+        let mul_in_1 = _mm_set1_ps(VERT_MUL_IN_1);
+        let mul_in_3 = _mm_set1_ps(VERT_MUL_IN_3);
+        let mul_in_5 = _mm_set1_ps(VERT_MUL_IN_5);
+        let mul_prev_1 = _mm_set1_ps(VERT_MUL_PREV_1);
+        let mul_prev_3 = _mm_set1_ps(VERT_MUL_PREV_3);
+        let mul_prev_5 = _mm_set1_ps(VERT_MUL_PREV_5);
 
-    let zeroes = _mm_setzero_ps();
+        let zeroes = _mm_setzero_ps();
 
-    let mut prev_1 = zeroes;
-    let mut prev_3 = zeroes;
-    let mut prev_5 = zeroes;
-    let mut prev2_1 = zeroes;
-    let mut prev2_3 = zeroes;
-    let mut prev2_5 = zeroes;
+        let mut prev_1 = zeroes;
+        let mut prev_3 = zeroes;
+        let mut prev_5 = zeroes;
+        let mut prev2_1 = zeroes;
+        let mut prev2_3 = zeroes;
+        let mut prev2_5 = zeroes;
 
-    let mut n = (-big_n) + 1;
-    while n < height_i {
-        let top = n - big_n - 1;
-        let bottom = n + big_n - 1;
+        let mut n = (-big_n) + 1;
+        while n < height_i {
+            let top = n - big_n - 1;
+            let bottom = n + big_n - 1;
 
-        let top_vals = if top >= 0 && top < height_i {
-            _mm_loadu_ps(input.as_ptr().add(top as usize * width + x))
-        } else {
-            zeroes
-        };
+            let top_vals = if top >= 0 && top < height_i {
+                _mm_loadu_ps(input.as_ptr().add(top as usize * width + x))
+            } else {
+                zeroes
+            };
 
-        let bottom_vals = if bottom >= 0 && bottom < height_i {
-            _mm_loadu_ps(input.as_ptr().add(bottom as usize * width + x))
-        } else {
-            zeroes
-        };
+            let bottom_vals = if bottom >= 0 && bottom < height_i {
+                _mm_loadu_ps(input.as_ptr().add(bottom as usize * width + x))
+            } else {
+                zeroes
+            };
 
-        let sum = _mm_add_ps(top_vals, bottom_vals);
+            let sum = _mm_add_ps(top_vals, bottom_vals);
 
-        let out1 = _mm_add_ps(_mm_mul_ps(prev_1, mul_prev_1), prev2_1);
-        let out3 = _mm_add_ps(_mm_mul_ps(prev_3, mul_prev_3), prev2_3);
-        let out5 = _mm_add_ps(_mm_mul_ps(prev_5, mul_prev_5), prev2_5);
+            let out1 = _mm_add_ps(_mm_mul_ps(prev_1, mul_prev_1), prev2_1);
+            let out3 = _mm_add_ps(_mm_mul_ps(prev_3, mul_prev_3), prev2_3);
+            let out5 = _mm_add_ps(_mm_mul_ps(prev_5, mul_prev_5), prev2_5);
 
-        let out1 = _mm_sub_ps(_mm_mul_ps(sum, mul_in_1), out1);
-        let out3 = _mm_sub_ps(_mm_mul_ps(sum, mul_in_3), out3);
-        let out5 = _mm_sub_ps(_mm_mul_ps(sum, mul_in_5), out5);
+            let out1 = _mm_sub_ps(_mm_mul_ps(sum, mul_in_1), out1);
+            let out3 = _mm_sub_ps(_mm_mul_ps(sum, mul_in_3), out3);
+            let out5 = _mm_sub_ps(_mm_mul_ps(sum, mul_in_5), out5);
 
-        prev2_1 = prev_1;
-        prev2_3 = prev_3;
-        prev2_5 = prev_5;
-        prev_1 = out1;
-        prev_3 = out3;
-        prev_5 = out5;
+            prev2_1 = prev_1;
+            prev2_3 = prev_3;
+            prev2_5 = prev_5;
+            prev_1 = out1;
+            prev_3 = out3;
+            prev_5 = out5;
 
-        if n >= 0 {
-            let result = _mm_add_ps(_mm_add_ps(out1, out3), out5);
-            _mm_storeu_ps(output.as_mut_ptr().add(n as usize * width + x), result);
+            if n >= 0 {
+                let result = _mm_add_ps(_mm_add_ps(out1, out3), out5);
+                _mm_storeu_ps(output.as_mut_ptr().add(n as usize * width + x), result);
+            }
+
+            n += 1;
         }
-
-        n += 1;
     }
 }
 

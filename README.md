@@ -1,10 +1,10 @@
 # fast-ssim2
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/imazen/ssimulacra2/rust.yml?branch=main&style=for-the-badge)](https://github.com/imazen/ssimulacra2/actions/workflows/rust.yml)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/imazen/fast-ssim2/rust.yml?branch=main&style=for-the-badge)](https://github.com/imazen/fast-ssim2/actions/workflows/rust.yml)
 [![docs.rs](https://img.shields.io/docsrs/fast-ssim2?style=for-the-badge)](https://docs.rs/fast-ssim2)
 [![Crates.io](https://img.shields.io/crates/v/fast-ssim2?style=for-the-badge)](https://crates.io/crates/fast-ssim2)
-[![codecov](https://img.shields.io/codecov/c/github/imazen/ssimulacra2?style=for-the-badge)](https://codecov.io/gh/imazen/ssimulacra2)
-[![LICENSE](https://img.shields.io/crates/l/fast-ssim2?style=for-the-badge)](https://github.com/imazen/ssimulacra2/blob/main/LICENSE)
+[![codecov](https://img.shields.io/codecov/c/github/imazen/fast-ssim2?style=for-the-badge)](https://codecov.io/gh/imazen/fast-ssim2)
+[![LICENSE](https://img.shields.io/crates/l/fast-ssim2?style=for-the-badge)](https://github.com/imazen/fast-ssim2/blob/main/LICENSE)
 
 Fast SIMD-accelerated Rust implementation of [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2), a perceptual image quality metric.
 

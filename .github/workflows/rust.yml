@@ -2,7 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "archmage-migration" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -20,27 +20,27 @@ jobs:
           # Linux x64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            features: "simd,unsafe-simd,imgref"
+            features: "imgref"
           # Linux ARM64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            features: "simd,imgref"
+            features: "imgref"
           # macOS x64
           - os: macos-15-intel
             target: x86_64-apple-darwin
-            features: "simd,unsafe-simd,imgref"
+            features: "imgref"
           # macOS ARM64
           - os: macos-latest
             target: aarch64-apple-darwin
-            features: "simd,imgref"
+            features: "imgref"
           # Windows x64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            features: "simd,unsafe-simd,imgref"
+            features: "imgref"
           # Windows ARM64
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
-            features: "simd,imgref"
+            features: "imgref"
 
     runs-on: ${{ matrix.os }}
 
@@ -91,9 +91,9 @@ jobs:
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build (cross)
-        run: cross build --features "simd,imgref" -p fast-ssim2 --target ${{ matrix.target }}
+        run: cross build --features "imgref" -p fast-ssim2 --target ${{ matrix.target }}
       - name: Test (cross/QEMU)
-        run: cross test --features "simd,imgref" -p fast-ssim2 --target ${{ matrix.target }}
+        run: cross test --features "imgref" -p fast-ssim2 --target ${{ matrix.target }}
 
   # ==========================================================================
   # WASM testing
@@ -114,15 +114,15 @@ jobs:
       - name: Build (wasm32-unknown-unknown)
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo build --target wasm32-unknown-unknown --features "simd,imgref" -p fast-ssim2 --lib
+        run: cargo build --target wasm32-unknown-unknown --features "imgref" -p fast-ssim2 --lib
       - name: Test WASM with SIMD (wasm32-wasip1)
         env:
-          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=. --"
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=/ --"
           RUSTFLAGS: "-C target-feature=+simd128"
-        run: cargo test --target wasm32-wasip1 --features "simd,imgref" -p fast-ssim2 --lib --tests
+        run: cargo test --target wasm32-wasip1 --features "imgref" -p fast-ssim2 --lib --tests
       - name: Test WASM without SIMD (scalar)
         env:
-          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=. --"
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=/ --"
         run: cargo test --target wasm32-wasip1 -p fast-ssim2 --lib --tests
 
   # Clippy lint check
@@ -135,7 +135,7 @@ jobs:
         with:
           components: clippy
       - name: Clippy
-        run: cargo clippy --features "simd,unsafe-simd,imgref" -p fast-ssim2 -- -D warnings
+        run: cargo clippy --features "imgref" -p fast-ssim2 -- -D warnings
 
   # Format check
   fmt:
@@ -171,7 +171,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage
-        run: cargo llvm-cov --features "simd,unsafe-simd,imgref" -p fast-ssim2 --lcov --output-path lcov.info
+        run: cargo llvm-cov --features "imgref" -p fast-ssim2 --lcov --output-path lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@v5
         with:

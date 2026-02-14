@@ -1,8 +1,8 @@
 //! Tests that verify all SIMD implementations produce matching scores.
 //!
-//! This ensures Scalar, Simd, and UnsafeSimd backends compute the same results.
+//! This ensures Scalar and Simd (archmage) backends compute the same results.
 
-use fast_ssim2::{compute_frame_ssimulacra2_with_config, Ssimulacra2Config};
+use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
@@ -119,23 +119,6 @@ fn test_identical_images_exact_score_simd() {
     );
 }
 
-#[test]
-#[cfg(feature = "unsafe-simd")]
-fn test_identical_images_exact_score_unsafe_simd() {
-    let source = load_image("source.png");
-    let score = compute_frame_ssimulacra2_with_config(
-        source.clone(),
-        source,
-        Ssimulacra2Config::unsafe_simd(),
-    )
-    .unwrap();
-    assert_eq!(
-        score, 100.0,
-        "UnsafeSimd: identical images must score exactly 100.0, got {}",
-        score
-    );
-}
-
 // ============================================================================
 // Real JPEG artifact tests - pinned expected values for regression detection
 // ============================================================================
@@ -155,22 +138,22 @@ const REAL_IMAGE_CASES: &[RealImageTestCase] = &[
     RealImageTestCase {
         name: "JPEG Q20",
         distorted_file: "q20.jpg",
-        expected_simd: 57.068235, // Pinned SIMD value (captured 2026-01-05)
+        expected_simd: 57.050253, // Pinned SIMD value (archmage, captured 2026-02-08)
     },
     RealImageTestCase {
         name: "JPEG Q45",
         distorted_file: "q45.jpg",
-        expected_simd: 68.675922, // Pinned SIMD value (captured 2026-01-05)
+        expected_simd: 68.667417, // Pinned SIMD value (archmage, captured 2026-02-08)
     },
     RealImageTestCase {
         name: "JPEG Q70",
         distorted_file: "q70.jpg",
-        expected_simd: 79.506851, // Pinned SIMD value (captured 2026-01-05)
+        expected_simd: 79.471816, // Pinned SIMD value (archmage, captured 2026-02-08)
     },
     RealImageTestCase {
         name: "JPEG Q90",
         distorted_file: "q90.jpg",
-        expected_simd: 90.669876, // Pinned SIMD value (captured 2026-01-05)
+        expected_simd: 90.750237, // Pinned SIMD value (archmage, captured 2026-02-08)
     },
 ];
 
@@ -239,44 +222,6 @@ fn test_scalar_vs_simd_real_images() {
     }
 }
 
-#[test]
-#[cfg(feature = "unsafe-simd")]
-fn test_simd_vs_unsafe_simd_real_images() {
-    let source = load_image("source.png");
-
-    for case in REAL_IMAGE_CASES {
-        let distorted = load_image(case.distorted_file);
-
-        let simd_score = compute_frame_ssimulacra2_with_config(
-            source.clone(),
-            distorted.clone(),
-            Ssimulacra2Config::simd(),
-        )
-        .unwrap();
-
-        let unsafe_score = compute_frame_ssimulacra2_with_config(
-            source.clone(),
-            distorted,
-            Ssimulacra2Config::unsafe_simd(),
-        )
-        .unwrap();
-
-        let diff = (simd_score - unsafe_score).abs();
-        // 1% relative tolerance
-        let tolerance = simd_score.abs() * 0.01;
-
-        assert!(
-            diff < tolerance,
-            "{}: SIMD vs UnsafeSimd mismatch. simd={:.6}, unsafe={:.6}, diff={:.6}, tolerance={:.6}",
-            case.name,
-            simd_score,
-            unsafe_score,
-            diff,
-            tolerance
-        );
-    }
-}
-
 // ============================================================================
 // Synthetic image tests - for broader coverage
 // ============================================================================
@@ -313,44 +258,6 @@ fn test_scalar_vs_simd_synthetic() {
             height,
             scalar_score,
             simd_score,
-            diff
-        );
-    }
-}
-
-#[test]
-#[cfg(feature = "unsafe-simd")]
-fn test_simd_vs_unsafe_simd_synthetic() {
-    let sizes = [(64, 64), (256, 256), (512, 512)];
-
-    for (width, height) in sizes {
-        let (source_data, distorted_data) = create_synthetic_images(width, height);
-
-        let simd_score = compute_score_from_data(
-            &source_data,
-            &distorted_data,
-            width,
-            height,
-            Ssimulacra2Config::simd(),
-        );
-        let unsafe_score = compute_score_from_data(
-            &source_data,
-            &distorted_data,
-            width,
-            height,
-            Ssimulacra2Config::unsafe_simd(),
-        );
-
-        let diff = (simd_score - unsafe_score).abs();
-        let tolerance = simd_score.abs() * 0.01;
-
-        assert!(
-            diff < tolerance,
-            "{}x{}: SIMD vs UnsafeSimd mismatch. simd={:.6}, unsafe={:.6}, diff={:.6}",
-            width,
-            height,
-            simd_score,
-            unsafe_score,
             diff
         );
     }

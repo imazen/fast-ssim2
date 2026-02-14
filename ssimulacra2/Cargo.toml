@@ -1,10 +1,10 @@
 [package]
 name = "fast-ssim2"
 version = "0.7.0"
-edition = "2021"
+edition = "2024"
 description = "Fast SSIMULACRA2 image quality metric with SIMD acceleration"
-repository = "https://github.com/imazen/ssimulacra2"
-homepage = "https://github.com/imazen/ssimulacra2"
+repository = "https://github.com/imazen/fast-ssim2"
+homepage = "https://github.com/imazen/fast-ssim2"
 documentation = "https://docs.rs/fast-ssim2"
 readme = "../README.md"
 exclude = ["test_data"]
@@ -16,20 +16,19 @@ categories = ["multimedia::images", "algorithms"]
 rust-version = "1.89.0"
 
 [dependencies]
+archmage = { version = "0.7", features = ["macros", "safe_unaligned_simd"] }
 imgref = { version = "1.12", optional = true }
-multiversion = "0.8"
+magetypes = "0.7"
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
-safe_unaligned_simd = { version = "0.2.4", optional = true }
 thiserror = "2.0.18"
-wide = "1.1.1"
 yuvxyb = "0.4.1"
 
 [build-dependencies.yuvxyb-math]
 version = "0.1"
 
 [dev-dependencies]
-criterion = "0.8.0"
+criterion = { version = "0.8.0", default-features = false, features = ["cargo_bench_support", "plotters"] }
 image = "0.25.9"
 rand = "0.10"
 chrono = "0.4"
@@ -38,19 +37,16 @@ which = "8.0"
 sha2 = "0.10"
 
 [features]
-default = ["simd", "unsafe-simd"]
+default = []
 imgref = ["dep:imgref"]  # Support for imgref image types
 rayon = ["dep:rayon"]
-simd = []        # Safe SIMD via wide crate
-unsafe-simd = ["dep:safe_unaligned_simd"] # x86 intrinsics with safe memory access
 
 [[bench]]
 name = "benches"
 harness = false
 
-[lints.rust]
-# Silence warnings from multiversion macro's retpoline feature checks
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(target_feature, values(\"retpoline\", \"retpoline-indirect-branches\", \"retpoline-indirect-calls\"))"] }
-
 [lints.clippy]
 uninlined_format_args = "allow"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("avx512"))'] }

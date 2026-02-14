@@ -38,9 +38,9 @@
 use crate::blur::Blur;
 use crate::input::ToLinearRgb;
 use crate::{
-    downscale_by_2, edge_diff_map, image_multiply, linear_rgb_to_xyb_simd, make_positive_xyb,
-    ssim_map, xyb_to_planar, LinearRgb, Msssim, MsssimScale, SimdImpl, Ssimulacra2Error,
-    NUM_SCALES,
+    LinearRgb, Msssim, MsssimScale, NUM_SCALES, SimdImpl, Ssimulacra2Error, downscale_by_2,
+    edge_diff_map, image_multiply, linear_rgb_to_xyb_simd, make_positive_xyb, ssim_map,
+    xyb_to_planar,
 };
 
 /// Precomputed reference data for a single scale.

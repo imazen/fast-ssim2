@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use fast_ssim2::{
-    compute_frame_ssimulacra2, Blur, ColorPrimaries, Frame, MatrixCoefficients, Plane,
-    TransferCharacteristic, Yuv, YuvConfig,
+    Blur, ColorPrimaries, Frame, MatrixCoefficients, Plane, TransferCharacteristic, Yuv, YuvConfig,
+    compute_frame_ssimulacra2,
 };
 use num_traits::clamp;
 use rand::RngExt;

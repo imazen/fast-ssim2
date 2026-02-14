@@ -116,19 +116,13 @@
 //!
 //! ## SIMD Configuration
 //!
-//! By default, the crate uses safe SIMD via the `wide` crate. For maximum
-//! performance on x86_64, enable the `unsafe-simd` feature:
-//!
-//! ```toml
-//! [dependencies]
-//! fast-ssim2 = { version = "0.6", features = ["unsafe-simd"] }
-//! ```
+//! SIMD is enabled by default via the `archmage` crate, providing cross-platform
+//! acceleration on x86_64 (AVX2, AVX-512), AArch64 (NEON), and WASM (SIMD128).
 //!
 //! | Backend | Speed | Platforms |
 //! |---------|-------|-----------|
 //! | `Scalar` | 1.0× (baseline) | All |
-//! | `Simd` (default) | 2.5× | All (via `wide` crate) |
-//! | `UnsafeSimd` | 3.0× | x86_64 with AVX2 |
+//! | `Simd` (default) | 2-3× | x86_64, AArch64, WASM |
 //!
 //! To explicitly select a backend:
 //!
@@ -140,7 +134,7 @@
 //! let score = compute_ssimulacra2_with_config(
 //!     source,
 //!     distorted,
-//!     Ssimulacra2Config::scalar(), // or ::simd(), ::unsafe_simd()
+//!     Ssimulacra2Config::scalar(), // or ::simd()
 //! )?;
 //! # Ok::<(), fast_ssim2::Ssimulacra2Error>(())
 //! ```
@@ -149,8 +143,6 @@
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `simd` | ✓ | Safe SIMD via `wide` crate |
-//! | `unsafe-simd` | ✓ | x86_64 intrinsics (faster) |
 //! | `imgref` | | Support for `imgref` image types |
 //! | `rayon` | | Parallel computation |
 //!
@@ -158,6 +150,8 @@
 //!
 //! - **Minimum image size:** 8×8 pixels
 //! - **MSRV:** 1.89.0
+
+#![forbid(unsafe_code)]
 
 mod blur;
 mod input;
@@ -167,12 +161,6 @@ mod precompute;
 pub mod reference_data;
 mod simd_ops;
 mod xyb_simd;
-
-#[cfg(feature = "unsafe-simd")]
-mod xyb_unsafe_simd;
-
-#[cfg(feature = "unsafe-simd")]
-mod ssim_unsafe_simd;
 
 pub use blur::Blur;
 pub use input::{LinearRgbImage, ToLinearRgb};
@@ -184,13 +172,10 @@ pub use yuvxyb::{
 };
 
 // Re-export sRGB conversion functions for users implementing custom input types
-pub use input::{srgb_to_linear, srgb_u16_to_linear, srgb_u8_to_linear};
+pub use input::{srgb_to_linear, srgb_u8_to_linear, srgb_u16_to_linear};
 
 // Internal imports for XYB color space
 use yuvxyb::Xyb;
-
-#[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
-use safe_unaligned_simd::x86_64 as safe_simd;
 
 // How often to downscale and score the input images.
 // Each scaling step will downscale by a factor of two.
@@ -201,12 +186,9 @@ pub(crate) const NUM_SCALES: usize = 6;
 pub enum SimdImpl {
     /// Scalar implementation (baseline, most portable)
     Scalar,
-    /// Safe SIMD via wide crate (default, good balance of speed and safety)
+    /// Cross-platform SIMD via archmage (default, AVX2/AVX-512/NEON/WASM128)
     #[default]
     Simd,
-    /// Raw x86 intrinsics (fastest, requires unsafe-simd feature)
-    #[cfg(feature = "unsafe-simd")]
-    UnsafeSimd,
 }
 
 impl SimdImpl {
@@ -214,9 +196,7 @@ impl SimdImpl {
     pub fn name(&self) -> &'static str {
         match self {
             SimdImpl::Scalar => "scalar",
-            SimdImpl::Simd => "simd (wide crate)",
-            #[cfg(feature = "unsafe-simd")]
-            SimdImpl::UnsafeSimd => "unsafe-simd (raw intrinsics)",
+            SimdImpl::Simd => "simd (archmage)",
         }
     }
 }
@@ -234,15 +214,9 @@ impl Ssimulacra2Config {
         Self { impl_type }
     }
 
-    /// Default configuration using safe SIMD for all operations
+    /// Default configuration using SIMD for all operations
     pub fn simd() -> Self {
         Self::new(SimdImpl::Simd)
-    }
-
-    /// Configuration using unsafe SIMD for all operations (fastest)
-    #[cfg(feature = "unsafe-simd")]
-    pub fn unsafe_simd() -> Self {
-        Self::new(SimdImpl::UnsafeSimd)
     }
 
     /// Scalar configuration (baseline, most compatible)
@@ -462,14 +436,6 @@ fn linear_rgb_to_xyb(linear_rgb: LinearRgb, impl_type: SimdImpl) -> Xyb {
             xyb_simd::linear_rgb_to_xyb_simd(&mut data);
             Xyb::new(data, width, height).expect("XYB construction should not fail")
         }
-        #[cfg(feature = "unsafe-simd")]
-        SimdImpl::UnsafeSimd => {
-            let width = linear_rgb.width();
-            let height = linear_rgb.height();
-            let mut data = linear_rgb.into_data();
-            xyb_unsafe_simd::linear_rgb_to_xyb_unsafe(&mut data);
-            Xyb::new(data, width, height).expect("XYB construction should not fail")
-        }
     }
 }
 
@@ -486,11 +452,6 @@ pub(crate) fn make_positive_xyb(xyb: &mut Xyb) {
     }
 }
 
-// Note: make_positive_xyb doesn't benefit much from AVX2 due to complex RGB3 deinterleaving
-// The scalar version is already well-optimized by the compiler
-
-// Note: xyb_to_planar doesn't benefit much from AVX2 due to complex RGB3 deinterleaving
-// The scalar version is already well-optimized by the compiler
 pub(crate) fn xyb_to_planar(xyb: &Xyb) -> [Vec<f32>; 3] {
     let size = xyb.width() * xyb.height();
     let mut out = [vec![0.0f32; size], vec![0.0f32; size], vec![0.0f32; size]];
@@ -524,18 +485,6 @@ pub(crate) fn image_multiply(
     match impl_type {
         SimdImpl::Scalar => image_multiply_scalar(img1, img2, out),
         SimdImpl::Simd => simd_ops::image_multiply_simd(img1, img2, out),
-        #[cfg(feature = "unsafe-simd")]
-        SimdImpl::UnsafeSimd => {
-            #[cfg(target_arch = "x86_64")]
-            {
-                if is_x86_feature_detected!("avx2") {
-                    unsafe { image_multiply_avx2(img1, img2, out) };
-                    return;
-                }
-            }
-            // Fallback to portable SIMD if AVX2 not available
-            simd_ops::image_multiply_simd(img1, img2, out);
-        }
     }
 }
 
@@ -543,35 +492,6 @@ fn image_multiply_scalar(img1: &[Vec<f32>; 3], img2: &[Vec<f32>; 3], out: &mut [
     for ((plane1, plane2), out_plane) in img1.iter().zip(img2.iter()).zip(out.iter_mut()) {
         for ((&p1, &p2), o) in plane1.iter().zip(plane2.iter()).zip(out_plane.iter_mut()) {
             *o = p1 * p2;
-        }
-    }
-}
-
-#[cfg(all(feature = "unsafe-simd", target_arch = "x86_64"))]
-#[target_feature(enable = "avx2")]
-unsafe fn image_multiply_avx2(img1: &[Vec<f32>; 3], img2: &[Vec<f32>; 3], out: &mut [Vec<f32>; 3]) {
-    use std::arch::x86_64::*;
-
-    for c in 0..3 {
-        let plane1 = &img1[c];
-        let plane2 = &img2[c];
-        let out_plane = &mut out[c];
-        let len = plane1.len();
-
-        let chunks_8 = len / 8;
-        for chunk in 0..chunks_8 {
-            let base = chunk * 8;
-            // Safe loads via safe_unaligned_simd
-            let v1 = safe_simd::_mm256_loadu_ps(plane1[base..].first_chunk::<8>().unwrap());
-            let v2 = safe_simd::_mm256_loadu_ps(plane2[base..].first_chunk::<8>().unwrap());
-            let result = _mm256_mul_ps(v1, v2);
-            // Safe store
-            safe_simd::_mm256_storeu_ps(out_plane[base..].first_chunk_mut::<8>().unwrap(), result);
-        }
-
-        // Remainder
-        for i in (chunks_8 * 8)..len {
-            out_plane[i] = plane1[i] * plane2[i];
         }
     }
 }
@@ -620,10 +540,6 @@ pub(crate) fn ssim_map(
     match impl_type {
         SimdImpl::Scalar => ssim_map_scalar(width, height, m1, m2, s11, s22, s12),
         SimdImpl::Simd => simd_ops::ssim_map_simd(width, height, m1, m2, s11, s22, s12),
-        #[cfg(feature = "unsafe-simd")]
-        SimdImpl::UnsafeSimd => {
-            ssim_unsafe_simd::ssim_map_unsafe(width, height, m1, m2, s11, s22, s12)
-        }
     }
 }
 
@@ -687,10 +603,6 @@ pub(crate) fn edge_diff_map(
     match impl_type {
         SimdImpl::Scalar => edge_diff_map_scalar(width, height, img1, mu1, img2, mu2),
         SimdImpl::Simd => simd_ops::edge_diff_map_simd(width, height, img1, mu1, img2, mu2),
-        #[cfg(feature = "unsafe-simd")]
-        SimdImpl::UnsafeSimd => {
-            ssim_unsafe_simd::edge_diff_map_unsafe(width, height, img1, mu1, img2, mu2)
-        }
     }
 }
 

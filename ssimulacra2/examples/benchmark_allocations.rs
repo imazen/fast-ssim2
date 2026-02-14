@@ -2,13 +2,12 @@
 //!
 //! Run with:
 //!   cargo run --release --example benchmark_allocations
-//!   cargo run --release --example benchmark_allocations --features unsafe-simd
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use fast_ssim2::{compute_frame_ssimulacra2_with_config, Ssimulacra2Config};
+use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
 // Custom allocator that tracks allocations
@@ -23,19 +22,19 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
         ALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
-        System.alloc(layout)
+        unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         DEALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
         DEALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
-        System.dealloc(ptr, layout)
+        unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         DEALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
         ALLOC_BYTES.fetch_add(new_size, Ordering::Relaxed);
-        System.realloc(ptr, layout, new_size)
+        unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
 
@@ -174,30 +173,6 @@ fn main() {
             format_bytes(bytes),
             bytes_per_pixel
         );
-    }
-
-    #[cfg(feature = "unsafe-simd")]
-    {
-        println!("\nUnsafe SIMD configuration:");
-        println!(
-            "{:12} {:>10} {:>12} {:>14} {:>10}",
-            "Size", "Time (ms)", "Allocs", "Bytes", "Bytes/px"
-        );
-        println!("{:-<65}", "");
-
-        for (w, h, name) in &sizes {
-            let (ms, allocs, bytes) =
-                benchmark_with_tracking(*w, *h, Ssimulacra2Config::unsafe_simd());
-            let bytes_per_pixel = bytes as f64 / (*w * *h) as f64;
-            println!(
-                "{:12} {:>10.1} {:>12} {:>14} {:>10.1}",
-                name,
-                ms,
-                allocs,
-                format_bytes(bytes),
-                bytes_per_pixel
-            );
-        }
     }
 
     println!("\nDone.");
