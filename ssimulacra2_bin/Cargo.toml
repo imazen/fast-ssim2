@@ -8,7 +8,7 @@ homepage = "https://github.com/imazen/fast-ssim2"
 license = "BSD-2-Clause"
 
 # When changing MSRV: Also update .github/workflows/rust.yml
-rust-version = "1.74"
+rust-version = "1.85"
 
 [dependencies]
 anyhow = "1.0.101"
