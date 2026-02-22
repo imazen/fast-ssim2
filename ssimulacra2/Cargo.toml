@@ -16,9 +16,9 @@ categories = ["multimedia::images", "algorithms"]
 rust-version = "1.89.0"
 
 [dependencies]
-archmage = { version = "0.7", features = ["macros", "safe_unaligned_simd"] }
+archmage = { version = "0.8.3", features = ["macros", "safe_unaligned_simd"] }
 imgref = { version = "1.12", optional = true }
-magetypes = "0.7"
+magetypes = "0.8.3"
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
 thiserror = "2.0.18"
