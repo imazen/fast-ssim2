@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 use std::io::stderr;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use av_metrics_decoders::{y4m::new_decoder_from_stdin, Decoder, VapoursynthDecoder};
+use av_metrics_decoders::{Decoder, VapoursynthDecoder, y4m::new_decoder_from_stdin};
 use crossterm::tty::IsTty;
 use fast_ssim2::{
-    compute_frame_ssimulacra2, ColorPrimaries, MatrixCoefficients, Pixel, TransferCharacteristic,
-    Yuv, YuvConfig,
+    ColorPrimaries, MatrixCoefficients, Pixel, TransferCharacteristic, Yuv, YuvConfig,
+    compute_frame_ssimulacra2,
 };
 use image::ColorType;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};

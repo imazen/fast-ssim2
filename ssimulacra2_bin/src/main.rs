@@ -6,7 +6,7 @@ use self::video::*;
 use clap::{Parser, Subcommand};
 #[cfg(feature = "video")]
 use fast_ssim2::MatrixCoefficients;
-use fast_ssim2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
