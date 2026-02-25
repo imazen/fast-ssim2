@@ -304,8 +304,8 @@ where
     S: ToLinearRgb,
     D: ToLinearRgb,
 {
-    let img1: LinearRgb = source.to_linear_rgb().into();
-    let img2: LinearRgb = distorted.to_linear_rgb().into();
+    let img1: LinearRgb = source.into_linear_rgb().into();
+    let img2: LinearRgb = distorted.into_linear_rgb().into();
     compute_frame_ssimulacra2_impl(img1, img2, config)
 }
 

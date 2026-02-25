@@ -80,7 +80,7 @@ impl Ssimulacra2Reference {
     /// # Errors
     /// - If the image is smaller than 8x8 pixels
     pub fn new<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
-        let mut img1: LinearRgb = source.to_linear_rgb().into();
+        let mut img1: LinearRgb = source.into_linear_rgb().into();
         if img1.width() < 8 || img1.height() < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
@@ -148,7 +148,7 @@ impl Ssimulacra2Reference {
     /// # Errors
     /// - If the distorted image dimensions don't match the reference
     pub fn compare<T: ToLinearRgb>(&self, distorted: T) -> Result<f64, Ssimulacra2Error> {
-        let mut img2: LinearRgb = distorted.to_linear_rgb().into();
+        let mut img2: LinearRgb = distorted.into_linear_rgb().into();
         if img2.width() != self.original_width || img2.height() != self.original_height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }

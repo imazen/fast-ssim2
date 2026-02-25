@@ -63,15 +63,34 @@ impl LinearRgbImage {
 /// Trait for converting image types to linear RGB.
 ///
 /// Implement this trait to add support for custom image types.
+///
+/// Override [`into_linear_rgb`](ToLinearRgb::into_linear_rgb) for owned types
+/// that can convert in-place without allocating a new pixel buffer.
 pub trait ToLinearRgb {
-    /// Convert to linear RGB image.
+    /// Convert to linear RGB image (borrowing).
     fn to_linear_rgb(&self) -> LinearRgbImage;
+
+    /// Convert to linear RGB image, consuming self.
+    ///
+    /// The default implementation calls [`to_linear_rgb`](ToLinearRgb::to_linear_rgb).
+    /// Override this for owned types that can reuse their pixel buffer
+    /// to avoid allocation.
+    fn into_linear_rgb(self) -> LinearRgbImage
+    where
+        Self: Sized,
+    {
+        self.to_linear_rgb()
+    }
 }
 
 /// Identity implementation for already-converted images.
 impl ToLinearRgb for LinearRgbImage {
     fn to_linear_rgb(&self) -> LinearRgbImage {
         self.clone()
+    }
+
+    fn into_linear_rgb(self) -> LinearRgbImage {
+        self
     }
 }
 
@@ -92,18 +111,18 @@ pub fn srgb_to_linear(s: f32) -> f32 {
 
     // Rational polynomial coefficients from libjxl TF_SRGB
     const P: [f32; 5] = [
-        2.200_248_328e-04,
-        1.043_637_593e-02,
-        1.624_820_318e-01,
-        7.961_564_959e-01,
-        8.210_152_774e-01,
+        2.200_248_3e-4,
+        1.043_637_6e-2,
+        1.624_820_4e-1,
+        7.961_565e-1,
+        8.210_153e-1,
     ];
     const Q: [f32; 5] = [
-        2.631_846_970e-01,
-        1.076_976_492e+00,
-        4.987_528_350e-01,
-        -5.512_498_495e-02,
-        6.521_209_011e-03,
+        2.631_847e-1,
+        1.076_976_5,
+        4.987_528_3e-1,
+        -5.512_498_3e-2,
+        6.521_209e-3,
     ];
 
     let x = s.abs();
@@ -111,8 +130,16 @@ pub fn srgb_to_linear(s: f32) -> f32 {
         x * LOW_DIV_INV
     } else {
         // Horner's: p[4]*x^4 + p[3]*x^3 + p[2]*x^2 + p[1]*x + p[0]
-        let num = P[4].mul_add(x, P[3]).mul_add(x, P[2]).mul_add(x, P[1]).mul_add(x, P[0]);
-        let den = Q[4].mul_add(x, Q[3]).mul_add(x, Q[2]).mul_add(x, Q[1]).mul_add(x, Q[0]);
+        let num = P[4]
+            .mul_add(x, P[3])
+            .mul_add(x, P[2])
+            .mul_add(x, P[1])
+            .mul_add(x, P[0]);
+        let den = Q[4]
+            .mul_add(x, Q[3])
+            .mul_add(x, Q[2])
+            .mul_add(x, Q[1])
+            .mul_add(x, Q[0]);
         num / den
     }
 }
@@ -222,6 +249,12 @@ impl ToLinearRgb for yuvxyb::LinearRgb {
     fn to_linear_rgb(&self) -> LinearRgbImage {
         LinearRgbImage::new(self.data().to_vec(), self.width(), self.height())
     }
+
+    fn into_linear_rgb(self) -> LinearRgbImage {
+        let width = self.width();
+        let height = self.height();
+        LinearRgbImage::new(self.into_data(), width, height)
+    }
 }
 
 // =============================================================================
@@ -251,6 +284,25 @@ impl ToLinearRgb for yuvxyb::Rgb {
             let linear: yuvxyb::LinearRgb = yuvxyb::LinearRgb::try_from(self.clone())
                 .expect("Rgb to LinearRgb conversion should not fail");
             linear.to_linear_rgb()
+        }
+    }
+
+    fn into_linear_rgb(self) -> LinearRgbImage {
+        let width = self.width();
+        let height = self.height();
+        if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
+            // Consume the Rgb, linearize in-place — zero allocation
+            let mut data = self.into_data();
+            for pixel in &mut data {
+                pixel[0] = srgb_to_linear(pixel[0]);
+                pixel[1] = srgb_to_linear(pixel[1]);
+                pixel[2] = srgb_to_linear(pixel[2]);
+            }
+            LinearRgbImage::new(data, width, height)
+        } else {
+            let linear: yuvxyb::LinearRgb = yuvxyb::LinearRgb::try_from(self)
+                .expect("Rgb to LinearRgb conversion should not fail");
+            linear.into_linear_rgb()
         }
     }
 }
