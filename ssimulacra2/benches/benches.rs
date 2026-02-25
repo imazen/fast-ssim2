@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use fast_ssim2::{
-    Blur, ColorPrimaries, Frame, MatrixCoefficients, Plane, TransferCharacteristic, Yuv, YuvConfig,
-    compute_frame_ssimulacra2,
+    Blur, ColorPrimaries, Frame, MatrixCoefficients, Plane, Rgb, TransferCharacteristic, Yuv,
+    YuvConfig, compute_frame_ssimulacra2, compute_ssimulacra2,
 };
 use num_traits::clamp;
 use rand::RngExt;
@@ -143,5 +143,75 @@ fn bench_blur(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_ssimulacra2, bench_blur);
+fn make_rgb_pair(width: usize, height: usize) -> (Rgb, Rgb) {
+    let mut rng = rand::rng();
+    let source_data: Vec<[f32; 3]> = (0..width * height)
+        .map(|_| {
+            [
+                rng.random_range(0.0f32..=1.0),
+                rng.random_range(0.0f32..=1.0),
+                rng.random_range(0.0f32..=1.0),
+            ]
+        })
+        .collect();
+
+    let distorted_data: Vec<[f32; 3]> = source_data
+        .iter()
+        .map(|&[r, g, b]| {
+            [
+                clamp(r + rng.random_range(-0.05f32..=0.05), 0.0, 1.0),
+                clamp(g + rng.random_range(-0.05f32..=0.05), 0.0, 1.0),
+                clamp(b + rng.random_range(-0.05f32..=0.05), 0.0, 1.0),
+            ]
+        })
+        .collect();
+
+    let source = Rgb::new(
+        source_data,
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
+
+    let distorted = Rgb::new(
+        distorted_data,
+        width,
+        height,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .unwrap();
+
+    (source, distorted)
+}
+
+fn bench_ssimulacra2_rgb(c: &mut Criterion) {
+    // 320x240
+    let (source, distorted) = make_rgb_pair(320, 240);
+    c.bench_function("ssimulacra2_rgb_320x240", |b| {
+        b.iter(|| {
+            compute_ssimulacra2(black_box(source.clone()), black_box(distorted.clone())).unwrap()
+        })
+    });
+
+    // 1920x1080 (FHD)
+    let (source, distorted) = make_rgb_pair(1920, 1080);
+    c.bench_function("ssimulacra2_rgb_1920x1080", |b| {
+        b.iter(|| {
+            compute_ssimulacra2(black_box(source.clone()), black_box(distorted.clone())).unwrap()
+        })
+    });
+
+    // 3840x2160 (4K)
+    let (source, distorted) = make_rgb_pair(3840, 2160);
+    c.bench_function("ssimulacra2_rgb_3840x2160", |b| {
+        b.iter(|| {
+            compute_ssimulacra2(black_box(source.clone()), black_box(distorted.clone())).unwrap()
+        })
+    });
+}
+
+criterion_group!(benches, bench_ssimulacra2, bench_ssimulacra2_rgb, bench_blur);
 criterion_main!(benches);
