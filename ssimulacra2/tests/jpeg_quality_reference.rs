@@ -9,7 +9,7 @@
 //! C++ reference binary: libjxl/build/tools/ssimulacra2
 //! Captured: 2026-01-04
 
-use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2};
+use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::Rgb;
@@ -96,8 +96,8 @@ fn test_jpeg_quality_vs_cpp_reference() {
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
 
-        let score = compute_frame_ssimulacra2(source.clone(), distorted)
-            .expect("SSIMULACRA2 computation failed");
+        let score =
+            compute_ssimulacra2(source.clone(), distorted).expect("SSIMULACRA2 computation failed");
 
         let error = (score - case.cpp_score).abs();
 
@@ -128,8 +128,8 @@ fn test_jpeg_quality_ordering() {
 
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
-        let score = compute_frame_ssimulacra2(source.clone(), distorted)
-            .expect("SSIMULACRA2 computation failed");
+        let score =
+            compute_ssimulacra2(source.clone(), distorted).expect("SSIMULACRA2 computation failed");
 
         assert!(
             score > prev_score,
@@ -147,8 +147,6 @@ fn test_jpeg_quality_ordering() {
 
 #[test]
 fn test_jpeg_quality_with_configs() {
-    use fast_ssim2::compute_frame_ssimulacra2_with_config;
-
     let source = load_image("source.png");
     let distorted = load_image("q70.jpg");
     let cpp_score = 79.38805044;
@@ -160,9 +158,8 @@ fn test_jpeg_quality_with_configs() {
     ];
 
     for (name, config) in configs {
-        let score =
-            compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config)
-                .expect("SSIMULACRA2 computation failed");
+        let score = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config)
+            .expect("SSIMULACRA2 computation failed");
 
         let error = (score - cpp_score).abs();
         println!("{}: score={:.6}, error from C++={:.6}", name, score, error);

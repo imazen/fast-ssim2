@@ -211,10 +211,21 @@ impl From<LinearRgbImage> for yuvxyb::LinearRgb {
 
 impl ToLinearRgb for yuvxyb::Rgb {
     fn to_linear_rgb(&self) -> LinearRgbImage {
-        // yuvxyb::Rgb handles the sRGB -> linear conversion internally via TryFrom
-        let linear: yuvxyb::LinearRgb = yuvxyb::LinearRgb::try_from(self.clone())
-            .expect("Rgb to LinearRgb conversion should not fail");
-        linear.to_linear_rgb()
+        if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
+            // Use our own IEC 61966-2-1 sRGB linearization (standard constants)
+            // instead of yuvxyb's smoothed variant, for C++ ssimulacra2 parity.
+            let data: Vec<[f32; 3]> = self
+                .data()
+                .iter()
+                .map(|&[r, g, b]| [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b)])
+                .collect();
+            LinearRgbImage::new(data, self.width(), self.height())
+        } else {
+            // For non-sRGB transfers, fall back to yuvxyb's conversion
+            let linear: yuvxyb::LinearRgb = yuvxyb::LinearRgb::try_from(self.clone())
+                .expect("Rgb to LinearRgb conversion should not fail");
+            linear.to_linear_rgb()
+        }
     }
 }
 

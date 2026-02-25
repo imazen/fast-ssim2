@@ -254,7 +254,7 @@ impl Ssimulacra2Reference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute_frame_ssimulacra2;
+    use crate::compute_ssimulacra2;
     use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
     #[test]
@@ -302,7 +302,7 @@ mod tests {
             ColorPrimaries::BT709,
         )
         .unwrap();
-        let full_score = compute_frame_ssimulacra2(source_clone, distorted.clone()).unwrap();
+        let full_score = compute_ssimulacra2(source_clone, distorted.clone()).unwrap();
 
         // Compute using precomputed reference
         let precomputed = Ssimulacra2Reference::new(source).unwrap();

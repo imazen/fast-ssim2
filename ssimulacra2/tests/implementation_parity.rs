@@ -2,7 +2,7 @@
 //!
 //! This ensures Scalar and Simd (archmage) backends compute the same results.
 
-use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
+use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
@@ -86,7 +86,7 @@ fn compute_score_from_data(
     )
     .unwrap();
 
-    compute_frame_ssimulacra2_with_config(source, distorted, config).unwrap()
+    compute_ssimulacra2_with_config(source, distorted, config).unwrap()
 }
 
 // ============================================================================
@@ -97,7 +97,7 @@ fn compute_score_from_data(
 fn test_identical_images_exact_score_scalar() {
     let source = load_image("source.png");
     let score =
-        compute_frame_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::scalar())
+        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::scalar())
             .unwrap();
     assert_eq!(
         score, 100.0,
@@ -110,8 +110,7 @@ fn test_identical_images_exact_score_scalar() {
 fn test_identical_images_exact_score_simd() {
     let source = load_image("source.png");
     let score =
-        compute_frame_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::simd())
-            .unwrap();
+        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::simd()).unwrap();
     assert_eq!(
         score, 100.0,
         "SIMD: identical images must score exactly 100.0, got {}",
@@ -138,22 +137,22 @@ const REAL_IMAGE_CASES: &[RealImageTestCase] = &[
     RealImageTestCase {
         name: "JPEG Q20",
         distorted_file: "q20.jpg",
-        expected_simd: 57.068866, // Pinned SIMD value (f32 parity, captured 2026-02-24)
+        expected_simd: 57.097552, // Pinned SIMD value (IEC sRGB, captured 2026-02-25)
     },
     RealImageTestCase {
         name: "JPEG Q45",
         distorted_file: "q45.jpg",
-        expected_simd: 68.653096, // Pinned SIMD value (f32 parity, captured 2026-02-24)
+        expected_simd: 68.662506, // Pinned SIMD value (IEC sRGB, captured 2026-02-25)
     },
     RealImageTestCase {
         name: "JPEG Q70",
         distorted_file: "q70.jpg",
-        expected_simd: 79.464676, // Pinned SIMD value (f32 parity, captured 2026-02-24)
+        expected_simd: 79.435658, // Pinned SIMD value (IEC sRGB, captured 2026-02-25)
     },
     RealImageTestCase {
         name: "JPEG Q90",
         distorted_file: "q90.jpg",
-        expected_simd: 90.761442, // Pinned SIMD value (f32 parity, captured 2026-02-24)
+        expected_simd: 90.814053, // Pinned SIMD value (IEC sRGB, captured 2026-02-25)
     },
 ];
 
@@ -166,12 +165,9 @@ fn test_simd_scores_pinned_real_images() {
 
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
-        let score = compute_frame_ssimulacra2_with_config(
-            source.clone(),
-            distorted,
-            Ssimulacra2Config::simd(),
-        )
-        .unwrap();
+        let score =
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+                .unwrap();
 
         // Exact match - any deviation indicates a regression
         assert!(
@@ -192,19 +188,16 @@ fn test_scalar_vs_simd_real_images() {
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
 
-        let scalar_score = compute_frame_ssimulacra2_with_config(
+        let scalar_score = compute_ssimulacra2_with_config(
             source.clone(),
             distorted.clone(),
             Ssimulacra2Config::scalar(),
         )
         .unwrap();
 
-        let simd_score = compute_frame_ssimulacra2_with_config(
-            source.clone(),
-            distorted,
-            Ssimulacra2Config::simd(),
-        )
-        .unwrap();
+        let simd_score =
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+                .unwrap();
 
         let diff = (scalar_score - simd_score).abs();
         // 1% relative tolerance for FP differences between f64 scalar and f32 SIMD
@@ -276,12 +269,9 @@ fn test_jpeg_quality_ordering_preserved() {
 
     for file in files {
         let distorted = load_image(file);
-        let score = compute_frame_ssimulacra2_with_config(
-            source.clone(),
-            distorted,
-            Ssimulacra2Config::simd(),
-        )
-        .unwrap();
+        let score =
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+                .unwrap();
 
         assert!(
             score > prev_score,

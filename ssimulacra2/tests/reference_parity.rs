@@ -8,7 +8,7 @@
 //!
 //! Run tests with: cargo test --test reference_parity
 
-use fast_ssim2::compute_frame_ssimulacra2;
+use fast_ssim2::compute_ssimulacra2;
 use fast_ssim2::reference_data::{REFERENCE_CASES, ReferenceCase};
 use sha2::{Digest, Sha256};
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
@@ -402,7 +402,7 @@ fn test_reference_parity() {
         )
         .unwrap();
 
-        let score = compute_frame_ssimulacra2(source, distorted).unwrap();
+        let score = compute_ssimulacra2(source, distorted).unwrap();
         let error = (score - case.expected_score).abs();
         max_error = max_error.max(error);
 
@@ -505,7 +505,7 @@ fn test_reference_parity() {
                 ColorPrimaries::BT709,
             )
             .unwrap();
-            let score = compute_frame_ssimulacra2(source, distorted).unwrap();
+            let score = compute_ssimulacra2(source, distorted).unwrap();
             ErrorCase {
                 name: case.name,
                 expected: case.expected_score,
