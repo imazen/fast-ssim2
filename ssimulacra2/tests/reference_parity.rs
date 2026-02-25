@@ -416,8 +416,7 @@ fn test_reference_parity() {
             || case.name.contains("sharpen")
             || case.name.contains("yuv_roundtrip")
         {
-            // SIMD implementations use different rounding than C++ reference
-            0.5 // Allow larger variance for these patterns
+            0.2 // Allow some variance for distortion patterns
         } else if case.name.contains("_vs_")
             || case.name.starts_with("perfect_match")
             || case.name.starts_with("gradient_h_")

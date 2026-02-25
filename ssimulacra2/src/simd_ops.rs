@@ -89,13 +89,14 @@ fn ssim_map_inner_v3(
             let mu2 = m2c[x];
             let mu_diff = mu1 - mu2;
 
-            let num_m = f64::from(mu_diff).mul_add(-f64::from(mu_diff), 1.0f64);
-            let num_s = 2f64.mul_add(f64::from(s12c[x] - mu1 * mu2), f64::from(C2));
-            let denom_s =
-                f64::from(s11c[x] - mu1 * mu1) + f64::from(s22c[x] - mu2 * mu2) + f64::from(C2);
-            let d = (1.0f64 - (num_m * num_s) / denom_s).max(0.0);
-            sum_d += d;
-            sum_d4 += d.powi(4);
+            let num_m = mu_diff.mul_add(-mu_diff, 1.0f32);
+            let num_s = 2.0f32.mul_add(s12c[x] - mu1 * mu2, C2);
+            let denom_s = (s11c[x] - mu1 * mu1) + (s22c[x] - mu2 * mu2) + C2;
+            let d = (1.0f32 - (num_m * num_s) / denom_s).max(0.0f32);
+            let d2 = d * d;
+            let d4 = d2 * d2;
+            sum_d += f64::from(d);
+            sum_d4 += f64::from(d4);
         }
 
         plane_averages[c * 2] = one_per_pixels * sum_d;
@@ -135,13 +136,14 @@ fn ssim_map_inner_scalar(
             let mu2 = m2c[x];
             let mu_diff = mu1 - mu2;
 
-            let num_m = f64::from(mu_diff).mul_add(-f64::from(mu_diff), 1.0f64);
-            let num_s = 2f64.mul_add(f64::from(s12c[x] - mu1 * mu2), f64::from(C2));
-            let denom_s =
-                f64::from(s11c[x] - mu1 * mu1) + f64::from(s22c[x] - mu2 * mu2) + f64::from(C2);
-            let d = (1.0f64 - (num_m * num_s) / denom_s).max(0.0);
-            sum_d += d;
-            sum_d4 += d.powi(4);
+            let num_m = mu_diff.mul_add(-mu_diff, 1.0f32);
+            let num_s = 2.0f32.mul_add(s12c[x] - mu1 * mu2, C2);
+            let denom_s = (s11c[x] - mu1 * mu1) + (s22c[x] - mu2 * mu2) + C2;
+            let d = (1.0f32 - (num_m * num_s) / denom_s).max(0.0f32);
+            let d2 = d * d;
+            let d4 = d2 * d2;
+            sum_d += f64::from(d);
+            sum_d4 += f64::from(d4);
         }
 
         plane_averages[c * 2] = one_per_pixels * sum_d;
@@ -210,13 +212,14 @@ macro_rules! ssim_map_128_body {
                 let mu2 = m2c[x];
                 let mu_diff = mu1 - mu2;
 
-                let num_m = f64::from(mu_diff).mul_add(-f64::from(mu_diff), 1.0f64);
-                let num_s = 2f64.mul_add(f64::from(s12c[x] - mu1 * mu2), f64::from(C2));
-                let denom_s =
-                    f64::from(s11c[x] - mu1 * mu1) + f64::from(s22c[x] - mu2 * mu2) + f64::from(C2);
-                let d = (1.0f64 - (num_m * num_s) / denom_s).max(0.0);
-                sum_d += d;
-                sum_d4 += d.powi(4);
+                let num_m = mu_diff.mul_add(-mu_diff, 1.0f32);
+                let num_s = 2.0f32.mul_add(s12c[x] - mu1 * mu2, C2);
+                let denom_s = (s11c[x] - mu1 * mu1) + (s22c[x] - mu2 * mu2) + C2;
+                let d = (1.0f32 - (num_m * num_s) / denom_s).max(0.0f32);
+                let d2 = d * d;
+                let d4 = d2 * d2;
+                sum_d += f64::from(d);
+                sum_d4 += f64::from(d4);
             }
 
             plane_averages[c * 2] = one_per_pixels * sum_d;

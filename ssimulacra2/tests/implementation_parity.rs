@@ -138,22 +138,22 @@ const REAL_IMAGE_CASES: &[RealImageTestCase] = &[
     RealImageTestCase {
         name: "JPEG Q20",
         distorted_file: "q20.jpg",
-        expected_simd: 57.050253, // Pinned SIMD value (archmage, captured 2026-02-08)
+        expected_simd: 57.068866, // Pinned SIMD value (f32 parity, captured 2026-02-24)
     },
     RealImageTestCase {
         name: "JPEG Q45",
         distorted_file: "q45.jpg",
-        expected_simd: 68.667417, // Pinned SIMD value (archmage, captured 2026-02-08)
+        expected_simd: 68.653096, // Pinned SIMD value (f32 parity, captured 2026-02-24)
     },
     RealImageTestCase {
         name: "JPEG Q70",
         distorted_file: "q70.jpg",
-        expected_simd: 79.471816, // Pinned SIMD value (archmage, captured 2026-02-08)
+        expected_simd: 79.464676, // Pinned SIMD value (f32 parity, captured 2026-02-24)
     },
     RealImageTestCase {
         name: "JPEG Q90",
         distorted_file: "q90.jpg",
-        expected_simd: 90.750237, // Pinned SIMD value (archmage, captured 2026-02-08)
+        expected_simd: 90.761442, // Pinned SIMD value (f32 parity, captured 2026-02-24)
     },
 ];
 

@@ -91,7 +91,7 @@ fn test_jpeg_quality_vs_cpp_reference() {
     let source = load_image("source.png");
 
     // Maximum allowed deviation from C++ reference
-    const MAX_ERROR: f64 = 1.5;
+    const MAX_ERROR: f64 = 0.15;
 
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
@@ -168,7 +168,7 @@ fn test_jpeg_quality_with_configs() {
         println!("{}: score={:.6}, error from C++={:.6}", name, score, error);
 
         assert!(
-            error <= 1.5,
+            error <= 0.15,
             "{} config: score {} differs from C++ reference {} by {}",
             name,
             score,

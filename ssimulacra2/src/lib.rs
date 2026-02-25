@@ -503,22 +503,21 @@ pub(crate) fn downscale_by_2(in_data: &LinearRgb) -> LinearRgb {
     let out_w = in_w.div_ceil(SCALE);
     let out_h = in_h.div_ceil(SCALE);
     let mut out_data = vec![[0.0f32; 3]; out_w * out_h];
+    let normalize = 1.0f32 / (SCALE * SCALE) as f32;
 
     let in_data = &in_data.data();
     for oy in 0..out_h {
         for ox in 0..out_w {
             for c in 0..3 {
-                let mut sum = 0f64;
+                let mut sum = 0f32;
                 for iy in 0..SCALE {
                     for ix in 0..SCALE {
                         let x = (ox * SCALE + ix).min(in_w - 1);
                         let y = (oy * SCALE + iy).min(in_h - 1);
-                        let in_pix = in_data[y * in_w + x];
-                        sum += f64::from(in_pix[c]);
+                        sum += in_data[y * in_w + x][c];
                     }
                 }
-                let out_pix = &mut out_data[oy * out_w + ox];
-                out_pix[c] = (sum / (SCALE * SCALE) as f64) as f32;
+                out_data[oy * out_w + ox][c] = sum * normalize;
             }
         }
     }
@@ -558,7 +557,8 @@ fn ssim_map_scalar(
     let mut plane_averages = [0f64; 3 * 2];
 
     for c in 0..3 {
-        let mut sum1 = [0.0f64; 2];
+        let mut sum_d = 0.0f64;
+        let mut sum_d4 = 0.0f64;
         for (row_m1, (row_m2, (row_s11, (row_s22, row_s12)))) in m1[c].chunks_exact(width).zip(
             m2[c].chunks_exact(width).zip(
                 s11[c]
@@ -574,18 +574,18 @@ fn ssim_map_scalar(
                 let mu12 = mu1 * mu2;
                 let mu_diff = mu1 - mu2;
 
-                let num_m = f64::from(mu_diff).mul_add(-f64::from(mu_diff), 1.0f64);
-                let num_s = 2f64.mul_add(f64::from(row_s12[x] - mu12), f64::from(C2));
-                let denom_s =
-                    f64::from(row_s11[x] - mu11) + f64::from(row_s22[x] - mu22) + f64::from(C2);
-                let mut d = 1.0f64 - (num_m * num_s) / denom_s;
-                d = d.max(0.0);
-                sum1[0] += d;
-                sum1[1] += d.powi(4);
+                let num_m = mu_diff.mul_add(-mu_diff, 1.0f32);
+                let num_s = 2.0f32.mul_add(row_s12[x] - mu12, C2);
+                let denom_s = (row_s11[x] - mu11) + (row_s22[x] - mu22) + C2;
+                let d = (1.0f32 - (num_m * num_s) / denom_s).max(0.0f32);
+                let d2 = d * d;
+                let d4 = d2 * d2;
+                sum_d += f64::from(d);
+                sum_d4 += f64::from(d4);
             }
         }
-        plane_averages[c * 2] = one_per_pixels * sum1[0];
-        plane_averages[c * 2 + 1] = (one_per_pixels * sum1[1]).sqrt().sqrt();
+        plane_averages[c * 2] = one_per_pixels * sum_d;
+        plane_averages[c * 2 + 1] = (one_per_pixels * sum_d4).sqrt().sqrt();
     }
 
     plane_averages
