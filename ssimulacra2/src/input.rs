@@ -81,13 +81,39 @@ impl ToLinearRgb for LinearRgbImage {
 
 /// Convert sRGB (gamma-encoded) value to linear.
 ///
-/// Uses the standard sRGB transfer function.
+/// Uses a degree-4/4 rational polynomial approximation matching libjxl's
+/// `TF_SRGB::DisplayFromEncoded`. Coefficients computed via `af_cheb_rational`
+/// (k=100), approximation error ~5e-7. Evaluated with Horner's scheme using
+/// FMA to match HWY's `EvalRationalPolynomial`.
 #[inline]
 pub fn srgb_to_linear(s: f32) -> f32 {
-    if s <= 0.04045 {
-        s / 12.92
+    const THRESH: f32 = 0.04045;
+    const LOW_DIV_INV: f32 = 1.0 / 12.92;
+
+    // Rational polynomial coefficients from libjxl TF_SRGB
+    const P: [f32; 5] = [
+        2.200_248_328e-04,
+        1.043_637_593e-02,
+        1.624_820_318e-01,
+        7.961_564_959e-01,
+        8.210_152_774e-01,
+    ];
+    const Q: [f32; 5] = [
+        2.631_846_970e-01,
+        1.076_976_492e+00,
+        4.987_528_350e-01,
+        -5.512_498_495e-02,
+        6.521_209_011e-03,
+    ];
+
+    let x = s.abs();
+    if x <= THRESH {
+        x * LOW_DIV_INV
     } else {
-        ((s + 0.055) / 1.055).powf(2.4)
+        // Horner's: p[4]*x^4 + p[3]*x^3 + p[2]*x^2 + p[1]*x + p[0]
+        let num = P[4].mul_add(x, P[3]).mul_add(x, P[2]).mul_add(x, P[1]).mul_add(x, P[0]);
+        let den = Q[4].mul_add(x, Q[3]).mul_add(x, Q[2]).mul_add(x, Q[1]).mul_add(x, Q[0]);
+        num / den
     }
 }
 
