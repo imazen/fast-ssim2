@@ -159,6 +159,7 @@ mod precompute;
 // Reference data for parity testing (hidden from docs but accessible for tests)
 #[doc(hidden)]
 pub mod reference_data;
+#[allow(clippy::too_many_arguments)] // arcane macro generates dispatchers inheriting param count
 mod simd_ops;
 mod xyb_simd;
 

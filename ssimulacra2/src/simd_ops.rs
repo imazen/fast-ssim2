@@ -25,7 +25,6 @@ const LANES: usize = 8;
 /// AVX2 SSIM map computation — processes 8 pixels at a time.
 #[cfg(target_arch = "x86_64")]
 #[arcane]
-#[allow(clippy::too_many_arguments)]
 fn ssim_map_inner_v3(
     token: archmage::X64V3Token,
     width: usize,
@@ -107,7 +106,6 @@ fn ssim_map_inner_v3(
 }
 
 /// Scalar fallback for SSIM map computation.
-#[allow(clippy::too_many_arguments)]
 fn ssim_map_inner_scalar(
     _token: archmage::ScalarToken,
     width: usize,
@@ -233,7 +231,6 @@ macro_rules! ssim_map_128_body {
 /// NEON SSIM map — 4 pixels at a time.
 #[cfg(target_arch = "aarch64")]
 #[arcane]
-#[allow(clippy::too_many_arguments)]
 fn ssim_map_inner_neon(
     token: archmage::NeonToken,
     width: usize,
@@ -250,7 +247,6 @@ fn ssim_map_inner_neon(
 /// WASM SIMD128 SSIM map — 4 pixels at a time.
 #[cfg(target_arch = "wasm32")]
 #[arcane]
-#[allow(clippy::too_many_arguments)]
 fn ssim_map_inner_wasm128(
     token: archmage::Wasm128Token,
     width: usize,
