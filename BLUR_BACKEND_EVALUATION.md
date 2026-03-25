@@ -100,6 +100,8 @@ Regardless, 0.926 max error means the transpose backend matches C++ reference wi
 
 ## Feature Flags
 
+> **Note:** These proposed feature flags were not adopted. The archmage dispatch replaced all blur backends.
+
 ```toml
 [features]
 default = ["rayon", "blur-accurate"]       # Baseline: f64 IIR
