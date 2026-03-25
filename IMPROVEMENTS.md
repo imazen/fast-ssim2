@@ -1,3 +1,5 @@
+> **Historical.** This document describes the pre-archmage development history. Function names referenced here have since been renamed.
+
 # SSIMULACRA2 Rust Port: Improvements Summary
 
 ## Commit Structure (Current)
