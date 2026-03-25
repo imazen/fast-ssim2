@@ -1,3 +1,5 @@
+> **Historical.** This PR description is from the pre-archmage era. API names and file structure have changed.
+
 # Add C++ Reference Testing and Improve Numerical Precision
 
 ## Summary
