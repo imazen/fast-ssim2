@@ -1,3 +1,5 @@
+> **Historical (pre-archmage rewrite).** The API, feature flags, and benchmarks below are from the pre-archmage version and no longer apply. See README.md for current API and performance data.
+
 # SSIMULACRA2 Rust Performance Benchmarks
 
 Captured: 2026-01-04
