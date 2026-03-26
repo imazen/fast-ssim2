@@ -163,6 +163,11 @@ Fork of [rust-av/ssimulacra2](https://github.com/rust-av/ssimulacra2). Thank you
 
 BSD-2-Clause (same as upstream)
 
----
 
-Developed with assistance from Claude (Anthropic). Tested against the C++ reference implementation.
+
+### Upstream Contribution
+
+This is a fork of [rust-av/ssimulacra2](https://github.com/rust-av/ssimulacra2) (BSD-2-Clause).
+We are willing to release our improvements under the original BSD-2-Clause
+license if upstream takes over maintenance of those improvements. We'd rather
+contribute back than maintain a parallel codebase. Open an issue or reach out.
