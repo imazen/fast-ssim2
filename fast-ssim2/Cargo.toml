@@ -28,7 +28,7 @@ yuvxyb = "0.4.2"
 version = "0.1"
 
 [dev-dependencies]
-criterion = { version = "0.8.0", default-features = false, features = ["cargo_bench_support", "plotters"] }
+zenbench = { version = "0.1.1", features = ["criterion-compat"] }
 image = "0.25.10"
 rand = "0.10"
 chrono = "0.4"
