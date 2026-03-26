@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["ssimulacra2", "ssimulacra2_bin"]
+members = ["fast-ssim2", "ssimulacra2_bin"]
 exclude = ["compare_tool"]
 
 [profile.release]

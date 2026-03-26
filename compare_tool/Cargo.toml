@@ -1,0 +1,11 @@
+[package]
+name = "compare-ssim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ssimulacra2 = "0.5.1"
+fast-ssim2 = { path = "../fast-ssim2" }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+imgref = "1"
+yuvxyb = "0.4"
