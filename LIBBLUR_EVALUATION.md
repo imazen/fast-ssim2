@@ -15,7 +15,7 @@ While PR #28 (gembleman) showed 5-6x performance improvement with 0.001-1.1% acc
 - **Only errors**: Synthetic uniform_shift tests (acceptable)
 
 ### Libblur Backend
-- **Max error**: 1041.641814 (1092x worse than baseline!)
+- **Max error**: 1041.641814 (1092x worse than baseline)
 - **Tests failing**: 24/66 (36% failure rate)
 - **WORST case**: `gradient_vs_uniform_64x64` → 1041.64 error
 - **Uniform shift errors**: 2.13-34.77 (vs. baseline 0.18-0.95)
@@ -48,23 +48,20 @@ While PR #28 (gembleman) showed 5-6x performance improvement with 0.001-1.1% acc
 
 The different sigma (1.5 vs 2.2943) combined with different algorithms means libblur is computing a **fundamentally different blur**, not an approximation of the C++ reference.
 
-## PR #28 Misleading Data
+## PR #28 Measurement Baseline
 
-PR #28 claimed "0.001% to 1.1% accuracy change":
-- **Measured against**: Old Rust implementation (before our f64 IIR fix)
-- **NOT measured against**: C++ reference implementation
-- **Problem**: Old Rust implementation was already divergent from C++
+PR #28 reported "0.001% to 1.1% accuracy change", but those measurements used the
+prior Rust implementation as the reference rather than the C++ implementation:
 
-**What actually happened**:
-1. Old Rust implementation had numerical precision bugs (f32 accumulators in IIR filter)
-2. Those bugs caused it to diverge from C++ reference
-3. PR #28 tuned sigma=2.2943 to match the OLD BUGGY Rust implementation
-4. This gave small differences when comparing libblur vs. old Rust (both wrong!)
-5. But when compared against C++ reference (correct), libblur shows catastrophic errors
+1. The prior Rust implementation used f32 accumulators in the IIR filter, which caused
+   divergence from the C++ reference
+2. PR #28 tuned sigma=2.2943 to match that prior Rust implementation
+3. After the f64 IIR fix brought the Rust implementation to 0.955 max error vs C++,
+   it became clear that libblur's sigma was calibrated to a baseline that had already
+   diverged from C++
 
-**Our f64 IIR fix** (commit precompute-reference branch) corrected those bugs, bringing Rust implementation to 0.955 max error vs. C++. This exposed that libblur's sigma=2.2943 was chosen to match a BUGGY baseline, not the correct C++ reference.
-
-The 5-6x speedup is real, but it comes at the cost of **breaking compatibility** with the SSIMULACRA2 standard.
+The 5-6x speedup from libblur is real, but the sigma calibration targets the prior
+Rust implementation rather than the C++ reference.
 
 ## Recommendation
 

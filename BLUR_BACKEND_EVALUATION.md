@@ -38,9 +38,9 @@ Libblur output (corner):          1.151   (58% too high with σ=1.5)
 Libblur output (corner):          1.729   (137% too high with σ=2.2943)
 ```
 
-### Why PR #28 Claimed Small Differences
+### Why PR #28 Showed Small Differences
 
-PR #28's commit history shows they tuned σ=2.2943 to match the **OLD Rust implementation**, which had numerical precision bugs:
+PR #28's commit history shows σ=2.2943 was tuned to match the prior Rust implementation:
 
 ```
 commit 22c50c5: "libblur_impl accuracy improvement"
@@ -49,9 +49,10 @@ commit 22c50c5: "libblur_impl accuracy improvement"
 - SIGMA: 2.2943 → diff 0.000 / 0.932 ✓ chosen
 ```
 
-They were comparing libblur vs the OLD buggy Rust implementation (both wrong), NOT vs C++ reference (correct).
-
-Our f64 IIR fix corrected the Rust implementation to match C++ within 0.95 error, which exposed that libblur's σ=2.2943 was tuned to a buggy baseline.
+The prior Rust implementation had f32 precision issues that caused divergence from the
+C++ reference. PR #28's measurements compared libblur against that baseline rather than
+the C++ reference. After the f64 IIR fix brought the Rust implementation to 0.95 max
+error vs C++, the libblur sigma calibration mismatch became apparent.
 
 ## Recommended Backend: Transpose (f32 IIR)
 
