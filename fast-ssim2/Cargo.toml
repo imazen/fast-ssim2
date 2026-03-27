@@ -28,7 +28,7 @@ yuvxyb = "0.4.2"
 version = "0.1"
 
 [dev-dependencies]
-zenbench = { version = "0.1.1", features = ["criterion-compat"] }
+zenbench = { version = "0.1.2", features = ["criterion-compat"] }
 image = "0.25.10"
 rand = "0.10"
 chrono = "0.4"
