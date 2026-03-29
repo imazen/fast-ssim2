@@ -642,5 +642,8 @@ pub(crate) fn image_multiply_simd(
     img2: &[Vec<f32>; 3],
     out: &mut [Vec<f32>; 3],
 ) {
-    incant!(image_multiply_inner(img1, img2, out), [v3, neon, wasm128, scalar])
+    incant!(
+        image_multiply_inner(img1, img2, out),
+        [v3, neon, wasm128, scalar]
+    )
 }

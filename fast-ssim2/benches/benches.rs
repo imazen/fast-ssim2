@@ -1,5 +1,3 @@
-use zenbench::criterion_compat::*;
-use zenbench::{criterion_group, criterion_main};
 use fast_ssim2::{
     Blur, ColorPrimaries, Frame, MatrixCoefficients, Plane, Rgb, TransferCharacteristic, Yuv,
     YuvConfig, compute_frame_ssimulacra2, compute_ssimulacra2,
@@ -7,6 +5,8 @@ use fast_ssim2::{
 use num_traits::clamp;
 use rand::RngExt;
 use std::hint::black_box;
+use zenbench::criterion_compat::*;
+use zenbench::{criterion_group, criterion_main};
 
 fn make_yuv_sized(
     width: usize,
