@@ -81,7 +81,7 @@ fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
     assert_eq!(input.len(), output.len());
     incant!(
         horizontal_pass_inner(input, output, width),
-        [v3, neon, wasm128]
+        [v3, neon, wasm128, scalar]
     )
 }
 
@@ -212,7 +212,7 @@ fn vertical_pass(input: &[f32], output: &mut [f32], width: usize, height: usize)
     assert_eq!(input.len(), output.len());
     incant!(
         vertical_pass_inner(input, output, width, height),
-        [v3, neon, wasm128]
+        [v3, neon, wasm128, scalar]
     )
 }
 

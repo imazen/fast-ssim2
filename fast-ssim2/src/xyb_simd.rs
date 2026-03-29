@@ -292,7 +292,7 @@ fn linear_rgb_to_xyb_inner_scalar(_token: archmage::ScalarToken, input: &mut [[f
 /// Converts linear RGB to XYB in place using SIMD with automatic runtime dispatch.
 #[inline]
 pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
-    incant!(linear_rgb_to_xyb_inner(input), [v3, neon, wasm128])
+    incant!(linear_rgb_to_xyb_inner(input), [v3, neon, wasm128, scalar])
 }
 
 #[cfg(test)]
@@ -306,7 +306,10 @@ mod tests {
         // underflows below f32 min subnormal. The f64 path used here
         // avoids that, but this test guards against regressions.
         let result = cbrtf_fast(0.0);
-        assert!(result.is_finite(), "cbrtf_fast(0.0) = {result} (expected finite)");
+        assert!(
+            result.is_finite(),
+            "cbrtf_fast(0.0) = {result} (expected finite)"
+        );
         assert!(
             result.abs() < 1e-6,
             "cbrtf_fast(0.0) = {result} (expected ~0.0)"

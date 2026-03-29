@@ -272,7 +272,7 @@ pub(crate) fn ssim_map_simd(
 ) -> [f64; 3 * 2] {
     incant!(
         ssim_map_inner(width, height, m1, m2, s11, s22, s12),
-        [v3, neon, wasm128]
+        [v3, neon, wasm128, scalar]
     )
 }
 
@@ -527,7 +527,7 @@ pub(crate) fn edge_diff_map_simd(
 ) -> [f64; 3 * 4] {
     incant!(
         edge_diff_map_inner(width, height, img1, mu1, img2, mu2),
-        [v3, neon, wasm128]
+        [v3, neon, wasm128, scalar]
     )
 }
 
@@ -642,5 +642,5 @@ pub(crate) fn image_multiply_simd(
     img2: &[Vec<f32>; 3],
     out: &mut [Vec<f32>; 3],
 ) {
-    incant!(image_multiply_inner(img1, img2, out), [v3, neon, wasm128])
+    incant!(image_multiply_inner(img1, img2, out), [v3, neon, wasm128, scalar])
 }
