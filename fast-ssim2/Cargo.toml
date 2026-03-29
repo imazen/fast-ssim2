@@ -1,6 +1,6 @@
 [package]
 name = "fast-ssim2"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 description = "Fast SSIMULACRA2 image quality metric with SIMD acceleration"
 repository = "https://github.com/imazen/fast-ssim2"
