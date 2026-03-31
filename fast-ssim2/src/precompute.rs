@@ -10,11 +10,12 @@
 //! use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
 //!
 //! // Load reference image
+//! use std::num::NonZeroUsize;
 //! let reference_rgb = vec![[1.0f32, 1.0, 1.0]; 512 * 512];
 //! let reference = Rgb::new(
 //!     reference_rgb,
-//!     512,
-//!     512,
+//!     NonZeroUsize::new(512).unwrap(),
+//!     NonZeroUsize::new(512).unwrap(),
 //!     TransferCharacteristic::SRGB,
 //!     ColorPrimaries::BT709,
 //! ).unwrap();
@@ -26,8 +27,8 @@
 //! let distorted_rgb = vec![[0.9f32, 0.95, 1.05]; 512 * 512];
 //! let distorted = Rgb::new(
 //!     distorted_rgb,
-//!     512,
-//!     512,
+//!     NonZeroUsize::new(512).unwrap(),
+//!     NonZeroUsize::new(512).unwrap(),
 //!     TransferCharacteristic::SRGB,
 //!     ColorPrimaries::BT709,
 //! ).unwrap();
@@ -81,12 +82,12 @@ impl Ssimulacra2Reference {
     /// - If the image is smaller than 8x8 pixels
     pub fn new<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
         let mut img1: LinearRgb = source.into_linear_rgb().into();
-        if img1.width() < 8 || img1.height() < 8 {
+        if img1.width().get() < 8 || img1.height().get() < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
 
-        let original_width = img1.width();
-        let original_height = img1.height();
+        let original_width = img1.width().get();
+        let original_height = img1.height().get();
         let mut width = original_width;
         let mut height = original_height;
 
@@ -105,8 +106,8 @@ impl Ssimulacra2Reference {
 
             if scale > 0 {
                 img1 = downscale_by_2(&img1);
-                width = img1.width();
-                height = img1.height();
+                width = img1.width().get();
+                height = img1.height().get();
             }
 
             for c in &mut mul {
@@ -149,12 +150,12 @@ impl Ssimulacra2Reference {
     /// - If the distorted image dimensions don't match the reference
     pub fn compare<T: ToLinearRgb>(&self, distorted: T) -> Result<f64, Ssimulacra2Error> {
         let mut img2: LinearRgb = distorted.into_linear_rgb().into();
-        if img2.width() != self.original_width || img2.height() != self.original_height {
+        if img2.width().get() != self.original_width || img2.height().get() != self.original_height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
 
-        let mut width = img2.width();
-        let mut height = img2.height();
+        let mut width = img2.width().get();
+        let mut height = img2.height().get();
 
         let mut mul = [
             vec![0.0f32; width * height],
@@ -171,8 +172,8 @@ impl Ssimulacra2Reference {
 
             if scale_idx > 0 {
                 img2 = downscale_by_2(&img2);
-                width = img2.width();
-                height = img2.height();
+                width = img2.width().get();
+                height = img2.height().get();
             }
 
             for c in &mut mul {
@@ -255,13 +256,16 @@ impl Ssimulacra2Reference {
 mod tests {
     use super::*;
     use crate::compute_ssimulacra2;
+    use std::num::NonZeroUsize;
     use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
     #[test]
     fn test_precompute_matches_full_compute() {
         // Create a simple test image
-        let width = 64;
-        let height = 64;
+        let width = 64usize;
+        let height = 64usize;
+        let nz_width = NonZeroUsize::new(width).unwrap();
+        let nz_height = NonZeroUsize::new(height).unwrap();
         let source_data: Vec<[f32; 3]> = (0..width * height)
             .map(|i| {
                 let x = (i % width) as f32 / width as f32;
@@ -277,8 +281,8 @@ mod tests {
 
         let source = Rgb::new(
             source_data.clone(),
-            width,
-            height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -286,8 +290,8 @@ mod tests {
 
         let distorted = Rgb::new(
             distorted_data,
-            width,
-            height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -296,8 +300,8 @@ mod tests {
         // Compute using full method
         let source_clone = Rgb::new(
             source_data,
-            width,
-            height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -324,8 +328,8 @@ mod tests {
 
         let source = Rgb::new(
             source_data,
-            64,
-            64,
+            NonZeroUsize::new(64).unwrap(),
+            NonZeroUsize::new(64).unwrap(),
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -333,8 +337,8 @@ mod tests {
 
         let distorted = Rgb::new(
             distorted_data,
-            32,
-            32,
+            NonZeroUsize::new(32).unwrap(),
+            NonZeroUsize::new(32).unwrap(),
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -354,8 +358,8 @@ mod tests {
         let data: Vec<[f32; 3]> = vec![[0.5, 0.5, 0.5]; 128 * 96];
         let source = Rgb::new(
             data,
-            128,
-            96,
+            NonZeroUsize::new(128).unwrap(),
+            NonZeroUsize::new(96).unwrap(),
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )

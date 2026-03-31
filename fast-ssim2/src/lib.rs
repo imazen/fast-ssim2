@@ -330,12 +330,12 @@ where
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
     }
 
-    if img1.width() < 8 || img1.height() < 8 {
+    if img1.width().get() < 8 || img1.height().get() < 8 {
         return Err(Ssimulacra2Error::InvalidImageSize);
     }
 
-    let mut width = img1.width();
-    let mut height = img1.height();
+    let mut width = img1.width().get();
+    let mut height = img1.height().get();
     let impl_type = config.impl_type;
 
     // Pre-allocate reusable buffers (sized for initial dimensions, shrunk per scale)
@@ -362,8 +362,8 @@ where
         if scale > 0 {
             img1 = downscale_by_2(&img1);
             img2 = downscale_by_2(&img2);
-            width = img1.width();
-            height = img2.height();
+            width = img1.width().get();
+            height = img2.height().get();
         }
 
         // Shrink all buffers to current scale size
@@ -431,8 +431,8 @@ fn linear_rgb_to_xyb(linear_rgb: LinearRgb, impl_type: SimdImpl) -> Xyb {
     match impl_type {
         SimdImpl::Scalar => Xyb::from(linear_rgb),
         SimdImpl::Simd => {
-            let width = linear_rgb.width();
-            let height = linear_rgb.height();
+            let width = linear_rgb.width(); // NonZeroUsize
+            let height = linear_rgb.height(); // NonZeroUsize
             let mut data = linear_rgb.into_data();
             xyb_simd::linear_rgb_to_xyb_simd(&mut data);
             Xyb::new(data, width, height).expect("XYB construction should not fail")
@@ -454,7 +454,7 @@ pub(crate) fn make_positive_xyb(xyb: &mut Xyb) {
 }
 
 pub(crate) fn xyb_to_planar(xyb: &Xyb) -> [Vec<f32>; 3] {
-    let size = xyb.width() * xyb.height();
+    let size = xyb.width().get() * xyb.height().get();
     let mut out = [vec![0.0f32; size], vec![0.0f32; size], vec![0.0f32; size]];
     xyb_to_planar_into(xyb, &mut out);
     out
@@ -498,9 +498,10 @@ fn image_multiply_scalar(img1: &[Vec<f32>; 3], img2: &[Vec<f32>; 3], out: &mut [
 }
 
 pub(crate) fn downscale_by_2(in_data: &LinearRgb) -> LinearRgb {
+    use std::num::NonZeroUsize;
     const SCALE: usize = 2;
-    let in_w = in_data.width();
-    let in_h = in_data.height();
+    let in_w = in_data.width().get();
+    let in_h = in_data.height().get();
     let out_w = in_w.div_ceil(SCALE);
     let out_h = in_h.div_ceil(SCALE);
     let mut out_data = vec![[0.0f32; 3]; out_w * out_h];
@@ -523,7 +524,12 @@ pub(crate) fn downscale_by_2(in_data: &LinearRgb) -> LinearRgb {
         }
     }
 
-    LinearRgb::new(out_data, out_w, out_h).expect("Resolution and data size match")
+    LinearRgb::new(
+        out_data,
+        NonZeroUsize::new(out_w).expect("out_w must be nonzero"),
+        NonZeroUsize::new(out_h).expect("out_h must be nonzero"),
+    )
+    .expect("Resolution and data size match")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -836,8 +842,8 @@ mod tests {
         let source_data = Xyb::try_from(
             Rgb::new(
                 source_data,
-                source.width() as usize,
-                source.height() as usize,
+                std::num::NonZeroUsize::new(source.width() as usize).unwrap(),
+                std::num::NonZeroUsize::new(source.height() as usize).unwrap(),
                 TransferCharacteristic::SRGB,
                 ColorPrimaries::BT709,
             )
@@ -852,8 +858,8 @@ mod tests {
         let distorted_data = Xyb::try_from(
             Rgb::new(
                 distorted_data,
-                distorted.width() as usize,
-                distorted.height() as usize,
+                std::num::NonZeroUsize::new(distorted.width() as usize).unwrap(),
+                std::num::NonZeroUsize::new(distorted.height() as usize).unwrap(),
                 TransferCharacteristic::SRGB,
                 ColorPrimaries::BT709,
             )
@@ -887,11 +893,13 @@ mod tests {
 
         let width = source.width() as usize;
         let height = source.height() as usize;
+        let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+        let nz_height = std::num::NonZeroUsize::new(height).unwrap();
 
         let rgb_for_yuvxyb = Rgb::new(
             source_data.clone(),
-            width,
-            height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -901,8 +909,8 @@ mod tests {
 
         let rgb_for_simd = Rgb::new(
             source_data,
-            width,
-            height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )

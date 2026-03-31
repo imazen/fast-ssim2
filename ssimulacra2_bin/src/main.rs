@@ -177,8 +177,8 @@ fn compare_images(source: &Path, distorted: &Path) {
 
     let source_data = Rgb::new(
         source_data,
-        source.width() as usize,
-        source.height() as usize,
+        std::num::NonZeroUsize::new(source.width() as usize).unwrap(),
+        std::num::NonZeroUsize::new(source.height() as usize).unwrap(),
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )
@@ -192,8 +192,8 @@ fn compare_images(source: &Path, distorted: &Path) {
 
     let distorted_data = Rgb::new(
         distorted_data,
-        distorted.width() as usize,
-        distorted.height() as usize,
+        std::num::NonZeroUsize::new(distorted.width() as usize).unwrap(),
+        std::num::NonZeroUsize::new(distorted.height() as usize).unwrap(),
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )

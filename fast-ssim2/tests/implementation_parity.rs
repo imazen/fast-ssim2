@@ -35,8 +35,8 @@ fn load_image(filename: &str) -> Rgb {
 
     Rgb::new(
         data,
-        width as usize,
-        height as usize,
+        std::num::NonZeroUsize::new(width as usize).unwrap(),
+        std::num::NonZeroUsize::new(height as usize).unwrap(),
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )
@@ -68,10 +68,12 @@ fn compute_score_from_data(
     height: usize,
     config: Ssimulacra2Config,
 ) -> f64 {
+    let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+    let nz_height = std::num::NonZeroUsize::new(height).unwrap();
     let source = Rgb::new(
         source_data.to_vec(),
-        width,
-        height,
+        nz_width,
+        nz_height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )
@@ -79,8 +81,8 @@ fn compute_score_from_data(
 
     let distorted = Rgb::new(
         distorted_data.to_vec(),
-        width,
-        height,
+        nz_width,
+        nz_height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )

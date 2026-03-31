@@ -342,8 +342,14 @@ fn test_reference_parity() {
         let (source_data, distorted_data) = generate_test_image(case);
 
         // Verify hashes match (detects changes in image generation)
-        let source_hash = format!("{:x}", Sha256::digest(&source_data));
-        let distorted_hash = format!("{:x}", Sha256::digest(&distorted_data));
+        let source_hash = Sha256::digest(&source_data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let distorted_hash = Sha256::digest(&distorted_data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
 
         if source_hash != case.source_hash {
             eprintln!(
@@ -384,10 +390,12 @@ fn test_reference_parity() {
             })
             .collect();
 
+        let nz_width = std::num::NonZeroUsize::new(case.width).unwrap();
+        let nz_height = std::num::NonZeroUsize::new(case.height).unwrap();
         let source = Rgb::new(
             source_rgb,
-            case.width,
-            case.height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -395,8 +403,8 @@ fn test_reference_parity() {
 
         let distorted = Rgb::new(
             distorted_rgb,
-            case.width,
-            case.height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -489,18 +497,20 @@ fn test_reference_parity() {
                     ]
                 })
                 .collect();
+            let nz_width = std::num::NonZeroUsize::new(case.width).unwrap();
+            let nz_height = std::num::NonZeroUsize::new(case.height).unwrap();
             let source = Rgb::new(
                 source_rgb,
-                case.width,
-                case.height,
+                nz_width,
+                nz_height,
                 TransferCharacteristic::SRGB,
                 ColorPrimaries::BT709,
             )
             .unwrap();
             let distorted = Rgb::new(
                 distorted_rgb,
-                case.width,
-                case.height,
+                nz_width,
+                nz_height,
                 TransferCharacteristic::SRGB,
                 ColorPrimaries::BT709,
             )

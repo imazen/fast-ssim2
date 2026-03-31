@@ -35,18 +35,20 @@ fn main() {
         // Benchmark full computation (both source and distorted processed each time)
         let start = Instant::now();
         for _ in 0..iterations {
+            let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+            let nz_height = std::num::NonZeroUsize::new(height).unwrap();
             let source = Rgb::new(
                 reference_data.clone(),
-                width,
-                height,
+                nz_width,
+                nz_height,
                 TransferCharacteristic::SRGB,
                 ColorPrimaries::BT709,
             )
             .unwrap();
             let distorted = Rgb::new(
                 distorted_data.clone(),
-                width,
-                height,
+                nz_width,
+                nz_height,
                 TransferCharacteristic::SRGB,
                 ColorPrimaries::BT709,
             )
@@ -56,10 +58,12 @@ fn main() {
         let full_time = start.elapsed() / iterations as u32;
 
         // Benchmark precomputed (source processed once, distorted many times)
+        let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+        let nz_height = std::num::NonZeroUsize::new(height).unwrap();
         let reference = Rgb::new(
             reference_data.clone(),
-            width,
-            height,
+            nz_width,
+            nz_height,
             TransferCharacteristic::SRGB,
             ColorPrimaries::BT709,
         )
@@ -73,8 +77,8 @@ fn main() {
         for _ in 0..iterations {
             let distorted = Rgb::new(
                 distorted_data.clone(),
-                width,
-                height,
+                nz_width,
+                nz_height,
                 TransferCharacteristic::SRGB,
                 ColorPrimaries::BT709,
             )

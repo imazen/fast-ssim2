@@ -22,10 +22,12 @@ fn create_test_image(width: usize, height: usize, seed: u64) -> Rgb {
         })
         .collect();
 
+    let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+    let nz_height = std::num::NonZeroUsize::new(height).unwrap();
     Rgb::new(
         data,
-        width,
-        height,
+        nz_width,
+        nz_height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )

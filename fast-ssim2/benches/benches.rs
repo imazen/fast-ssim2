@@ -1,7 +1,8 @@
 use fast_ssim2::{
-    Blur, ColorPrimaries, Frame, MatrixCoefficients, Plane, Rgb, TransferCharacteristic, Yuv,
-    YuvConfig, compute_frame_ssimulacra2, compute_ssimulacra2,
+    Blur, ColorPrimaries, Frame, MatrixCoefficients, Rgb, TransferCharacteristic, Yuv, YuvConfig,
+    compute_frame_ssimulacra2, compute_ssimulacra2,
 };
+use yuvxyb::{ChromaSubsampling, FrameBuilder};
 use num_traits::clamp;
 use rand::RngExt;
 use std::hint::black_box;
@@ -11,52 +12,44 @@ use zenbench::{criterion_group, criterion_main};
 fn make_yuv_sized(
     width: usize,
     height: usize,
-    ss: (u8, u8),
+    subsampling: ChromaSubsampling,
     full_range: bool,
     mc: MatrixCoefficients,
     tc: TransferCharacteristic,
     cp: ColorPrimaries,
 ) -> Yuv<u8> {
-    let uv_dims = (width >> ss.0, height >> ss.1);
-    let mut data: Frame<u8> = Frame {
-        planes: [
-            Plane::new(width, height, 0, 0, 0, 0),
-            Plane::new(
-                uv_dims.0,
-                uv_dims.1,
-                usize::from(ss.0),
-                usize::from(ss.1),
-                0,
-                0,
-            ),
-            Plane::new(
-                uv_dims.0,
-                uv_dims.1,
-                usize::from(ss.0),
-                usize::from(ss.1),
-                0,
-                0,
-            ),
-        ],
-    };
+    let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+    let nz_height = std::num::NonZeroUsize::new(height).unwrap();
+    let bit_depth = std::num::NonZeroU8::new(8).unwrap();
+    let mut data: Frame<u8> = FrameBuilder::new(nz_width, nz_height, subsampling, bit_depth)
+        .build::<u8>()
+        .unwrap();
     let mut rng = rand::rng();
-    for (i, plane) in data.planes.iter_mut().enumerate() {
-        for val in plane.data_origin_mut().iter_mut() {
-            *val = rng.random_range(if full_range {
-                0..=255
-            } else if i == 0 {
-                16..=235
-            } else {
-                16..=240
-            });
+    for val in data.y_plane.pixels_mut() {
+        *val = rng.random_range(if full_range { 0..=255 } else { 16..=235 });
+    }
+    if let Some(u_plane) = data.u_plane.as_mut() {
+        for val in u_plane.pixels_mut() {
+            *val = rng.random_range(if full_range { 0..=255 } else { 16..=240 });
         }
     }
+    if let Some(v_plane) = data.v_plane.as_mut() {
+        for val in v_plane.pixels_mut() {
+            *val = rng.random_range(if full_range { 0..=255 } else { 16..=240 });
+        }
+    }
+    let (ss_x, ss_y) = match subsampling {
+        ChromaSubsampling::Yuv444 => (0u8, 0u8),
+        ChromaSubsampling::Yuv422 => (1, 0),
+        ChromaSubsampling::Yuv420 => (1, 1),
+        ChromaSubsampling::Monochrome => (0, 0),
+    };
     Yuv::new(
         data,
         YuvConfig {
             bit_depth: 8,
-            subsampling_x: ss.0,
-            subsampling_y: ss.1,
+            subsampling_x: ss_x,
+            subsampling_y: ss_y,
             full_range,
             matrix_coefficients: mc,
             transfer_characteristics: tc,
@@ -68,17 +61,20 @@ fn make_yuv_sized(
 
 fn distort_yuv(input: &Yuv<u8>) -> Yuv<u8> {
     let mut rng = rand::rng();
-    let mut planes = [
-        input.data()[0].clone(),
-        input.data()[1].clone(),
-        input.data()[2].clone(),
-    ];
-    for plane in &mut planes {
-        for pix in plane.data_origin_mut() {
+    let mut data = input.data().clone();
+    for pix in data.y_plane.pixels_mut() {
+        *pix = clamp(i16::from(*pix) + rng.random_range(-16..=16), 0, 255) as u8;
+    }
+    if let Some(u_plane) = data.u_plane.as_mut() {
+        for pix in u_plane.pixels_mut() {
             *pix = clamp(i16::from(*pix) + rng.random_range(-16..=16), 0, 255) as u8;
         }
     }
-    let data: Frame<u8> = Frame { planes };
+    if let Some(v_plane) = data.v_plane.as_mut() {
+        for pix in v_plane.pixels_mut() {
+            *pix = clamp(i16::from(*pix) + rng.random_range(-16..=16), 0, 255) as u8;
+        }
+    }
     Yuv::new(data, input.config()).unwrap()
 }
 
@@ -86,7 +82,7 @@ fn make_test_pair(width: usize, height: usize) -> (Yuv<u8>, Yuv<u8>) {
     let input = make_yuv_sized(
         width,
         height,
-        (0, 0),
+        ChromaSubsampling::Yuv444,
         true,
         MatrixCoefficients::BT709,
         TransferCharacteristic::BT1886,
@@ -167,10 +163,12 @@ fn make_rgb_pair(width: usize, height: usize) -> (Rgb, Rgb) {
         })
         .collect();
 
+    let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+    let nz_height = std::num::NonZeroUsize::new(height).unwrap();
     let source = Rgb::new(
         source_data,
-        width,
-        height,
+        nz_width,
+        nz_height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )
@@ -178,8 +176,8 @@ fn make_rgb_pair(width: usize, height: usize) -> (Rgb, Rgb) {
 
     let distorted = Rgb::new(
         distorted_data,
-        width,
-        height,
+        nz_width,
+        nz_height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )

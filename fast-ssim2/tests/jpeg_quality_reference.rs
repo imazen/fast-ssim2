@@ -78,8 +78,8 @@ fn load_image(filename: &str) -> Rgb {
 
     Rgb::new(
         data,
-        width as usize,
-        height as usize,
+        std::num::NonZeroUsize::new(width as usize).unwrap(),
+        std::num::NonZeroUsize::new(height as usize).unwrap(),
         yuvxyb::TransferCharacteristic::SRGB,
         yuvxyb::ColorPrimaries::BT709,
     )

@@ -35,10 +35,12 @@ fn create_test_image_512x512() -> (Rgb, Rgb) {
         })
         .collect();
 
+    let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+    let nz_height = std::num::NonZeroUsize::new(height).unwrap();
     let source = Rgb::new(
         source_data,
-        width,
-        height,
+        nz_width,
+        nz_height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )
@@ -46,8 +48,8 @@ fn create_test_image_512x512() -> (Rgb, Rgb) {
 
     let distorted = Rgb::new(
         distorted_data,
-        width,
-        height,
+        nz_width,
+        nz_height,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )

@@ -308,8 +308,14 @@ impl TestCase {
         source_data: Vec<u8>,
         distorted_data: Vec<u8>,
     ) -> Self {
-        let source_hash = format!("{:x}", Sha256::digest(&source_data));
-        let distorted_hash = format!("{:x}", Sha256::digest(&distorted_data));
+        let source_hash = Sha256::digest(&source_data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let distorted_hash = Sha256::digest(&distorted_data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
         Self {
             name,
             width,

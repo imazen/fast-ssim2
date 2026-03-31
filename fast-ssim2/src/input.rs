@@ -247,12 +247,12 @@ mod imgref_impl {
 
 impl ToLinearRgb for yuvxyb::LinearRgb {
     fn to_linear_rgb(&self) -> LinearRgbImage {
-        LinearRgbImage::new(self.data().to_vec(), self.width(), self.height())
+        LinearRgbImage::new(self.data().to_vec(), self.width().get(), self.height().get())
     }
 
     fn into_linear_rgb(self) -> LinearRgbImage {
-        let width = self.width();
-        let height = self.height();
+        let width = self.width().get();
+        let height = self.height().get();
         LinearRgbImage::new(self.into_data(), width, height)
     }
 }
@@ -263,8 +263,13 @@ impl ToLinearRgb for yuvxyb::LinearRgb {
 
 impl From<LinearRgbImage> for yuvxyb::LinearRgb {
     fn from(img: LinearRgbImage) -> Self {
-        yuvxyb::LinearRgb::new(img.data, img.width, img.height)
-            .expect("LinearRgbImage dimensions are always valid")
+        use std::num::NonZeroUsize;
+        yuvxyb::LinearRgb::new(
+            img.data,
+            NonZeroUsize::new(img.width).expect("width must be nonzero"),
+            NonZeroUsize::new(img.height).expect("height must be nonzero"),
+        )
+        .expect("LinearRgbImage dimensions are always valid")
     }
 }
 
@@ -278,7 +283,7 @@ impl ToLinearRgb for yuvxyb::Rgb {
                 .iter()
                 .map(|&[r, g, b]| [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b)])
                 .collect();
-            LinearRgbImage::new(data, self.width(), self.height())
+            LinearRgbImage::new(data, self.width().get(), self.height().get())
         } else {
             // For non-sRGB transfers, fall back to yuvxyb's conversion
             let linear: yuvxyb::LinearRgb = yuvxyb::LinearRgb::try_from(self.clone())
@@ -288,8 +293,8 @@ impl ToLinearRgb for yuvxyb::Rgb {
     }
 
     fn into_linear_rgb(self) -> LinearRgbImage {
-        let width = self.width();
-        let height = self.height();
+        let width = self.width().get();
+        let height = self.height().get();
         if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
             // Consume the Rgb, linearize in-place — zero allocation
             let mut data = self.into_data();
@@ -342,8 +347,14 @@ mod tests {
 
     #[test]
     fn test_yuvxyb_linearrgb_roundtrip() {
+        use std::num::NonZeroUsize;
         let data = vec![[0.5, 0.3, 0.1]; 4];
-        let yuvxyb_img = yuvxyb::LinearRgb::new(data.clone(), 2, 2).expect("valid dimensions");
+        let yuvxyb_img = yuvxyb::LinearRgb::new(
+            data.clone(),
+            NonZeroUsize::new(2).unwrap(),
+            NonZeroUsize::new(2).unwrap(),
+        )
+        .expect("valid dimensions");
 
         let our_img = yuvxyb_img.to_linear_rgb();
         assert_eq!(our_img.width(), 2);
