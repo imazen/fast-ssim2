@@ -18,7 +18,7 @@ rust-version = "1.89.0"
 [dependencies]
 archmage = { version = "0.9.15", features = ["macros"] }
 imgref = { version = "1.12", optional = true }
-magetypes = "0.9.15"
+magetypes = { version = "0.9.15"}
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
 thiserror = "2.0.18"
@@ -28,13 +28,15 @@ yuvxyb = "0.5.0"
 version = "0.1"
 
 [dev-dependencies]
-zenbench = { version = "0.1.2", features = ["criterion-compat"] }
 image = "0.25.10"
 rand = "0.10"
 chrono = "0.4"
 png = "0.18"
 which = "8.0"
 sha2 = "0.11.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+zenbench = { version = "0.1.2", features = ["criterion-compat"] }
 
 [features]
 default = []
