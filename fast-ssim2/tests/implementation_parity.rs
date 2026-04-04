@@ -139,22 +139,22 @@ const REAL_IMAGE_CASES: &[RealImageTestCase] = &[
     RealImageTestCase {
         name: "JPEG Q20",
         distorted_file: "q20.jpg",
-        expected_simd: 57.104480, // Pinned SIMD value (jxl rational poly, captured 2026-02-25)
+        expected_simd: 57.093473, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
     },
     RealImageTestCase {
         name: "JPEG Q45",
         distorted_file: "q45.jpg",
-        expected_simd: 68.667862, // Pinned SIMD value (jxl rational poly, captured 2026-02-25)
+        expected_simd: 68.675775, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
     },
     RealImageTestCase {
         name: "JPEG Q70",
         distorted_file: "q70.jpg",
-        expected_simd: 79.453416, // Pinned SIMD value (jxl rational poly, captured 2026-02-25)
+        expected_simd: 79.491173, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
     },
     RealImageTestCase {
         name: "JPEG Q90",
         distorted_file: "q90.jpg",
-        expected_simd: 90.855869, // Pinned SIMD value (jxl rational poly, captured 2026-02-25)
+        expected_simd: 90.834538, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
     },
 ];
 

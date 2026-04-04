@@ -1,8 +1,8 @@
 //! SIMD-optimized RGB to XYB conversion.
 //!
-//! Uses archmage/magetypes for cross-platform SIMD. The cbrt function stays scalar
-//! (bit manipulation + Newton-Raphson in f64 doesn't vectorize well); SIMD is used
-//! for the matrix multiply, clamp, and XYB transform surrounding it.
+//! Uses archmage/magetypes for cross-platform SIMD. The cbrt initial estimate stays
+//! scalar (integer bit manipulation), but Halley refinement iterations run in SIMD.
+//! Matrix multiply, clamp, and XYB transform are also fully vectorized.
 
 use archmage::incant;
 use archmage::magetypes;
@@ -25,6 +25,16 @@ const OPSIN_ABSORBANCE_MATRIX: [f32; 9] = [
 ];
 
 const OPSIN_ABSORBANCE_BIAS: f32 = K_B0;
+
+/// Scalar cube root initial estimate via integer bit manipulation.
+/// Returns an approximation to cbrt(x) suitable for refinement by Halley iterations.
+#[inline(always)]
+fn cbrtf_initial_f32(x: f32) -> f32 {
+    const B1: u32 = 709_958_130;
+    let ui = x.to_bits();
+    let hx = (ui & 0x7FFF_FFFF) / 3 + B1;
+    f32::from_bits((ui & 0x8000_0000) | hx)
+}
 
 /// Fast scalar cube root using bit manipulation + Newton-Raphson in f64.
 #[inline]
@@ -106,6 +116,7 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
     let m22 = f32x8::splat(token, OPSIN_ABSORBANCE_MATRIX[8]);
     let bias = f32x8::splat(token, OPSIN_ABSORBANCE_BIAS);
     let zero = f32x8::zero(token);
+    let two = f32x8::splat(token, 2.0);
     let absorb_bias = f32x8::splat(token, absorbance_bias);
     let half = f32x8::splat(token, 0.5);
 
@@ -139,19 +150,40 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
         let mixed1 = mixed1.max(zero);
         let mixed2 = mixed2.max(zero);
 
-        // Extract, apply scalar cbrt, reload
-        let mut m0_arr = mixed0.to_array();
-        let mut m1_arr = mixed1.to_array();
-        let mut m2_arr = mixed2.to_array();
+        // Scalar initial estimates (integer bit manipulation — can't vectorize)
+        let mut est0 = mixed0.to_array();
+        let mut est1 = mixed1.to_array();
+        let mut est2 = mixed2.to_array();
         for i in 0..LANES {
-            m0_arr[i] = cbrtf_fast(m0_arr[i]);
-            m1_arr[i] = cbrtf_fast(m1_arr[i]);
-            m2_arr[i] = cbrtf_fast(m2_arr[i]);
+            est0[i] = cbrtf_initial_f32(est0[i]);
+            est1[i] = cbrtf_initial_f32(est1[i]);
+            est2[i] = cbrtf_initial_f32(est2[i]);
         }
 
-        let mixed0 = f32x8::from_array(token, m0_arr) + absorb_bias;
-        let mixed1 = f32x8::from_array(token, m1_arr) + absorb_bias;
-        let mixed2 = f32x8::from_array(token, m2_arr) + absorb_bias;
+        // Halley's method iterations in SIMD (3 channels interleaved for ILP)
+        let mut t0 = f32x8::from_array(token, est0);
+        let mut t1 = f32x8::from_array(token, est1);
+        let mut t2 = f32x8::from_array(token, est2);
+
+        // Iteration 1
+        let mut r0 = t0 * t0 * t0;
+        let mut r1 = t1 * t1 * t1;
+        let mut r2 = t2 * t2 * t2;
+        t0 *= mixed0.mul_add(two, r0) / (mixed0 + r0.mul_add(two, zero));
+        t1 *= mixed1.mul_add(two, r1) / (mixed1 + r1.mul_add(two, zero));
+        t2 *= mixed2.mul_add(two, r2) / (mixed2 + r2.mul_add(two, zero));
+
+        // Iteration 2
+        r0 = t0 * t0 * t0;
+        r1 = t1 * t1 * t1;
+        r2 = t2 * t2 * t2;
+        t0 *= mixed0.mul_add(two, r0) / (mixed0 + r0.mul_add(two, zero));
+        t1 *= mixed1.mul_add(two, r1) / (mixed1 + r1.mul_add(two, zero));
+        t2 *= mixed2.mul_add(two, r2) / (mixed2 + r2.mul_add(two, zero));
+
+        let mixed0 = t0 + absorb_bias;
+        let mixed1 = t1 + absorb_bias;
+        let mixed2 = t2 + absorb_bias;
 
         // XYB transform
         let x = half * (mixed0 - mixed1);
