@@ -2,10 +2,10 @@ use fast_ssim2::{
     Blur, ColorPrimaries, Frame, MatrixCoefficients, Rgb, TransferCharacteristic, Yuv, YuvConfig,
     compute_frame_ssimulacra2, compute_ssimulacra2,
 };
-use yuvxyb::{ChromaSubsampling, FrameBuilder};
 use num_traits::clamp;
 use rand::RngExt;
 use std::hint::black_box;
+use yuvxyb::{ChromaSubsampling, FrameBuilder};
 use zenbench::criterion_compat::*;
 use zenbench::{criterion_group, criterion_main};
 

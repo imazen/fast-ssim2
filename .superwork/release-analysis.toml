@@ -1,0 +1,64 @@
+schema_version = 1
+superworkspace = "zen"
+generated_at = "1775432435"
+
+[crates.fast-ssim2]
+head = "844605f"
+tag = "v0.7.1"
+tag_found = true
+version = "0.7.1"
+class = "library"
+tier = 3
+dependents = 13
+files_changed = 18
+lines_added = 404
+lines_removed = 901
+src_files_changed = 6
+commit_count = 6
+commit_subjects = [
+    "fix: vectorize Halley cbrt iterations in xyb_simd",
+    "test: add SIMD tier consistency tests",
+    "build: gate zenbench dev-dep behind cfg(not(wasm32)) for wasm test support",
+    "refactor: replace platform-specific SIMD with magetypes generics",
+    "deps: update sha2 to 0.11.0 and yuvxyb to 0.5.0, fix API breakage",
+    "deps: bump archmage/magetypes/enough/whereat/linear-srgb and related patches",
+]
+category = ""
+bump = ""
+reason = ""
+needs_review = false
+semver_check = ""
+copter = ""
+
+[crates.fast-ssim2-cli]
+head = "844605f"
+tag = "v0.6.0"
+tag_found = true
+version = "0.6.0"
+class = "library"
+tier = 4
+dependents = 0
+files_changed = 4
+lines_added = 24
+lines_removed = 24
+src_files_changed = 2
+commit_count = 11
+commit_subjects = [
+    "deps: update sha2 to 0.11.0 and yuvxyb to 0.5.0, fix API breakage",
+    "refactor: rename ssimulacra2/ folder to fast-ssim2/ to match crate name",
+    "deps: update outdated dependencies",
+    "style: cargo fmt for edition 2024",
+    "fix: bump ssimulacra2_bin rust-version to 1.85 for edition 2024",
+    "chore: update Cargo.toml edition to 2024",
+    "Merge branch 'archmage-migration'",
+    "docs: update repository references for imazen/fast-ssim2 rename",
+    "chore: bump version to 0.7.0",
+    "chore: update all dependencies to latest",
+    "docs: improve API documentation and README",
+]
+category = ""
+bump = ""
+reason = ""
+needs_review = false
+semver_check = ""
+copter = ""

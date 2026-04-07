@@ -247,7 +247,11 @@ mod imgref_impl {
 
 impl ToLinearRgb for yuvxyb::LinearRgb {
     fn to_linear_rgb(&self) -> LinearRgbImage {
-        LinearRgbImage::new(self.data().to_vec(), self.width().get(), self.height().get())
+        LinearRgbImage::new(
+            self.data().to_vec(),
+            self.width().get(),
+            self.height().get(),
+        )
     }
 
     fn into_linear_rgb(self) -> LinearRgbImage {

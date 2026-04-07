@@ -150,7 +150,8 @@ impl Ssimulacra2Reference {
     /// - If the distorted image dimensions don't match the reference
     pub fn compare<T: ToLinearRgb>(&self, distorted: T) -> Result<f64, Ssimulacra2Error> {
         let mut img2: LinearRgb = distorted.into_linear_rgb().into();
-        if img2.width().get() != self.original_width || img2.height().get() != self.original_height {
+        if img2.width().get() != self.original_width || img2.height().get() != self.original_height
+        {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
 
