@@ -7,7 +7,20 @@ repository = "https://github.com/imazen/fast-ssim2"
 homepage = "https://github.com/imazen/fast-ssim2"
 documentation = "https://docs.rs/fast-ssim2"
 readme = "../README.md"
-exclude = ["test_data"]
+exclude = [
+    "test_data",
+    "CLAUDE.md",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+    ".claude/",
+    ".superwork/",
+    ".zenbench/",
+    "copter-report/",
+    "Cross.toml",
+    "justfile",
+    "Cargo.toml.original.txt",
+    "fuzz/",
+]
 license = "BSD-2-Clause"
 keywords = ["image", "quality", "ssim", "ssimulacra2", "perceptual"]
 categories = ["multimedia::images", "algorithms"]

@@ -9,6 +9,20 @@ license = "BSD-2-Clause"
 
 # When changing MSRV: Also update .github/workflows/rust.yml
 rust-version = "1.85"
+exclude = [
+    "CLAUDE.md",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+    ".claude/",
+    ".superwork/",
+    ".zenbench/",
+    "copter-report/",
+    ".github/",
+    "Cross.toml",
+    "justfile",
+    "Cargo.toml.original.txt",
+    "fuzz/",
+]
 
 [dependencies]
 anyhow = "1.0.101"
