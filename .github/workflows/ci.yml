@@ -98,8 +98,8 @@ jobs:
         with:
           key: cross-i686
 
-      - name: Test (i686)
-        run: cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu
+      - name: Test (i686, lib)
+        run: cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu --lib
 
   # ==========================================================================
   # WASM testing
@@ -131,6 +131,8 @@ jobs:
         run: cargo test --target wasm32-wasip1 --features imgref -p fast-ssim2 --lib
 
       - name: Test WASM without SIMD (scalar)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=/ --"
         run: cargo test --target wasm32-wasip1 -p fast-ssim2 --lib
 
   # ==========================================================================
