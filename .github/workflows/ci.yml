@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-Dwarnings"
+  CI: true
+
+jobs:
+  # ==========================================================================
+  # Format check (fast, runs first)
+  # ==========================================================================
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ==========================================================================
+  # Clippy lint check
+  # ==========================================================================
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (default features)
+        run: cargo clippy -p fast-ssim2 --all-targets -- -D warnings
+      - name: Clippy (all features)
+        run: cargo clippy -p fast-ssim2 --all-targets --features "imgref,rayon" -- -D warnings
+      - name: Clippy (CLI)
+        run: cargo clippy -p fast-ssim2-cli --all-targets -- -D warnings
+
+  # ==========================================================================
+  # Test matrix across platforms
+  # ==========================================================================
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - ubuntu-24.04-arm
+          - macos-latest
+          - macos-26-intel
+          - windows-latest
+          - windows-11-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test (default features)
+        run: cargo test -p fast-ssim2
+
+      - name: Test (imgref)
+        run: cargo test -p fast-ssim2 --features imgref
+
+      - name: Test (all features)
+        run: cargo test -p fast-ssim2 --features "imgref,rayon"
+
+      - name: Test CLI
+        run: cargo test -p fast-ssim2-cli
+
+  # ==========================================================================
+  # Cross-compiled testing (i686)
+  # ==========================================================================
+  i686:
+    name: Test (i686)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cross
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-i686
+
+      - name: Test (i686)
+        run: cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu
+
+  # ==========================================================================
+  # WASM testing
+  # ==========================================================================
+  wasm:
+    name: Test (WASM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+      - name: Build (wasm32-unknown-unknown)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128 -Dwarnings"
+        run: cargo build --target wasm32-unknown-unknown --features imgref -p fast-ssim2 --lib
+
+      - name: Test WASM with SIMD (wasm32-wasip1)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=/ --"
+          RUSTFLAGS: "-C target-feature=+simd128 -Dwarnings"
+        run: cargo test --target wasm32-wasip1 --features imgref -p fast-ssim2 --lib --tests
+
+      - name: Test WASM without SIMD (scalar)
+        run: cargo test --target wasm32-wasip1 -p fast-ssim2 --lib --tests
+
+  # ==========================================================================
+  # MSRV check
+  # ==========================================================================
+  msrv:
+    name: MSRV (1.89.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Use MSRV lockfile
+        run: cp Cargo.lock.MSRV Cargo.lock
+
+      - name: Check MSRV
+        run: cargo check -p fast-ssim2
+
+  # ==========================================================================
+  # Code coverage
+  # ==========================================================================
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Generate coverage
+        run: cargo llvm-cov --features "imgref" -p fast-ssim2 --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        continue-on-error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
