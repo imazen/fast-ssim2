@@ -1,3 +1,8 @@
+## Version 0.7.3
+
+- Add proper CI workflow with full platform matrix (Linux, macOS, Windows on x64/ARM64), i686 cross testing, WASM testing, MSRV verification, and code coverage
+- Fix unused import lint on i686 from archmage `#[autoversion]` dispatch
+
 ## Version 0.7.0
 
 - Update all dependencies to latest versions
