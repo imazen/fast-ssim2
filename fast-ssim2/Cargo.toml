@@ -1,6 +1,6 @@
 [package]
 name = "fast-ssim2"
-version = "0.7.1"
+version = "0.7.2"
 edition = "2024"
 description = "Fast SSIMULACRA2 image quality metric with SIMD acceleration"
 repository = "https://github.com/imazen/fast-ssim2"
@@ -29,9 +29,9 @@ categories = ["multimedia::images", "algorithms"]
 rust-version = "1.89.0"
 
 [dependencies]
-archmage = { version = "0.9.15", features = ["macros"] }
+archmage = { version = "0.9.17", features = ["macros"] }
 imgref = { version = "1.12", optional = true }
-magetypes = { version = "0.9.15"}
+magetypes = { version = "0.9.17" }
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
 thiserror = "2.0.18"

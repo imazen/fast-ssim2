@@ -47,11 +47,14 @@
 //!
 //! ```
 //! use fast_ssim2::{compute_ssimulacra2, Rgb, TransferCharacteristic, ColorPrimaries};
+//! use std::num::NonZeroUsize;
 //!
 //! let data: Vec<[f32; 3]> = vec![[0.5, 0.5, 0.5]; 64 * 64];
-//! let source = Rgb::new(data.clone(), 64, 64,
+//! let w = NonZeroUsize::new(64).unwrap();
+//! let h = NonZeroUsize::new(64).unwrap();
+//! let source = Rgb::new(data.clone(), w, h,
 //!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
-//! let distorted = Rgb::new(data, 64, 64,
+//! let distorted = Rgb::new(data, w, h,
 //!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
 //!
 //! let score = compute_ssimulacra2(source, distorted)?;
@@ -66,17 +69,20 @@
 //!
 //! ```
 //! use fast_ssim2::{Ssimulacra2Reference, Rgb, TransferCharacteristic, ColorPrimaries};
+//! use std::num::NonZeroUsize;
 //!
 //! // Create test data
 //! let data: Vec<[f32; 3]> = vec![[0.5, 0.5, 0.5]; 64 * 64];
-//! let source = Rgb::new(data.clone(), 64, 64,
+//! let w = NonZeroUsize::new(64).unwrap();
+//! let h = NonZeroUsize::new(64).unwrap();
+//! let source = Rgb::new(data.clone(), w, h,
 //!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
 //!
 //! // Precompute reference data (~50% of the work)
 //! let reference = Ssimulacra2Reference::new(source)?;
 //!
 //! // Compare multiple distorted versions efficiently
-//! let distorted = Rgb::new(data, 64, 64,
+//! let distorted = Rgb::new(data, w, h,
 //!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
 //! let score = reference.compare(distorted)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
