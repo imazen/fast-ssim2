@@ -1,13 +1,16 @@
+#![allow(deprecated)]
+
 #[cfg(feature = "video")]
 mod video;
 
 #[cfg(feature = "video")]
 use self::video::*;
 use clap::{Parser, Subcommand};
-#[cfg(feature = "video")]
-use fast_ssim2::MatrixCoefficients;
-use fast_ssim2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
+use fast_ssim2::compute_frame_ssimulacra2;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "video")]
+use yuvxyb::MatrixCoefficients;
+use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

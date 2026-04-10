@@ -3,6 +3,8 @@
 //! Run with:
 //!   cargo run --release --example benchmark_allocations
 
+#![allow(deprecated)]
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;

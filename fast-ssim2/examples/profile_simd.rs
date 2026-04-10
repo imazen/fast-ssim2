@@ -2,6 +2,8 @@
 //!
 //! Run with: cargo run --release --example profile_simd
 
+#![allow(deprecated)]
+
 use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};

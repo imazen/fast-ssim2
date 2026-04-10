@@ -1,4 +1,4 @@
-# fast-ssim2 [![CI](https://img.shields.io/github/actions/workflow/status/imazen/fast-ssim2/rust.yml?branch=main&style=flat-square)](https://github.com/imazen/fast-ssim2/actions/workflows/rust.yml) [![crates.io](https://img.shields.io/crates/v/fast-ssim2?style=flat-square)](https://crates.io/crates/fast-ssim2) [![lib.rs](https://img.shields.io/crates/v/fast-ssim2?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/fast-ssim2) [![docs.rs](https://img.shields.io/docsrs/fast-ssim2?style=flat-square)](https://docs.rs/fast-ssim2) [![codecov](https://img.shields.io/codecov/c/github/imazen/fast-ssim2?style=flat-square)](https://codecov.io/gh/imazen/fast-ssim2) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/fast-ssim2?style=flat-square)](https://github.com/imazen/fast-ssim2#license)
+# fast-ssim2 [![CI](https://img.shields.io/github/actions/workflow/status/imazen/fast-ssim2/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/imazen/fast-ssim2/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/fast-ssim2?style=flat-square)](https://crates.io/crates/fast-ssim2) [![lib.rs](https://img.shields.io/crates/v/fast-ssim2?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/fast-ssim2) [![docs.rs](https://img.shields.io/docsrs/fast-ssim2?style=flat-square)](https://docs.rs/fast-ssim2) [![codecov](https://img.shields.io/codecov/c/github/imazen/fast-ssim2?style=flat-square)](https://codecov.io/gh/imazen/fast-ssim2) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/fast-ssim2?style=flat-square)](https://github.com/imazen/fast-ssim2#license)
 
 Fast SIMD-accelerated Rust implementation of [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2), a perceptual image quality metric.
 
@@ -6,7 +6,7 @@ Fast SIMD-accelerated Rust implementation of [SSIMULACRA2](https://github.com/cl
 
 ```toml
 [dependencies]
-fast-ssim2 = { version = "0.7", features = ["imgref"] }
+fast-ssim2 = { version = "0.8", features = ["imgref"] }
 ```
 
 ```rust
@@ -52,7 +52,7 @@ With the `imgref` feature:
 
 **Convention:** Integer types = sRGB gamma. Float types = linear RGB.
 
-Without features, use `yuvxyb::Rgb` or `yuvxyb::LinearRgb`, or implement [`ToLinearRgb`](https://docs.rs/fast-ssim2/latest/fast_ssim2/trait.ToLinearRgb.html) for custom types.
+Without `imgref`, use `yuvxyb::Rgb` or `yuvxyb::LinearRgb` (add `yuvxyb` to your own dependencies), or implement [`ToLinearRgb`](https://docs.rs/fast-ssim2/latest/fast_ssim2/trait.ToLinearRgb.html) for custom types.
 
 ## Batch Comparisons
 
@@ -130,7 +130,8 @@ let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config
 ### Using yuvxyb Types Directly
 
 ```rust
-use fast_ssim2::{compute_ssimulacra2, Rgb, TransferCharacteristic, ColorPrimaries};
+use fast_ssim2::compute_ssimulacra2;
+use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
 
 let source = Rgb::new(
     pixel_data,

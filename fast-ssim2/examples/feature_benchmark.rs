@@ -5,6 +5,8 @@
 //! cargo run --release --example feature_benchmark
 //! ```
 
+#![allow(deprecated)]
+
 use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};

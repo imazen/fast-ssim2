@@ -3,6 +3,8 @@
 //! Run with:
 //!   cargo run --release --example benchmark_simd
 
+#![allow(deprecated)]
+
 use std::time::Instant;
 
 use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_frame_ssimulacra2_with_config};

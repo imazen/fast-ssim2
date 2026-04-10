@@ -46,7 +46,8 @@
 //! ### Without features (using `yuvxyb` types)
 //!
 //! ```
-//! use fast_ssim2::{compute_ssimulacra2, Rgb, TransferCharacteristic, ColorPrimaries};
+//! use fast_ssim2::compute_ssimulacra2;
+//! use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
 //! use std::num::NonZeroUsize;
 //!
 //! let data: Vec<[f32; 3]> = vec![[0.5, 0.5, 0.5]; 64 * 64];
@@ -68,7 +69,8 @@
 //! different compression levels), precompute the reference data once:
 //!
 //! ```
-//! use fast_ssim2::{Ssimulacra2Reference, Rgb, TransferCharacteristic, ColorPrimaries};
+//! use fast_ssim2::Ssimulacra2Reference;
+//! use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
 //! use std::num::NonZeroUsize;
 //!
 //! // Create test data
@@ -172,16 +174,12 @@ mod xyb_simd;
 pub use blur::Blur;
 pub use input::{LinearRgbImage, ToLinearRgb};
 pub use precompute::Ssimulacra2Reference;
-// Re-export commonly used types from yuvxyb for convenience
-pub use yuvxyb::{
-    ColorPrimaries, Frame, LinearRgb, MatrixCoefficients, Pixel, Plane, Rgb,
-    TransferCharacteristic, Yuv, YuvConfig,
-};
 
 // Re-export sRGB conversion functions for users implementing custom input types
 pub use input::{srgb_to_linear, srgb_u8_to_linear, srgb_u16_to_linear};
 
-// Internal imports for XYB color space
+// Internal imports for yuvxyb types
+use yuvxyb::LinearRgb;
 use yuvxyb::Xyb;
 
 // How often to downscale and score the input images.
@@ -235,7 +233,7 @@ impl Ssimulacra2Config {
 /// Errors which can occur when attempting to calculate a SSIMULACRA2 score from two input images.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Ssimulacra2Error {
-    /// The conversion from input image to [LinearRgb] (via [TryFrom]) returned an [Err].
+    /// The conversion from input image to [`yuvxyb::LinearRgb`] (via [TryFrom]) returned an [Err].
     #[error("Failed to convert input image to linear RGB")]
     LinearRgbConversionFailed,
 
@@ -253,6 +251,10 @@ pub enum Ssimulacra2Error {
 }
 
 /// Computes the SSIMULACRA2 score with default configuration (safe SIMD).
+#[deprecated(
+    since = "0.8.0",
+    note = "use compute_ssimulacra2 with ToLinearRgb types instead"
+)]
 pub fn compute_frame_ssimulacra2<T, U>(source: T, distorted: U) -> Result<f64, Ssimulacra2Error>
 where
     LinearRgb: TryFrom<T> + TryFrom<U>,
@@ -261,6 +263,10 @@ where
 }
 
 /// Computes the SSIMULACRA2 score with custom implementation configuration.
+#[deprecated(
+    since = "0.8.0",
+    note = "use compute_ssimulacra2_with_config with ToLinearRgb types instead"
+)]
 pub fn compute_frame_ssimulacra2_with_config<T, U>(
     source: T,
     distorted: U,
@@ -820,6 +826,7 @@ impl Msssim {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use std::path::PathBuf;
 
