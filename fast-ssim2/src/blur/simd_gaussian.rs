@@ -76,6 +76,7 @@ fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
 
 /// Enables FMA on platforms that support it. The body is pure scalar IIR;
 /// `#[autoversion]` adds `#[target_feature]` so `mul_add` compiles to FMA.
+#[allow(unused_imports)] // archmage dispatch on i686 triggers false positive
 #[autoversion]
 fn horizontal_pass_inner(input: &[f32], output: &mut [f32], width: usize) {
     horizontal_pass_rows(input, output, width);

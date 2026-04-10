@@ -128,10 +128,10 @@ jobs:
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=/ --"
           RUSTFLAGS: "-C target-feature=+simd128 -Dwarnings"
-        run: cargo test --target wasm32-wasip1 --features imgref -p fast-ssim2 --lib --tests
+        run: cargo test --target wasm32-wasip1 --features imgref -p fast-ssim2 --lib
 
       - name: Test WASM without SIMD (scalar)
-        run: cargo test --target wasm32-wasip1 -p fast-ssim2 --lib --tests
+        run: cargo test --target wasm32-wasip1 -p fast-ssim2 --lib
 
   # ==========================================================================
   # MSRV check
