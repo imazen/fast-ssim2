@@ -35,8 +35,7 @@ impl SimdGaussian {
         // Cap the hint at a sane value so callers passing absurd widths
         // don't trigger an immediate gigabyte-scale allocation. The buffer
         // still grows on demand if the actual image needs more.
-        const HINT_FLOOR: usize = 0;
-        let initial_capacity = max_width.min(usize::MAX / 4).max(HINT_FLOOR);
+        let initial_capacity = max_width.min(usize::MAX / 4);
         Self {
             temp_buffer: Vec::with_capacity(initial_capacity),
             max_size: 0,

@@ -1018,7 +1018,7 @@ mod tests {
         // To avoid allocating MAX_IMAGE_PIXELS+1 floats in unit tests, we
         // verify the error path indirectly: ensure the constant is sane and
         // the Display impl renders.
-        assert!(MAX_IMAGE_PIXELS >= 8 * 8);
+        const { assert!(MAX_IMAGE_PIXELS >= 8 * 8) };
         let err = Ssimulacra2Error::ImageTooLarge {
             actual: MAX_IMAGE_PIXELS + 1,
         };
