@@ -70,10 +70,9 @@ impl TestImageGenerator {
         let max_dist = width + height - 2;
         for y in 0..height {
             for x in 0..width {
-                let val = if max_dist > 0 {
-                    ((x + y) * 255 / max_dist) as u8
-                } else {
-                    128
+                let val = match ((x + y) * 255).checked_div(max_dist) {
+                    Some(v) => v as u8,
+                    None => 128,
                 };
                 data.extend_from_slice(&[val, val, val]);
             }
