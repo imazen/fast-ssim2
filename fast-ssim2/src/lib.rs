@@ -1035,9 +1035,8 @@ mod tests {
         // Sanity check that the new dimension cap does not regress small valid
         // inputs.
         let img = make_linear_rgb(16, 16);
-        let score =
-            compute_ssimulacra2_with_config(img.clone(), img, Ssimulacra2Config::default())
-                .expect("16x16 grey image must be accepted");
+        let score = compute_ssimulacra2_with_config(img.clone(), img, Ssimulacra2Config::default())
+            .expect("16x16 grey image must be accepted");
         assert!(
             (score - 100.0).abs() < 0.01,
             "identical images should score 100, got {score}"

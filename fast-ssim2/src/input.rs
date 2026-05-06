@@ -38,9 +38,7 @@ pub enum LinearRgbImageError {
     #[error("LinearRgbImage dimensions overflow usize")]
     DimensionOverflow,
     /// `data.len()` did not match `width * height`.
-    #[error(
-        "LinearRgbImage data length {actual} does not match width * height = {expected}"
-    )]
+    #[error("LinearRgbImage data length {actual} does not match width * height = {expected}")]
     DataLengthMismatch {
         /// Expected pixel count (`width * height`).
         expected: usize,
