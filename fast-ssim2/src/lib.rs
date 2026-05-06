@@ -172,7 +172,7 @@ mod simd_ops;
 mod xyb_simd;
 
 pub use blur::Blur;
-pub use input::{LinearRgbImage, ToLinearRgb};
+pub use input::{LinearRgbImage, LinearRgbImageError, ToLinearRgb};
 pub use precompute::Ssimulacra2Reference;
 
 // Re-export sRGB conversion functions for users implementing custom input types
