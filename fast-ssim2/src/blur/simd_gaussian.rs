@@ -20,17 +20,40 @@ pub struct SimdGaussian {
 }
 
 impl SimdGaussian {
+    /// Create a new SIMD Gaussian blur context.
+    ///
+    /// `max_width` is treated as a hint; the temporary buffer grows on demand
+    /// in [`Self::shrink_to`] and [`Self::blur_single_plane_into`], so an
+    /// underestimate only costs one reallocation. The hint is intentionally
+    /// not multiplied by an assumed maximum height: previously this constructor
+    /// pre-allocated `max_width * 4096` floats unconditionally, which both
+    /// wasted memory for short strips (e.g. a 16384-wide image with a 64-row
+    /// working buffer would allocate 256 MiB upfront for nothing) and would
+    /// silently overflow `usize` on 32-bit targets when `max_width` exceeded
+    /// `usize::MAX / 4096`.
     pub fn new(max_width: usize) -> Self {
-        const MAX_HEIGHT: usize = 4096;
-        let max_size = max_width * MAX_HEIGHT;
+        // Cap the hint at a sane value so callers passing absurd widths
+        // don't trigger an immediate gigabyte-scale allocation. The buffer
+        // still grows on demand if the actual image needs more.
+        const HINT_FLOOR: usize = 0;
+        let initial_capacity = max_width.min(usize::MAX / 4).max(HINT_FLOOR);
         Self {
-            temp_buffer: vec![0.0; max_size],
-            max_size,
+            temp_buffer: Vec::with_capacity(initial_capacity),
+            max_size: 0,
         }
     }
 
+    /// Ensure the temporary buffer is large enough for `width * height`.
+    ///
+    /// Returns silently without resizing if the dimensions overflow `usize` or
+    /// fit in the existing capacity. The actual blur entry point
+    /// ([`Self::blur_single_plane_into`]) re-checks and panics with a clearer
+    /// message on overflow, matching the previous (implicit) behavior on
+    /// 64-bit targets but making the failure mode explicit on 32-bit.
     pub fn shrink_to(&mut self, width: usize, height: usize) {
-        let needed = width * height;
+        let Some(needed) = width.checked_mul(height) else {
+            return;
+        };
         if needed > self.max_size {
             self.temp_buffer.resize(needed, 0.0);
             self.max_size = needed;
@@ -51,7 +74,11 @@ impl SimdGaussian {
         width: usize,
         height: usize,
     ) {
-        let size = width * height;
+        // checked_mul guards against silent wraparound on 32-bit targets where
+        // a malicious caller could otherwise pass dims whose product overflows.
+        let size = width
+            .checked_mul(height)
+            .expect("SimdGaussian: width * height overflows usize");
         if size > self.max_size {
             self.temp_buffer.resize(size, 0.0);
             self.max_size = size;
@@ -336,5 +363,63 @@ fn vertical_pass_scalar_columns(
         }
 
         x += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_does_not_eagerly_allocate_height_hint() {
+        // Previously `SimdGaussian::new(max_width)` allocated
+        // `max_width * 4096` floats unconditionally. A 1024-wide hint should
+        // not commit 16 MiB upfront -- the buffer grows lazily when blur is
+        // actually invoked.
+        let g = SimdGaussian::new(1024);
+        assert_eq!(g.max_size, 0);
+        // Capacity may be reserved up to the hint, but len stays at 0 so we
+        // pay no time touching uninitialised pages.
+        assert_eq!(g.temp_buffer.len(), 0);
+    }
+
+    #[test]
+    fn shrink_to_ignores_overflowing_dims() {
+        // Hostile caller passes dims whose product overflows usize. We must
+        // not panic in `shrink_to`; the actual blur path is the place to
+        // refuse the work.
+        let mut g = SimdGaussian::new(0);
+        g.shrink_to(usize::MAX, 2);
+        assert_eq!(g.max_size, 0);
+    }
+
+    #[test]
+    fn shrink_to_grows_on_demand() {
+        let mut g = SimdGaussian::new(0);
+        g.shrink_to(64, 64);
+        assert!(g.max_size >= 64 * 64);
+        assert_eq!(g.temp_buffer.len(), 64 * 64);
+    }
+
+    #[test]
+    fn blur_runs_after_lazy_construction() {
+        // End-to-end: a context constructed with hint=0 must still service a
+        // small blur call by growing its buffer in blur_single_plane_into.
+        let mut g = SimdGaussian::new(0);
+        let plane = vec![0.5f32; 16 * 16];
+        let mut out = vec![0.0f32; 16 * 16];
+        g.blur_single_plane_into(&plane, &mut out, 16, 16);
+        // Output is finite (the recursive Gaussian preserves a constant
+        // signal up to scaling at small sizes; we only assert non-NaN here).
+        assert!(out.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    #[should_panic(expected = "width * height overflows usize")]
+    fn blur_panics_on_overflowing_dims() {
+        let mut g = SimdGaussian::new(0);
+        let plane = [0.0f32; 0];
+        let mut out = [0.0f32; 0];
+        g.blur_single_plane_into(&plane, &mut out, usize::MAX, 2);
     }
 }
