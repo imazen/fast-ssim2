@@ -1,3 +1,13 @@
+## [Unreleased]
+
+### Added
+- `LinearRgbImage::try_new` fallible constructor returning `LinearRgbImageError` for invalid dimensions or data length
+- `Ssimulacra2Error::ImageTooLarge` variant and public `MAX_IMAGE_PIXELS` constant (16384*16384) capping caller-supplied image size to prevent unbounded working-buffer allocation
+
+### Fixed
+- `LinearRgbImage::new` now validates dimensions and data length at runtime (was `debug_assert_eq!` only) so release-mode misuse no longer constructs malformed images that panic deep in `From<LinearRgbImage> for yuvxyb::LinearRgb`
+- `SimdGaussian::new` no longer eagerly allocates `max_width * 4096` floats; the temp buffer grows on demand. Also guards against `usize` overflow on 32-bit targets when `width * height` would wrap
+
 ## Version 0.7.3
 
 - Add proper CI workflow with full platform matrix (Linux, macOS, Windows on x64/ARM64), i686 cross testing, WASM testing, MSRV verification, and code coverage

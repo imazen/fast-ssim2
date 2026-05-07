@@ -21,22 +21,71 @@
 /// Internal linear RGB image representation.
 ///
 /// Stores pixels as `[f32; 3]` in linear RGB color space (0.0-1.0 range).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LinearRgbImage {
     pub(crate) data: Vec<[f32; 3]>,
     pub(crate) width: usize,
     pub(crate) height: usize,
 }
 
+/// Errors returned by [`LinearRgbImage::try_new`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LinearRgbImageError {
+    /// `width` or `height` was zero.
+    #[error("LinearRgbImage dimensions must be nonzero")]
+    ZeroDimension,
+    /// `width * height` overflowed `usize`.
+    #[error("LinearRgbImage dimensions overflow usize")]
+    DimensionOverflow,
+    /// `data.len()` did not match `width * height`.
+    #[error("LinearRgbImage data length {actual} does not match width * height = {expected}")]
+    DataLengthMismatch {
+        /// Expected pixel count (`width * height`).
+        expected: usize,
+        /// Actual `data.len()`.
+        actual: usize,
+    },
+}
+
 impl LinearRgbImage {
     /// Creates a new linear RGB image from raw data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `width` or `height` is `0`, if `width * height` overflows
+    /// `usize`, or if `data.len()` does not equal `width * height`.
+    /// For a non-panicking constructor, use [`LinearRgbImage::try_new`].
     pub fn new(data: Vec<[f32; 3]>, width: usize, height: usize) -> Self {
-        debug_assert_eq!(data.len(), width * height);
-        Self {
+        Self::try_new(data, width, height)
+            .expect("LinearRgbImage::new: invalid dimensions or data length")
+    }
+
+    /// Fallible constructor for [`LinearRgbImage`].
+    ///
+    /// Returns `Err` if `width` or `height` is `0`, if `width * height`
+    /// overflows `usize`, or if `data.len()` does not equal `width * height`.
+    pub fn try_new(
+        data: Vec<[f32; 3]>,
+        width: usize,
+        height: usize,
+    ) -> Result<Self, LinearRgbImageError> {
+        if width == 0 || height == 0 {
+            return Err(LinearRgbImageError::ZeroDimension);
+        }
+        let expected = width
+            .checked_mul(height)
+            .ok_or(LinearRgbImageError::DimensionOverflow)?;
+        if data.len() != expected {
+            return Err(LinearRgbImageError::DataLengthMismatch {
+                expected,
+                actual: data.len(),
+            });
+        }
+        Ok(Self {
             data,
             width,
             height,
-        }
+        })
     }
 
     /// Returns the image width.
@@ -268,12 +317,22 @@ impl ToLinearRgb for yuvxyb::LinearRgb {
 impl From<LinearRgbImage> for yuvxyb::LinearRgb {
     fn from(img: LinearRgbImage) -> Self {
         use std::num::NonZeroUsize;
-        yuvxyb::LinearRgb::new(
-            img.data,
-            NonZeroUsize::new(img.width).expect("width must be nonzero"),
-            NonZeroUsize::new(img.height).expect("height must be nonzero"),
-        )
-        .expect("LinearRgbImage dimensions are always valid")
+        // `LinearRgbImage::try_new` enforces nonzero dimensions and
+        // `data.len() == width * height`, so the conversions below cannot fail.
+        // We assert defensively in case `LinearRgbImage` was constructed
+        // without going through the validated constructor (e.g., by an
+        // internal `pub(crate)` field assignment that bypassed validation).
+        let width = NonZeroUsize::new(img.width)
+            .expect("LinearRgbImage width is nonzero (try_new invariant)");
+        let height = NonZeroUsize::new(img.height)
+            .expect("LinearRgbImage height is nonzero (try_new invariant)");
+        assert_eq!(
+            img.data.len(),
+            width.get().saturating_mul(height.get()),
+            "LinearRgbImage data length must equal width * height (try_new invariant)"
+        );
+        yuvxyb::LinearRgb::new(img.data, width, height)
+            .expect("LinearRgbImage dimensions are valid (try_new invariant)")
     }
 }
 
@@ -347,6 +406,50 @@ mod tests {
         assert_eq!(img.width(), 2);
         assert_eq!(img.height(), 1);
         assert_eq!(img.data(), &data[..]);
+    }
+
+    #[test]
+    fn test_try_new_rejects_zero_dimension() {
+        let err = LinearRgbImage::try_new(vec![], 0, 4).unwrap_err();
+        assert_eq!(err, LinearRgbImageError::ZeroDimension);
+        let err = LinearRgbImage::try_new(vec![], 4, 0).unwrap_err();
+        assert_eq!(err, LinearRgbImageError::ZeroDimension);
+    }
+
+    #[test]
+    fn test_try_new_rejects_dimension_overflow() {
+        // usize::MAX * 2 always overflows on every supported target.
+        let err = LinearRgbImage::try_new(vec![], usize::MAX, 2).unwrap_err();
+        assert_eq!(err, LinearRgbImageError::DimensionOverflow);
+    }
+
+    #[test]
+    fn test_try_new_rejects_data_length_mismatch() {
+        let err = LinearRgbImage::try_new(vec![[0.0; 3]; 3], 2, 2).unwrap_err();
+        assert!(matches!(
+            err,
+            LinearRgbImageError::DataLengthMismatch {
+                expected: 4,
+                actual: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn test_try_new_accepts_valid_input() {
+        let img = LinearRgbImage::try_new(vec![[0.5, 0.3, 0.1]; 6], 3, 2).unwrap();
+        assert_eq!(img.width(), 3);
+        assert_eq!(img.height(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "LinearRgbImage::new: invalid dimensions or data length")]
+    fn test_new_panics_on_zero_dimension_in_release() {
+        // This panic now fires in release as well as debug builds — previously
+        // only `debug_assert_eq!` validated, so release-mode misuse silently
+        // produced a malformed image that would later panic deep in
+        // `From<LinearRgbImage> for yuvxyb::LinearRgb`.
+        let _ = LinearRgbImage::new(vec![], 0, 4);
     }
 
     #[test]

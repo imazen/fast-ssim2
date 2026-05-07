@@ -80,10 +80,21 @@ impl Ssimulacra2Reference {
     ///
     /// # Errors
     /// - If the image is smaller than 8x8 pixels
+    /// - If the image exceeds [`crate::MAX_IMAGE_PIXELS`] pixels
     pub fn new<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
         let mut img1: LinearRgb = source.into_linear_rgb().into();
         if img1.width().get() < 8 || img1.height().get() < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
+        }
+
+        // Cap pixel count to prevent unbounded working-buffer allocation.
+        let pixels = img1
+            .width()
+            .get()
+            .checked_mul(img1.height().get())
+            .ok_or(Ssimulacra2Error::ImageTooLarge { actual: usize::MAX })?;
+        if pixels > crate::MAX_IMAGE_PIXELS {
+            return Err(Ssimulacra2Error::ImageTooLarge { actual: pixels });
         }
 
         let original_width = img1.width().get();
