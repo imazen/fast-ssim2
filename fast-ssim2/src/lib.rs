@@ -615,6 +615,7 @@ pub(crate) fn ssim_map(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ssim_map_scalar(
     scales_n: usize,
     scale_idx: usize,
@@ -672,6 +673,7 @@ fn ssim_map_scalar(
     plane_averages
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn edge_diff_map(
     scales_n: usize,
     scale_idx: usize,
@@ -693,6 +695,7 @@ pub(crate) fn edge_diff_map(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn edge_diff_map_scalar(
     scales_n: usize,
     scale_idx: usize,

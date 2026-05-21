@@ -242,6 +242,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::needless_range_loop)] // `c` and `s` index a 3D table; .iter().enumerate() obscures the intent.
     fn ssim_skip_table_full_scales_matches_paper_audit() {
         // At scales_n = NUM_SCALES = 6 the linear WEIGHT walk lines up with
         // the layout. Per the audit: X-s0, Y-s5, B-s0 should skip.
@@ -270,6 +271,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::needless_range_loop)] // `c` and `s` index a 3D table; .iter().enumerate() obscures the intent.
     fn edge_skip_table_full_scales_matches_paper_audit() {
         let sn = NUM_SCALES;
         assert!(
