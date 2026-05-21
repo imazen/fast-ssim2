@@ -174,7 +174,7 @@ mod xyb_simd;
 
 pub use blur::Blur;
 pub use input::{LinearRgbImage, LinearRgbImageError, ToLinearRgb};
-pub use precompute::Ssimulacra2Reference;
+pub use precompute::{CompareContext, Ssimulacra2Reference};
 
 // Re-export sRGB conversion functions for users implementing custom input types
 pub use input::{srgb_to_linear, srgb_u8_to_linear, srgb_u16_to_linear};
