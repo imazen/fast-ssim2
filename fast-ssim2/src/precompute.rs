@@ -537,11 +537,12 @@ mod tests {
         let precomputed = Ssimulacra2Reference::new(source).unwrap();
         let score_compare = precomputed.compare(distorted.clone()).unwrap();
         let mut ctx = precomputed.compare_context();
-        let score_compare_with = precomputed.compare_with(&mut ctx, distorted.clone()).unwrap();
+        let score_compare_with = precomputed
+            .compare_with(&mut ctx, distorted.clone())
+            .unwrap();
         // Calling compare_with a second time exercises buffer reuse — the
         // result must still match exactly.
-        let score_compare_with_repeat =
-            precomputed.compare_with(&mut ctx, distorted).unwrap();
+        let score_compare_with_repeat = precomputed.compare_with(&mut ctx, distorted).unwrap();
 
         // Both paths share the SIMD ops, so the scores should be exactly
         // equal modulo reduce-order. 1e-9 leaves room for the f64

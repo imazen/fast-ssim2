@@ -246,15 +246,23 @@ mod tests {
         // At scales_n = NUM_SCALES = 6 the linear WEIGHT walk lines up with
         // the layout. Per the audit: X-s0, Y-s5, B-s0 should skip.
         let sn = NUM_SCALES;
-        assert!(!SSIM_HAS_WEIGHT[sn][0][0], "X-s0 SSIM should skip at full scales");
-        assert!(!SSIM_HAS_WEIGHT[sn][1][5], "Y-s5 SSIM should skip at full scales");
-        assert!(!SSIM_HAS_WEIGHT[sn][2][0], "B-s0 SSIM should skip at full scales");
+        assert!(
+            !SSIM_HAS_WEIGHT[sn][0][0],
+            "X-s0 SSIM should skip at full scales"
+        );
+        assert!(
+            !SSIM_HAS_WEIGHT[sn][1][5],
+            "Y-s5 SSIM should skip at full scales"
+        );
+        assert!(
+            !SSIM_HAS_WEIGHT[sn][2][0],
+            "B-s0 SSIM should skip at full scales"
+        );
         for c in 0..3 {
             for s in 0..NUM_SCALES {
                 let expected_zero = matches!((c, s), (0, 0) | (1, 5) | (2, 0));
                 assert_eq!(
-                    SSIM_HAS_WEIGHT[sn][c][s],
-                    !expected_zero,
+                    SSIM_HAS_WEIGHT[sn][c][s], !expected_zero,
                     "SSIM_HAS_WEIGHT[6][{c}][{s}] mismatch"
                 );
             }
@@ -264,14 +272,19 @@ mod tests {
     #[test]
     fn edge_skip_table_full_scales_matches_paper_audit() {
         let sn = NUM_SCALES;
-        assert!(!EDGE_HAS_WEIGHT[sn][0][5], "X-s5 edge should skip at full scales");
-        assert!(!EDGE_HAS_WEIGHT[sn][1][5], "Y-s5 edge should skip at full scales");
+        assert!(
+            !EDGE_HAS_WEIGHT[sn][0][5],
+            "X-s5 edge should skip at full scales"
+        );
+        assert!(
+            !EDGE_HAS_WEIGHT[sn][1][5],
+            "Y-s5 edge should skip at full scales"
+        );
         for c in 0..3 {
             for s in 0..NUM_SCALES {
                 let expected_zero = matches!((c, s), (0, 5) | (1, 5));
                 assert_eq!(
-                    EDGE_HAS_WEIGHT[sn][c][s],
-                    !expected_zero,
+                    EDGE_HAS_WEIGHT[sn][c][s], !expected_zero,
                     "EDGE_HAS_WEIGHT[6][{c}][{s}] mismatch"
                 );
             }

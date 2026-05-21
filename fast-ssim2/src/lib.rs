@@ -464,8 +464,7 @@ where
         blur.blur_into(&img2_planar, &mut mu2);
 
         let avg_ssim = ssim_map(
-            scales_n, scale, width, height, &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12,
-            impl_type,
+            scales_n, scale, width, height, &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, impl_type,
         );
         let avg_edgediff = edge_diff_map(
             scales_n,
