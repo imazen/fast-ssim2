@@ -9,15 +9,15 @@ use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
 fn main() {
-    let sizes = [(256, 256), (512, 512), (1024, 1024)];
-    let iterations = 10;
+    let sizes = [(256, 256), (512, 512), (1024, 1024), (1920, 1080)];
+    let iterations = 20;
 
     println!("SSIMULACRA2 Precompute Benchmark\n");
     println!(
-        "{:>12} {:>6} {:>15} {:>15} {:>10}",
-        "Size", "Iters", "Full Compute", "Precomputed", "Speedup"
+        "{:>12} {:>6} {:>14} {:>14} {:>14} {:>10} {:>10}",
+        "Size", "Iters", "Full", "compare", "compare_with", "vs_full", "vs_compare"
     );
-    println!("{:-<65}", "");
+    println!("{:-<92}", "");
 
     for (width, height) in sizes {
         // Create reference and distorted test images
@@ -74,7 +74,7 @@ fn main() {
         // Precompute reference once (not counted in benchmark)
         let precomputed = Ssimulacra2Reference::new(reference).unwrap();
 
-        // Benchmark only the comparison step
+        // Benchmark compare() — allocates working buffers per call
         let start = Instant::now();
         for _ in 0..iterations {
             let distorted = Rgb::new(
@@ -89,11 +89,35 @@ fn main() {
         }
         let precompute_time = start.elapsed() / iterations as u32;
 
-        let speedup = full_time.as_secs_f64() / precompute_time.as_secs_f64();
+        // Benchmark compare_with() — zero-alloc after first call
+        let mut ctx = precomputed.compare_context();
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let distorted = Rgb::new(
+                distorted_data.clone(),
+                nz_width,
+                nz_height,
+                TransferCharacteristic::SRGB,
+                ColorPrimaries::BT709,
+            )
+            .unwrap();
+            let _ = precomputed.compare_with(&mut ctx, distorted).unwrap();
+        }
+        let compare_with_time = start.elapsed() / iterations as u32;
+
+        let speedup_full = full_time.as_secs_f64() / compare_with_time.as_secs_f64();
+        let speedup_compare = precompute_time.as_secs_f64() / compare_with_time.as_secs_f64();
 
         println!(
-            "{:>5}x{:<5} {:>6} {:>12.2?} {:>15.2?} {:>9.2}x",
-            width, height, iterations, full_time, precompute_time, speedup
+            "{:>5}x{:<5} {:>6} {:>11.2?} {:>11.2?} {:>11.2?} {:>9.2}x {:>9.2}x",
+            width,
+            height,
+            iterations,
+            full_time,
+            precompute_time,
+            compare_with_time,
+            speedup_full,
+            speedup_compare
         );
     }
 

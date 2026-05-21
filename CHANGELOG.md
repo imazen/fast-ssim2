@@ -1,8 +1,13 @@
 ## [Unreleased]
 
 ### Added
+- `CompareContext` and `Ssimulacra2Reference::compare_with(&mut ctx, distorted)` — zero-allocation batch-comparison API. Pair with `reference.compare_context()`; subsequent calls reuse the working buffers (`mul`, `mu2`, `sigma2_sq`, `sigma12`, `img2_planar`, blur state) instead of allocating ~13 image-sized `Vec<f32>` planes per call. Measured 1.10–1.25× faster than `compare()` on the precompute benchmark at 256x256 / 512x512 / 1024x1024 / 1920x1080 (c419b3d)
 - `LinearRgbImage::try_new` fallible constructor returning `LinearRgbImageError` for invalid dimensions or data length
 - `Ssimulacra2Error::ImageTooLarge` variant and public `MAX_IMAGE_PIXELS` constant (16384*16384) capping caller-supplied image size to prevent unbounded working-buffer allocation
+
+### Changed
+- Skip per-channel SSIM and edge-difference work whose final-score weight is zero. Bit-identical to the prior path (the dropped contributions multiplied by zero downstream); reference-parity test passes across the C++ corpus including 64x64 cases where `scales_n < NUM_SCALES` makes `score()`'s linear WEIGHT walk shift in the layout. Lossless variant of Technique 2 from Kanetaka et al. IWAIT 2026, DOI 10.1117/12.3100969 (75e3234)
+- Hoist the 6 IIR-state vectors used by the SIMD vertical blur pass out of the per-call inner function and onto `SimdGaussian`, eliminating ~180 small `Vec<f32>` allocations per ssim2 frame (bc9d011)
 
 ### Fixed
 - `LinearRgbImage::new` now validates dimensions and data length at runtime (was `debug_assert_eq!` only) so release-mode misuse no longer constructs malformed images that panic deep in `From<LinearRgbImage> for yuvxyb::LinearRgb`
