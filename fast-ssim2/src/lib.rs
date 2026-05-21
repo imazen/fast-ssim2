@@ -169,6 +169,7 @@ mod precompute;
 pub mod reference_data;
 #[allow(clippy::too_many_arguments)] // arcane macro generates dispatchers inheriting param count
 mod simd_ops;
+mod weights;
 mod xyb_simd;
 
 pub use blur::Blur;
@@ -184,7 +185,7 @@ use yuvxyb::Xyb;
 
 // How often to downscale and score the input images.
 // Each scaling step will downscale by a factor of two.
-pub(crate) const NUM_SCALES: usize = 6;
+pub(crate) use weights::NUM_SCALES;
 
 /// SIMD implementation backend for all operations (blur, XYB conversion, SSIM computation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -391,6 +392,10 @@ where
     let mut height = img1.height().get();
     let impl_type = config.impl_type;
 
+    // Count how many scales will actually run so the skip-map can address
+    // `WEIGHT[]` using the same linear walk `score()` performs.
+    let scales_n = weights::count_scales(width, height);
+
     // Pre-allocate reusable buffers (sized for initial dimensions, shrunk per scale)
     let alloc_plane = || vec![0.0f32; width * height];
     let alloc_3planes = || [alloc_plane(), alloc_plane(), alloc_plane()];
@@ -459,9 +464,12 @@ where
         blur.blur_into(&img2_planar, &mut mu2);
 
         let avg_ssim = ssim_map(
-            width, height, &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, impl_type,
+            scales_n, scale, width, height, &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12,
+            impl_type,
         );
         let avg_edgediff = edge_diff_map(
+            scales_n,
+            scale,
             width,
             height,
             &img1_planar,
@@ -587,6 +595,8 @@ pub(crate) fn downscale_by_2(in_data: &LinearRgb) -> LinearRgb {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn ssim_map(
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     m1: &[Vec<f32>; 3],
@@ -597,12 +607,18 @@ pub(crate) fn ssim_map(
     impl_type: SimdImpl,
 ) -> [f64; 3 * 2] {
     match impl_type {
-        SimdImpl::Scalar => ssim_map_scalar(width, height, m1, m2, s11, s22, s12),
-        SimdImpl::Simd => simd_ops::ssim_map_simd(width, height, m1, m2, s11, s22, s12),
+        SimdImpl::Scalar => {
+            ssim_map_scalar(scales_n, scale_idx, width, height, m1, m2, s11, s22, s12)
+        }
+        SimdImpl::Simd => {
+            simd_ops::ssim_map_simd(scales_n, scale_idx, width, height, m1, m2, s11, s22, s12)
+        }
     }
 }
 
 fn ssim_map_scalar(
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     m1: &[Vec<f32>; 3],
@@ -615,8 +631,14 @@ fn ssim_map_scalar(
 
     let one_per_pixels = 1.0f64 / (width * height) as f64;
     let mut plane_averages = [0f64; 3 * 2];
+    let skip_table = weights::SSIM_HAS_WEIGHT[scales_n.min(NUM_SCALES)];
 
     for c in 0..3 {
+        // Lossless skip — see weights.rs::SSIM_HAS_WEIGHT for the indexing
+        // rationale (parametric in scales_n to respect score()'s linear walk).
+        if scale_idx < NUM_SCALES && !skip_table[c][scale_idx] {
+            continue;
+        }
         let mut sum_d = 0.0f64;
         let mut sum_d4 = 0.0f64;
         for (row_m1, (row_m2, (row_s11, (row_s22, row_s12)))) in m1[c].chunks_exact(width).zip(
@@ -652,6 +674,8 @@ fn ssim_map_scalar(
 }
 
 pub(crate) fn edge_diff_map(
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     img1: &[Vec<f32>; 3],
@@ -661,12 +685,18 @@ pub(crate) fn edge_diff_map(
     impl_type: SimdImpl,
 ) -> [f64; 3 * 4] {
     match impl_type {
-        SimdImpl::Scalar => edge_diff_map_scalar(width, height, img1, mu1, img2, mu2),
-        SimdImpl::Simd => simd_ops::edge_diff_map_simd(width, height, img1, mu1, img2, mu2),
+        SimdImpl::Scalar => {
+            edge_diff_map_scalar(scales_n, scale_idx, width, height, img1, mu1, img2, mu2)
+        }
+        SimdImpl::Simd => {
+            simd_ops::edge_diff_map_simd(scales_n, scale_idx, width, height, img1, mu1, img2, mu2)
+        }
     }
 }
 
 fn edge_diff_map_scalar(
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     img1: &[Vec<f32>; 3],
@@ -676,8 +706,12 @@ fn edge_diff_map_scalar(
 ) -> [f64; 3 * 4] {
     let one_per_pixels = 1.0f64 / (width * height) as f64;
     let mut plane_averages = [0f64; 3 * 4];
+    let skip_table = weights::EDGE_HAS_WEIGHT[scales_n.min(NUM_SCALES)];
 
     for c in 0..3 {
+        if scale_idx < NUM_SCALES && !skip_table[c][scale_idx] {
+            continue;
+        }
         let mut sum1 = [0.0f64; 4];
         for (row1, (row2, (rowm1, rowm2))) in img1[c].chunks_exact(width).zip(
             img2[c]
@@ -719,119 +753,8 @@ pub(crate) struct MsssimScale {
 }
 
 impl Msssim {
-    #[allow(clippy::too_many_lines)]
     pub fn score(&self) -> f64 {
-        const WEIGHT: [f64; 108] = [
-            0.0,
-            0.000_737_660_670_740_658_6,
-            0.0,
-            0.0,
-            0.000_779_348_168_286_730_9,
-            0.0,
-            0.0,
-            0.000_437_115_573_010_737_9,
-            0.0,
-            1.104_172_642_665_734_6,
-            0.000_662_848_341_292_71,
-            0.000_152_316_327_837_187_52,
-            0.0,
-            0.001_640_643_745_659_975_4,
-            0.0,
-            1.842_245_552_053_929_8,
-            11.441_172_603_757_666,
-            0.0,
-            0.000_798_910_943_601_516_3,
-            0.000_176_816_438_078_653,
-            0.0,
-            1.878_759_497_954_638_7,
-            10.949_069_906_051_42,
-            0.0,
-            0.000_728_934_699_150_807_2,
-            0.967_793_708_062_683_3,
-            0.0,
-            0.000_140_034_242_854_358_84,
-            0.998_176_697_785_496_7,
-            0.000_319_497_559_344_350_53,
-            0.000_455_099_211_379_206_3,
-            0.0,
-            0.0,
-            0.001_364_876_616_324_339_8,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            7.466_890_328_078_848,
-            0.0,
-            17.445_833_984_131_262,
-            0.000_623_560_163_404_146_6,
-            0.0,
-            0.0,
-            6.683_678_146_179_332,
-            0.000_377_244_079_796_112_96,
-            1.027_889_937_768_264,
-            225.205_153_008_492_74,
-            0.0,
-            0.0,
-            19.213_238_186_143_016,
-            0.001_140_152_458_661_836_1,
-            0.001_237_755_635_509_985,
-            176.393_175_984_506_94,
-            0.0,
-            0.0,
-            24.433_009_998_704_76,
-            0.285_208_026_121_177_57,
-            0.000_448_543_692_383_340_8,
-            0.0,
-            0.0,
-            0.0,
-            34.779_063_444_837_72,
-            44.835_625_328_877_896,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.000_868_055_657_329_169_8,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.000_531_319_187_435_874_7,
-            0.0,
-            0.000_165_338_141_613_791_12,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.000_417_917_180_325_133_6,
-            0.001_729_082_823_472_283_3,
-            0.0,
-            0.002_082_700_584_663_643_7,
-            0.0,
-            0.0,
-            8.826_982_764_996_862,
-            23.192_433_439_989_26,
-            0.0,
-            95.108_049_881_108_6,
-            0.986_397_803_440_068_2,
-            0.983_438_279_246_535_3,
-            0.001_228_640_504_827_849_3,
-            171.266_725_589_730_7,
-            0.980_785_887_243_537_9,
-            0.0,
-            0.0,
-            0.0,
-            0.000_513_006_458_899_067_9,
-            0.0,
-            0.000_108_540_578_584_115_37,
-        ];
-
+        use weights::WEIGHT;
         let mut ssim = 0.0f64;
 
         let mut i = 0usize;

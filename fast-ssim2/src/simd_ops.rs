@@ -7,6 +7,8 @@ use archmage::incant;
 use archmage::magetypes;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 
+use crate::weights::{EDGE_HAS_WEIGHT, NUM_SCALES, SSIM_HAS_WEIGHT};
+
 const C2: f32 = 0.0009f32;
 
 // =============================================================================
@@ -17,6 +19,8 @@ const C2: f32 = 0.0009f32;
 #[magetypes(v3, neon, wasm128, scalar)]
 fn ssim_map_inner(
     token: Token,
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     m1: &[Vec<f32>; 3],
@@ -37,7 +41,19 @@ fn ssim_map_inner(
     let one_per_pixels = 1.0f64 / (width * height) as f64;
     let mut plane_averages = [0f64; 3 * 2];
 
+    // Skip table is parametric in `scales_n` because `score()` walks WEIGHT
+    // linearly — at smaller scale counts the cells used for `(c, scale_idx)`
+    // shift in the layout. See weights.rs for the worked example.
+    let skip_table = SSIM_HAS_WEIGHT[scales_n.min(NUM_SCALES)];
+
     for c in 0..3 {
+        // Lossless skip — both L1 and L4 SSIM weights for this
+        // `(scales_n, channel, scale_idx)` are zero, so the per-channel
+        // contribution to the final score is `0.0 * value = 0.0`. Leave the
+        // two output slots at the initial 0.0.
+        if scale_idx < NUM_SCALES && !skip_table[c][scale_idx] {
+            continue;
+        }
         let mut sum_d = 0.0f64;
         let mut sum_d4 = 0.0f64;
 
@@ -101,6 +117,8 @@ fn ssim_map_inner(
 
 /// SIMD-optimized SSIM map computation with automatic runtime dispatch.
 pub(crate) fn ssim_map_simd(
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     m1: &[Vec<f32>; 3],
@@ -110,7 +128,7 @@ pub(crate) fn ssim_map_simd(
     s12: &[Vec<f32>; 3],
 ) -> [f64; 3 * 2] {
     incant!(
-        ssim_map_inner(width, height, m1, m2, s11, s22, s12),
+        ssim_map_inner(scales_n, scale_idx, width, height, m1, m2, s11, s22, s12),
         [v3, neon, wasm128, scalar]
     )
 }
@@ -123,6 +141,8 @@ pub(crate) fn ssim_map_simd(
 #[magetypes(v3, neon, wasm128, scalar)]
 fn edge_diff_map_inner(
     token: Token,
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     img1: &[Vec<f32>; 3],
@@ -140,7 +160,14 @@ fn edge_diff_map_inner(
     let one_simd = f32x8::splat(token, 1.0);
     let zero_simd = f32x8::zero(token);
 
+    let skip_table = EDGE_HAS_WEIGHT[scales_n.min(NUM_SCALES)];
+
     for c in 0..3 {
+        // Lossless skip — all four edge-diff weights for this
+        // `(scales_n, c, scale_idx)` are zero.
+        if scale_idx < NUM_SCALES && !skip_table[c][scale_idx] {
+            continue;
+        }
         let mut sum_artifact = 0.0f64;
         let mut sum_artifact4 = 0.0f64;
         let mut sum_detail = 0.0f64;
@@ -207,6 +234,8 @@ fn edge_diff_map_inner(
 
 /// SIMD-optimized edge difference map with automatic runtime dispatch.
 pub(crate) fn edge_diff_map_simd(
+    scales_n: usize,
+    scale_idx: usize,
     width: usize,
     height: usize,
     img1: &[Vec<f32>; 3],
@@ -215,7 +244,7 @@ pub(crate) fn edge_diff_map_simd(
     mu2: &[Vec<f32>; 3],
 ) -> [f64; 3 * 4] {
     incant!(
-        edge_diff_map_inner(width, height, img1, mu1, img2, mu2),
+        edge_diff_map_inner(scales_n, scale_idx, width, height, img1, mu1, img2, mu2),
         [v3, neon, wasm128, scalar]
     )
 }

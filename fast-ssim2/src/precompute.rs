@@ -169,6 +169,10 @@ impl Ssimulacra2Reference {
         let mut width = img2.width().get();
         let mut height = img2.height().get();
 
+        // Use the actual number of cached reference scales — the skip-map
+        // must agree with what `score()`'s linear WEIGHT walk will index.
+        let scales_n = self.scales.len();
+
         let mut mul = [
             vec![0.0f32; width * height],
             vec![0.0f32; width * height],
@@ -216,6 +220,8 @@ impl Ssimulacra2Reference {
 
             // Use precomputed mu1 and sigma1_sq from reference
             let avg_ssim = ssim_map(
+                scales_n,
+                scale_idx,
                 width,
                 height,
                 &scale_data.mu1,
@@ -227,6 +233,8 @@ impl Ssimulacra2Reference {
             );
 
             let avg_edgediff = edge_diff_map(
+                scales_n,
+                scale_idx,
                 width,
                 height,
                 &scale_data.img1_planar,
