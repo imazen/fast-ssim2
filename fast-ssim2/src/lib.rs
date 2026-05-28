@@ -169,12 +169,17 @@ mod precompute;
 pub mod reference_data;
 #[allow(clippy::too_many_arguments)] // arcane macro generates dispatchers inheriting param count
 mod simd_ops;
+mod strip;
 mod weights;
 mod xyb_simd;
 
 pub use blur::Blur;
 pub use input::{LinearRgbImage, LinearRgbImageError, ToLinearRgb};
-pub use precompute::{CompareContext, Ssimulacra2Reference};
+pub use precompute::{CompareContext, ScalePlanesView, Ssimulacra2Reference};
+pub use strip::{
+    HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, Ssimulacra2StripConfig, compute_ssimulacra2_strip,
+    compute_ssimulacra2_strip_with_config,
+};
 
 // Re-export sRGB conversion functions for users implementing custom input types
 pub use input::{srgb_to_linear, srgb_u8_to_linear, srgb_u16_to_linear};

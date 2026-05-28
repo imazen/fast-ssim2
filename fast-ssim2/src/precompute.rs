@@ -155,7 +155,55 @@ pub struct Ssimulacra2Reference {
     original_height: usize,
 }
 
+/// Read-only view of a single scale of the precomputed reference.
+///
+/// Exposes the three planar buffers needed by the strip-aware
+/// comparison path (`compare_strip`) so the walker can use the cached
+/// data directly without re-running the ref-side conversion.
+#[doc(hidden)]
+pub struct ScalePlanesView<'a> {
+    /// Reference XYB-planar image at this scale.
+    pub img1_planar: &'a [Vec<f32>; 3],
+    /// Reference `blur(img1)` at this scale.
+    pub mu1: &'a [Vec<f32>; 3],
+    /// Reference `blur(img1 * img1)` at this scale.
+    pub sigma1_sq: &'a [Vec<f32>; 3],
+    /// Width of the scale-s reference image, in pixels.
+    pub width: usize,
+    /// Height of the scale-s reference image, in pixels.
+    pub height: usize,
+}
+
 impl Ssimulacra2Reference {
+    /// Borrow the precomputed data for scale `scale`, or `None` if
+    /// `scale >= self.num_scales()`.
+    ///
+    /// `#[doc(hidden)]` because the exact representation is an
+    /// implementation detail shared between the precompute and strip
+    /// modules; do not depend on the type signature from outside the
+    /// crate.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn scale_planes(&self, scale: usize) -> Option<ScalePlanesView<'_>> {
+        let data = self.scales.get(scale)?;
+        // Scale-s dimensions follow the same `div_ceil(2)` rule as
+        // `downscale_by_2`. We recompute them here rather than store
+        // per-scale so this view stays zero-cost when not used.
+        let mut w = self.original_width;
+        let mut h = self.original_height;
+        for _ in 0..scale {
+            w = w.div_ceil(2);
+            h = h.div_ceil(2);
+        }
+        Some(ScalePlanesView {
+            img1_planar: &data.img1_planar,
+            mu1: &data.mu1,
+            sigma1_sq: &data.sigma1_sq,
+            width: w,
+            height: h,
+        })
+    }
+
     /// Precompute reference data for the given source image.
     ///
     /// Supports:
