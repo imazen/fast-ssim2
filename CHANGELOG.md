@@ -1,8 +1,21 @@
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-27
+
 ### Added
+- `compute_ssimulacra2_strip` and `Ssimulacra2Reference::compare_strip` — strip-wise SSIMULACRA2 with bounded peak memory for very large images. Processes the image in horizontal strips (default 32-aligned, halo of 96 rows for IIR Gaussian convergence) and accumulates per-scale SSIM and edge-diff sums across strips. Scores match the full-image path to within ~1e-5 on the 0..100 scale at 1024² and larger; identical-image inputs round-trip to 100 in both modes. Bounds dist-side peak memory to ~`24 * strip_h * width * 4 B` instead of ~`24 * height * width * 4 B`.
+- `Ssimulacra2StripConfig` — configurable halo size and underlying SIMD backend for strip processing. Defaults are tuned for atomic-tolerance parity with the full path.
+- `HALO_ROWS_DEFAULT` (96) and `MIN_STRIP_HEIGHT` (8) public constants for callers that need the strip walker's tuning constants
+- Hidden `Ssimulacra2Reference::scale_planes` accessor returning a `ScalePlanesView` of the cached per-scale XYB-planar data; required by the strip walker to derive ref-side strip slices, marked `#[doc(hidden)]` because the representation is an implementation detail
+
+### Added (from prior unreleased work)
+- `CompareContext` and `Ssimulacra2Reference::compare_with(&mut ctx, distorted)` — zero-allocation batch-comparison API. Pair with `reference.compare_context()`; subsequent calls reuse the working buffers (`mul`, `mu2`, `sigma2_sq`, `sigma12`, `img2_planar`, blur state) instead of allocating ~13 image-sized `Vec<f32>` planes per call. Measured 1.10–1.25× faster than `compare()` on the precompute benchmark at 256x256 / 512x512 / 1024x1024 / 1920x1080 (c419b3d)
 - `LinearRgbImage::try_new` fallible constructor returning `LinearRgbImageError` for invalid dimensions or data length
 - `Ssimulacra2Error::ImageTooLarge` variant and public `MAX_IMAGE_PIXELS` constant (16384*16384) capping caller-supplied image size to prevent unbounded working-buffer allocation
+
+### Changed
+- Skip per-channel SSIM and edge-difference work whose final-score weight is zero. Bit-identical to the prior path (the dropped contributions multiplied by zero downstream); reference-parity test passes across the C++ corpus including 64x64 cases where `scales_n < NUM_SCALES` makes `score()`'s linear WEIGHT walk shift in the layout. Lossless variant of Technique 2 from Kanetaka et al. IWAIT 2026, DOI 10.1117/12.3100969 (75e3234)
+- Hoist the 6 IIR-state vectors used by the SIMD vertical blur pass out of the per-call inner function and onto `SimdGaussian`, eliminating ~180 small `Vec<f32>` allocations per ssim2 frame (bc9d011)
 
 ### Fixed
 - `LinearRgbImage::new` now validates dimensions and data length at runtime (was `debug_assert_eq!` only) so release-mode misuse no longer constructs malformed images that panic deep in `From<LinearRgbImage> for yuvxyb::LinearRgb`

@@ -17,7 +17,19 @@ mod consts {
 pub struct SimdGaussian {
     temp_buffer: Vec<f32>,
     max_size: usize,
+    /// IIR state for vertical pass: 6 stacked sub-slices of `groups * LANES`
+    /// floats each (prev_1, prev_3, prev_5, prev2_1, prev2_3, prev2_5).
+    ///
+    /// Hoisted out of the per-call SIMD inner function so the 6 allocations
+    /// no longer happen on every plane blur. With ssim2's 5 blurs per scale
+    /// across 6 scales, that's ~180 small allocations per frame eliminated.
+    /// The state is zeroed at the start of every blur because the IIR
+    /// initializes to zero — we don't preserve state between calls.
+    vert_state: Vec<f32>,
+    vert_state_size: usize,
 }
+
+const VERT_STATE_LANES: usize = 8;
 
 impl SimdGaussian {
     /// Create a new SIMD Gaussian blur context.
@@ -39,6 +51,8 @@ impl SimdGaussian {
         Self {
             temp_buffer: Vec::with_capacity(initial_capacity),
             max_size: 0,
+            vert_state: Vec::new(),
+            vert_state_size: 0,
         }
     }
 
@@ -56,6 +70,15 @@ impl SimdGaussian {
         if needed > self.max_size {
             self.temp_buffer.resize(needed, 0.0);
             self.max_size = needed;
+        }
+        // 6 IIR state arrays of `(width / 8) * 8` floats each.
+        let groups = width / VERT_STATE_LANES;
+        let vert_state_needed = 6usize.checked_mul(groups.saturating_mul(VERT_STATE_LANES));
+        if let Some(n) = vert_state_needed
+            && n > self.vert_state_size
+        {
+            self.vert_state.resize(n, 0.0);
+            self.vert_state_size = n;
         }
     }
 
@@ -82,12 +105,26 @@ impl SimdGaussian {
             self.temp_buffer.resize(size, 0.0);
             self.max_size = size;
         }
+        let groups = width / VERT_STATE_LANES;
+        let vert_state_needed = 6 * groups * VERT_STATE_LANES;
+        if vert_state_needed > self.vert_state_size {
+            self.vert_state.resize(vert_state_needed, 0.0);
+            self.vert_state_size = vert_state_needed;
+        }
+        // IIR initialises state to zero on every call.
+        self.vert_state[..vert_state_needed].fill(0.0);
 
         // Horizontal pass: dispatched for FMA
         horizontal_pass(plane, &mut self.temp_buffer[..size], width);
 
         // Vertical pass: SIMD-dispatched, processes all columns per height traversal
-        vertical_pass(&self.temp_buffer[..size], out, width, height);
+        vertical_pass(
+            &self.temp_buffer[..size],
+            out,
+            &mut self.vert_state[..vert_state_needed],
+            width,
+            height,
+        );
     }
 }
 
@@ -185,10 +222,16 @@ fn horizontal_row(input: &[f32], output: &mut [f32], width: usize) {
 // Vertical pass — SIMD IIR filter processing all columns per height traversal
 // ---------------------------------------------------------------------------
 
-fn vertical_pass(input: &[f32], output: &mut [f32], width: usize, height: usize) {
+fn vertical_pass(
+    input: &[f32],
+    output: &mut [f32],
+    state: &mut [f32],
+    width: usize,
+    height: usize,
+) {
     assert_eq!(input.len(), output.len());
     incant!(
-        vertical_pass_inner(input, output, width, height),
+        vertical_pass_inner(input, output, state, width, height),
         [v3, neon, wasm128, scalar]
     )
 }
@@ -197,11 +240,17 @@ fn vertical_pass(input: &[f32], output: &mut [f32], width: usize, height: usize)
 ///
 /// Uses flat f32 state arrays so all column groups are processed per row,
 /// avoiding repeated height traversals (which kills cache performance).
+///
+/// `state` is a caller-supplied buffer of length `6 * (width / LANES) * LANES`,
+/// zeroed before the call. We split it into six sub-slices to back the IIR
+/// state vectors (prev_1, prev_3, prev_5, prev2_1, prev2_3, prev2_5) — owned
+/// by `SimdGaussian` so we don't reallocate them on every blur call.
 #[magetypes(v3, neon, wasm128, scalar)]
 fn vertical_pass_inner(
     token: Token,
     input: &[f32],
     output: &mut [f32],
+    state: &mut [f32],
     width: usize,
     height: usize,
 ) {
@@ -222,14 +271,14 @@ fn vertical_pass_inner(
     let zeroes = f32x8::zero(token);
 
     // State arrays: 6 IIR state variables x (groups x LANES) floats each.
-    // Allocated once, stays hot in L1 cache throughout the height traversal.
+    // Caller pre-zeroed and pre-sized — split the flat buffer in place.
     let state_size = groups * LANES;
-    let mut prev_1 = vec![0.0f32; state_size];
-    let mut prev_3 = vec![0.0f32; state_size];
-    let mut prev_5 = vec![0.0f32; state_size];
-    let mut prev2_1 = vec![0.0f32; state_size];
-    let mut prev2_3 = vec![0.0f32; state_size];
-    let mut prev2_5 = vec![0.0f32; state_size];
+    let (prev_1, rest) = state.split_at_mut(state_size);
+    let (prev_3, rest) = rest.split_at_mut(state_size);
+    let (prev_5, rest) = rest.split_at_mut(state_size);
+    let (prev2_1, rest) = rest.split_at_mut(state_size);
+    let (prev2_3, rest) = rest.split_at_mut(state_size);
+    let (prev2_5, _) = rest.split_at_mut(state_size);
 
     let mut n = (-big_n) + 1;
     while n < height as isize {
