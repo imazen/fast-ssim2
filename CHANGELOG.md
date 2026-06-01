@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+### Changed
+- Vectorise the recursive-Gaussian blur **horizontal pass** across rows (8 rows per SIMD lane group, one row per lane), mirroring the across-columns trick the vertical pass already uses. The horizontal IIR is a serial recurrence within a row but fully independent across rows; the prior implementation ran it scalar per row, which on the Ampere Altra (Neoverse-N1) was ~50% of the whole blur kernel (blur itself ~40% of the SSIMULACRA2 pipeline) because each row's recurrence serialised. Bit-identical output to the scalar path — the SIMD IIR replicates the scalar op order exactly, so the strict `< 1e-5` pinned-SIMD-score parity test is unchanged. Measured on Neoverse-N1: blur-only +9–12%, full SSIMULACRA2 +3.6–9.5% (criterion `ssimulacra2_1920x1080` 540.9 → 503.0 ms, +7.0%). x86 (AVX2) unaffected — blur was already well-vectorised there.
+
 ## [0.8.1] - 2026-05-27
 
 ### Added
