@@ -32,9 +32,9 @@ fn make_pair(width: usize, height: usize) -> (LinearRgbImage, LinearRgbImage) {
             let b = (((x * 5 + y * 17 + 100) & 0xff) as f32) / 255.0;
             src.push([r, g, b]);
             // Slight per-pixel shift for distorted.
-            let rd = ((r + 0.02).min(1.0)).max(0.0);
-            let gd = ((g - 0.01).min(1.0)).max(0.0);
-            let bd = ((b + 0.005).min(1.0)).max(0.0);
+            let rd = (r + 0.02).clamp(0.0, 1.0);
+            let gd = (g - 0.01).clamp(0.0, 1.0);
+            let bd = (b + 0.005).clamp(0.0, 1.0);
             dst.push([rd, gd, bd]);
         }
     }
