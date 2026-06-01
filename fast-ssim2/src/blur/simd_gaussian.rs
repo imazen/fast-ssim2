@@ -1,10 +1,10 @@
 /// SIMD-optimized Recursive Gaussian blur
 ///
-/// Uses archmage/magetypes for cross-platform SIMD.
-/// Horizontal pass dispatches via `#[autoversion]` for FMA `mul_add`.
-/// Vertical pass uses `#[magetypes]` with `GenericF32x8<Token>` for unified
-/// multi-platform SIMD processing of all column groups per height traversal.
-use archmage::autoversion;
+/// Uses archmage/magetypes for cross-platform SIMD via `#[magetypes]` with
+/// `GenericF32x8<Token>`. Both passes vectorise the IIR recurrence across the
+/// axis it is *not* recurring along: the horizontal pass runs 8 rows per lane
+/// group, the vertical pass runs 8 columns per lane group, so the serial IIR
+/// dependency lives within a lane while the 8 lanes proceed in parallel.
 use archmage::incant;
 use archmage::magetypes;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
@@ -129,38 +129,156 @@ impl SimdGaussian {
 }
 
 // ---------------------------------------------------------------------------
-// Horizontal pass — scalar IIR filter, dispatched via #[autoversion] for FMA
+// Horizontal pass — recursive Gaussian IIR, SIMD-vectorised across rows
+// (8 rows per lane group) with a scalar remainder for leftover rows.
 // ---------------------------------------------------------------------------
 
 fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
     assert_eq!(input.len(), output.len());
-    horizontal_pass_inner(input, output, width);
+    let height = input.len() / width;
+    // SIMD path processes 8 rows in parallel (one row per lane). The horizontal
+    // IIR is a serial recurrence *within* a row, so it can't vectorise across a
+    // row — but it's fully independent *across* rows, so we run 8 rows at once
+    // with the IIR state held in 8-lane vectors. This is the across-the-other-
+    // axis trick the vertical pass already uses for columns. On Neoverse-N1 the
+    // scalar horizontal IIR was ~50% of the whole blur (and blur was ~40% of the
+    // SSIMULACRA2 pipeline) because each row's recurrence serialised; lane-per-
+    // row recovers the parallelism the vertical pass already had.
+    let groups = height / VERT_STATE_LANES;
+    if groups > 0 {
+        horizontal_pass_simd(input, output, width, groups * VERT_STATE_LANES);
+    }
+    // Scalar remainder rows (height not a multiple of 8).
+    horizontal_pass_rows(input, output, width, groups * VERT_STATE_LANES);
 }
 
-/// Enables FMA on platforms that support it. The body is pure scalar IIR;
-/// `#[autoversion]` adds `#[target_feature]` so `mul_add` compiles to FMA.
-#[allow(unused_imports)] // archmage dispatch on i686 triggers false positive
-#[autoversion]
-fn horizontal_pass_inner(input: &[f32], output: &mut [f32], width: usize) {
-    horizontal_pass_rows(input, output, width);
+/// SIMD horizontal pass dispatcher — processes 8 rows per lane group.
+fn horizontal_pass_simd(input: &[f32], output: &mut [f32], width: usize, row_limit: usize) {
+    incant!(
+        horizontal_pass_simd_inner(input, output, width, row_limit),
+        [v3, neon, wasm128, scalar]
+    )
 }
 
+/// Generic row-parallel horizontal pass — 8 rows at a time, one row per lane.
+///
+/// Each column position `n` is loaded from 8 consecutive rows into a vector
+/// (a manual 8-wide gather: 8 scalar loads at stride `width`), the recursive
+/// Gaussian IIR is advanced with vector state, and the result column is stored
+/// back across the 8 rows. The bounds branches on `left`/`right`/`n` are the
+/// same for every lane in a group (they depend only on the column index), so
+/// the inner loop stays branch-light.
+#[magetypes(v3, neon, wasm128, scalar)]
+fn horizontal_pass_simd_inner(
+    token: Token,
+    input: &[f32],
+    output: &mut [f32],
+    width: usize,
+    row_limit: usize,
+) {
+    #[allow(non_camel_case_types)]
+    type f32x8 = GenericF32x8<Token>;
+    const LANES: usize = 8;
+
+    let big_n = consts::RADIUS as isize;
+    let mul_in_1 = f32x8::splat(token, consts::MUL_IN_1);
+    let mul_in_3 = f32x8::splat(token, consts::MUL_IN_3);
+    let mul_in_5 = f32x8::splat(token, consts::MUL_IN_5);
+    let mul_prev_1 = f32x8::splat(token, consts::MUL_PREV_1);
+    let mul_prev_3 = f32x8::splat(token, consts::MUL_PREV_3);
+    let mul_prev_5 = f32x8::splat(token, consts::MUL_PREV_5);
+    let zero = f32x8::zero(token);
+
+    let mut row_base = 0usize;
+    while row_base < row_limit {
+        // Manual gather/scatter helpers for the LANES rows starting at row_base.
+        let gather = |col: usize| -> f32x8 {
+            let mut a = [0.0f32; LANES];
+            for (lane, slot) in a.iter_mut().enumerate() {
+                *slot = input[(row_base + lane) * width + col];
+            }
+            f32x8::from_array(token, a)
+        };
+
+        let mut prev_1 = zero;
+        let mut prev_3 = zero;
+        let mut prev_5 = zero;
+        let mut prev2_1 = zero;
+        let mut prev2_3 = zero;
+        let mut prev2_5 = zero;
+
+        let mut n = (-big_n) + 1;
+        while n < width as isize {
+            let left = n - big_n - 1;
+            let right = n + big_n - 1;
+            let left_val = if left >= 0 && (left as usize) < width {
+                gather(left as usize)
+            } else {
+                zero
+            };
+            let right_val = if right >= 0 && (right as usize) < width {
+                gather(right as usize)
+            } else {
+                zero
+            };
+            let sum = left_val + right_val;
+
+            // Mirror the scalar `horizontal_row` op order EXACTLY so the SIMD
+            // path's f32 rounding matches it bit-for-bit (MUL_PREV2_k == -1):
+            //   out_k  = sum * MUL_IN_k                 (rounded product)
+            //   out_k  = -prev2_k + out_k               (the MUL_PREV2 step)
+            //   out_k  = MUL_PREV_k * prev_k + out_k    (the MUL_PREV step)
+            // Fusing the first two into one mul_add would change rounding.
+            let p1 = sum * mul_in_1;
+            let p3 = sum * mul_in_3;
+            let p5 = sum * mul_in_5;
+            let out_1 = mul_prev_1.mul_add(prev_1, p1 - prev2_1);
+            let out_3 = mul_prev_3.mul_add(prev_3, p3 - prev2_3);
+            let out_5 = mul_prev_5.mul_add(prev_5, p5 - prev2_5);
+
+            prev2_1 = prev_1;
+            prev2_3 = prev_3;
+            prev2_5 = prev_5;
+            prev_1 = out_1;
+            prev_3 = out_3;
+            prev_5 = out_5;
+
+            if n >= 0 && (n as usize) < width {
+                let result = (out_1 + out_3 + out_5).to_array();
+                let col = n as usize;
+                for (lane, &v) in result.iter().enumerate() {
+                    output[(row_base + lane) * width + col] = v;
+                }
+            }
+
+            n += 1;
+        }
+
+        row_base += LANES;
+    }
+}
+
+/// Scalar horizontal pass over rows `[start_row, height)`.
 #[inline(always)]
-fn horizontal_pass_rows(input: &[f32], output: &mut [f32], width: usize) {
+fn horizontal_pass_rows(input: &[f32], output: &mut [f32], width: usize, start_row: usize) {
+    let start = start_row * width;
+    if start >= input.len() {
+        return;
+    }
     #[cfg(feature = "rayon")]
     {
         use rayon::prelude::*;
-        input
+        input[start..]
             .par_chunks_exact(width)
-            .zip(output.par_chunks_exact_mut(width))
+            .zip(output[start..].par_chunks_exact_mut(width))
             .for_each(|(inp, out)| horizontal_row(inp, out, width));
     }
 
     #[cfg(not(feature = "rayon"))]
     {
-        input
+        input[start..]
             .chunks_exact(width)
-            .zip(output.chunks_exact_mut(width))
+            .zip(output[start..].chunks_exact_mut(width))
             .for_each(|(inp, out)| horizontal_row(inp, out, width));
     }
 }
