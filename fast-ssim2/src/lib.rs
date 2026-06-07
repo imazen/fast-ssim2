@@ -352,9 +352,56 @@ where
     S: ToLinearRgb,
     D: ToLinearRgb,
 {
-    let img1: LinearRgb = source.into_linear_rgb().into();
-    let img2: LinearRgb = distorted.into_linear_rgb().into();
+    // Reflect(mirror)-pad sub-8px inputs up to the pyramid floor so the
+    // metric scores down to 1×1 instead of Err(InvalidImageSize). The
+    // pad runs on the converted LinearRgbImage (reflect-101 boundary);
+    // NO-OP at ≥8px. Empty (0-dim) inputs fall through to the
+    // InvalidImageSize check in `compute_frame_ssimulacra2_impl`.
+    let img1: LinearRgb = reflect_pad_linear(source.into_linear_rgb(), 8).into();
+    let img2: LinearRgb = reflect_pad_linear(distorted.into_linear_rgb(), 8).into();
     compute_frame_ssimulacra2_impl(img1, img2, config)
+}
+
+/// Reflect-101 index map (OpenCV `BORDER_REFLECT_101`): fold an
+/// out-of-range index `i` back into `[0, n)` by mirroring at the borders
+/// without repeating the edge sample. Identity for `i < n`; `n <= 1`
+/// collapses to 0.
+#[inline]
+fn reflect_index(i: usize, n: usize) -> usize {
+    if n <= 1 {
+        return 0;
+    }
+    let period = 2 * (n - 1);
+    let mut k = i % period;
+    if k >= n {
+        k = period - k;
+    }
+    k
+}
+
+/// Reflect(mirror)-pad a [`LinearRgbImage`] up to `min` px on each axis
+/// so SSIMULACRA2's multi-scale pyramid can form on images below the 8px
+/// floor. Returns the input unchanged when already ≥ `min` on both axes
+/// (or empty — that falls through to the `InvalidImageSize` check). The
+/// original pixels occupy the top-left `w × h` region of the result.
+fn reflect_pad_linear(img: LinearRgbImage, min: usize) -> LinearRgbImage {
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        return img;
+    }
+    let (pw, ph) = (w.max(min), h.max(min));
+    if pw == w && ph == h {
+        return img;
+    }
+    let src = img.data();
+    let mut out = Vec::with_capacity(pw * ph);
+    for y in 0..ph {
+        let row = reflect_index(y, h) * w;
+        for x in 0..pw {
+            out.push(src[row + reflect_index(x, w)]);
+        }
+    }
+    LinearRgbImage::new(out, pw, ph)
 }
 
 fn compute_frame_ssimulacra2_impl<T, U>(
@@ -971,5 +1018,34 @@ mod tests {
             (score - 100.0).abs() < 0.01,
             "identical images should score 100, got {score}"
         );
+    }
+
+    #[test]
+    fn test_sub_8_reflect_pads_instead_of_rejecting() {
+        use std::num::NonZeroUsize;
+        // Sub-8px inputs are reflect(mirror)-padded up to the pyramid
+        // floor and scored (down to 1×1) rather than rejected with
+        // InvalidImageSize. Identical pairs still score ~100.
+        for (w, h) in [(4usize, 4usize), (1, 1), (3, 7), (7, 3)] {
+            let img = make_linear_rgb(w, h);
+            let score =
+                compute_ssimulacra2_with_config(img.clone(), img, Ssimulacra2Config::default())
+                    .unwrap_or_else(|e| panic!("{w}x{h} must score, got {e:?}"));
+            assert!(
+                (score - 100.0).abs() < 0.01,
+                "identical {w}x{h} should score ~100, got {score}"
+            );
+        }
+        // A real sub-8 difference yields a finite score below 100.
+        let a = make_linear_rgb(5, 5);
+        let b = LinearRgb::new(
+            vec![[0.9f32, 0.1, 0.2]; 25],
+            NonZeroUsize::new(5).unwrap(),
+            NonZeroUsize::new(5).unwrap(),
+        )
+        .unwrap();
+        let s = compute_ssimulacra2_with_config(a, b, Ssimulacra2Config::default())
+            .expect("5x5 differing pair must score");
+        assert!(s.is_finite() && s < 100.0, "5x5 differing score {s}");
     }
 }
