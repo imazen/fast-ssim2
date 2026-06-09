@@ -55,6 +55,14 @@ zenbench = { version = "0.1.2", features = ["criterion-compat"] }
 default = []
 imgref = ["dep:imgref"]  # Support for imgref image types
 rayon = ["dep:rayon"]
+# Experimental HDR scoring: PU21 (banding_glare) replaces the cube-root opsin
+# nonlinearity; input is absolute-luminance linear RGB (cd/m²). See pu_xyb.rs
+# + imazen/zenmetrics#25. Off by default; no effect on the standard pipeline.
+hdr-pu = []
+
+[[example]]
+name = "upiq_pu_score"
+required-features = ["hdr-pu"]
 
 [[bench]]
 name = "benches"

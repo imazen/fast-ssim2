@@ -9,16 +9,16 @@ use archmage::magetypes;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 // XYB color space constants from jpegli
-const K_M02: f32 = 0.078f32;
-const K_M00: f32 = 0.30f32;
-const K_M01: f32 = 1.0f32 - K_M02 - K_M00;
-const K_M12: f32 = 0.078f32;
-const K_M10: f32 = 0.23f32;
-const K_M11: f32 = 1.0f32 - K_M12 - K_M10;
-const K_M20: f32 = 0.243_422_69_f32;
-const K_M21: f32 = 0.204_767_45_f32;
-const K_M22: f32 = 1.0f32 - K_M20 - K_M21;
-const K_B0: f32 = 0.003_793_073_4_f32;
+pub(crate) const K_M02: f32 = 0.078f32;
+pub(crate) const K_M00: f32 = 0.30f32;
+pub(crate) const K_M01: f32 = 1.0f32 - K_M02 - K_M00;
+pub(crate) const K_M12: f32 = 0.078f32;
+pub(crate) const K_M10: f32 = 0.23f32;
+pub(crate) const K_M11: f32 = 1.0f32 - K_M12 - K_M10;
+pub(crate) const K_M20: f32 = 0.243_422_69_f32;
+pub(crate) const K_M21: f32 = 0.204_767_45_f32;
+pub(crate) const K_M22: f32 = 1.0f32 - K_M20 - K_M21;
+pub(crate) const K_B0: f32 = 0.003_793_073_4_f32;
 
 const OPSIN_ABSORBANCE_MATRIX: [f32; 9] = [
     K_M00, K_M01, K_M02, K_M10, K_M11, K_M12, K_M20, K_M21, K_M22,

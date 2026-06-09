@@ -165,6 +165,8 @@ mod blur;
 mod input;
 mod precompute;
 // Reference data for parity testing (hidden from docs but accessible for tests)
+#[cfg(feature = "hdr-pu")]
+mod pu_xyb;
 #[doc(hidden)]
 pub mod reference_data;
 #[allow(clippy::too_many_arguments)] // arcane macro generates dispatchers inheriting param count
@@ -404,6 +406,19 @@ fn reflect_pad_linear(img: LinearRgbImage, min: usize) -> LinearRgbImage {
     LinearRgbImage::new(out, pw, ph)
 }
 
+/// Which perceptual encoding the per-scale XYB conversion applies.
+///
+/// `CubeRoot` is the standard SSIMULACRA2 pipeline (sRGB-relative linear in
+/// [0,1] → opsin → cube-root → `make_positive_xyb`). `Pu21` consumes
+/// absolute-luminance linear RGB (cd/m²) and substitutes PU21 for the
+/// cube-root at the same layer (offsets folded in) — see `pu_xyb`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum XybFlavor {
+    CubeRoot,
+    #[cfg(feature = "hdr-pu")]
+    Pu21,
+}
+
 fn compute_frame_ssimulacra2_impl<T, U>(
     source: T,
     distorted: U,
@@ -412,14 +427,22 @@ fn compute_frame_ssimulacra2_impl<T, U>(
 where
     LinearRgb: TryFrom<T> + TryFrom<U>,
 {
-    let Ok(mut img1) = LinearRgb::try_from(source) else {
+    let Ok(img1) = LinearRgb::try_from(source) else {
         return Err(Ssimulacra2Error::LinearRgbConversionFailed);
     };
 
-    let Ok(mut img2) = LinearRgb::try_from(distorted) else {
+    let Ok(img2) = LinearRgb::try_from(distorted) else {
         return Err(Ssimulacra2Error::LinearRgbConversionFailed);
     };
+    compute_frame_flavored(img1, img2, config, XybFlavor::CubeRoot)
+}
 
+fn compute_frame_flavored(
+    mut img1: LinearRgb,
+    mut img2: LinearRgb,
+    config: Ssimulacra2Config,
+    flavor: XybFlavor,
+) -> Result<f64, Ssimulacra2Error> {
     if img1.width() != img2.width() || img1.height() != img2.height() {
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
     }
@@ -494,11 +517,21 @@ where
         }
         blur.shrink_to(width, height);
 
-        let mut img1_xyb = linear_rgb_to_xyb(img1.clone(), impl_type);
-        let mut img2_xyb = linear_rgb_to_xyb(img2.clone(), impl_type);
-
-        make_positive_xyb(&mut img1_xyb);
-        make_positive_xyb(&mut img2_xyb);
+        let (img1_xyb, img2_xyb) = match flavor {
+            XybFlavor::CubeRoot => {
+                let mut a = linear_rgb_to_xyb(img1.clone(), impl_type);
+                let mut b = linear_rgb_to_xyb(img2.clone(), impl_type);
+                make_positive_xyb(&mut a);
+                make_positive_xyb(&mut b);
+                (a, b)
+            }
+            // PU21 emits positive-calibrated XYB directly — no make_positive.
+            #[cfg(feature = "hdr-pu")]
+            XybFlavor::Pu21 => (
+                linear_nits_to_pu_xyb(img1.clone()),
+                linear_nits_to_pu_xyb(img2.clone()),
+            ),
+        };
 
         xyb_to_planar_into(&img1_xyb, &mut img1_planar);
         xyb_to_planar_into(&img2_xyb, &mut img2_planar);
@@ -536,6 +569,38 @@ where
     }
 
     Ok(msssim.score())
+}
+
+/// Absolute-luminance linear RGB (cd/m²) → positive PU-XYB (scalar; see `pu_xyb`).
+#[cfg(feature = "hdr-pu")]
+fn linear_nits_to_pu_xyb(linear_nits: LinearRgb) -> Xyb {
+    let width = linear_nits.width();
+    let height = linear_nits.height();
+    let mut data = linear_nits.into_data();
+    pu_xyb::linear_nits_to_pu_xyb(&mut data);
+    Xyb::new(data, width, height).expect("XYB construction should not fail")
+}
+
+/// **Experimental (`hdr-pu`)**: SSIMULACRA2 with the cube-root opsin
+/// nonlinearity replaced by PU21 (banding_glare), for HDR input.
+///
+/// Inputs are **absolute-luminance** linear RGB in cd/m² (e.g. decoded EXR /
+/// PQ frames; 100 = SDR reference white, values above 1.0 expected). The rest
+/// of the pipeline — opponent space, multiscale pyramid, SSIM + edge-diff
+/// maps, trained weights — is unchanged from [`compute_ssimulacra2`].
+///
+/// Why a dedicated entry instead of PU-encoding the input and calling the
+/// standard API: SSIMULACRA2 applies its own perceptual transform, so
+/// input-layer PU gets double-encoded and measurably caps HDR correlation
+/// (UPIQ HDR SROCC 0.59–0.61 vs the integrated form; see imazen/zenmetrics#25).
+#[cfg(feature = "hdr-pu")]
+pub fn compute_ssimulacra2_pu_nits(
+    source_nits: LinearRgbImage,
+    distorted_nits: LinearRgbImage,
+) -> Result<f64, Ssimulacra2Error> {
+    let img1: LinearRgb = reflect_pad_linear(source_nits, 8).into();
+    let img2: LinearRgb = reflect_pad_linear(distorted_nits, 8).into();
+    compute_frame_flavored(img1, img2, Ssimulacra2Config::default(), XybFlavor::Pu21)
 }
 
 /// Convert LinearRgb to Xyb using the specified implementation
