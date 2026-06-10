@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+- Experimental `hdr-pu` feature: `compute_ssimulacra2_pu_nits` scores HDR content using the PU21 (banding_glare) encoding in place of the cube-root opsin nonlinearity; input is absolute-luminance linear RGB in cd/m². Validated on UPIQ HDR (380 pairs, SROCC 0.7044; see imazen/zenmetrics#25) (35f198af)
+- CI now lints (`clippy -D warnings`) and tests the non-default `hdr-pu` feature on the Linux clippy job, so the feature-gated path is exercised on every push (f987fc1c)
+
 ### Changed
 - Vectorise the recursive-Gaussian blur **horizontal pass** across rows (8 rows per SIMD lane group, one row per lane), mirroring the across-columns trick the vertical pass already uses. The horizontal IIR is a serial recurrence within a row but fully independent across rows; the prior implementation ran it scalar per row, which on the Ampere Altra (Neoverse-N1) was ~50% of the whole blur kernel (blur itself ~40% of the SSIMULACRA2 pipeline) because each row's recurrence serialised. Bit-identical output to the scalar path — the SIMD IIR replicates the scalar op order exactly, so the strict `< 1e-5` pinned-SIMD-score parity test is unchanged. Measured on Neoverse-N1: blur-only +9–12%, full SSIMULACRA2 +3.6–9.5% (criterion `ssimulacra2_1920x1080` 540.9 → 503.0 ms, +7.0%). x86 (AVX2) unaffected — blur was already well-vectorised there.
 
