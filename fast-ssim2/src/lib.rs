@@ -153,6 +153,7 @@
 //! |---------|---------|-------------|
 //! | `imgref` | | Support for `imgref` image types |
 //! | `rayon` | | Parallel computation |
+//! | `hdr-pu` | | Experimental: HDR scoring via the PU21 (banding_glare) encoding; input is absolute-luminance linear RGB in cd/m² |
 //!
 //! ## Requirements
 //!
