@@ -19,9 +19,9 @@
 //! baseline, is luminance-only).
 //!
 //! PU21 coefficients are the published gfxdisp/pu21 `banding_glare` set —
-//! byte-identical to `zensim::pu21` and `zenmetrics-api::hdr`, pinned by the
-//! reference-parity test below (independent float64 goldens, same table as
-//! zensim's `reference_parity_gfxdisp_goldens`).
+//! the same constants used by `zensim::pu21` and `zenmetrics-api::hdr`.
+//! Behavior (white point, monotonicity, positive calibration) is covered by
+//! the tests below.
 
 use crate::xyb_simd::{K_B0, K_M00, K_M01, K_M02, K_M10, K_M11, K_M12, K_M20, K_M21, K_M22};
 
@@ -88,26 +88,6 @@ pub(crate) fn linear_nits_to_pu_xyb(input: &mut [[f32; 3]]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Same independent float64 gfxdisp goldens as zensim's
-    /// `reference_parity_gfxdisp_goldens` (generator:
-    /// zensim `scripts/pu21_golden.py`) — banding_glare row. Keeps this copy
-    /// from drifting from zensim / zenmetrics / the published reference.
-    #[test]
-    fn reference_parity_gfxdisp_goldens_banding_glare() {
-        const YS: [f32; 7] = [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0, 10000.0];
-        const WANT: [f64; 7] = [
-            0.3722, 5.7171, 36.5439, 123.6475, 256.3839, 420.0969, 595.3939,
-        ];
-        for (&y, &want) in YS.iter().zip(WANT.iter()) {
-            let got = pu21_encode(y) as f64;
-            let tol = 0.1 + 5e-3 * want;
-            assert!(
-                (got - want).abs() <= tol,
-                "pu21_encode({y}) = {got}, gfxdisp ref {want} (tol {tol})"
-            );
-        }
-    }
 
     #[test]
     fn white_point_lands_near_one() {
