@@ -48,8 +48,12 @@ jobs:
         run: cargo clippy -p fast-ssim2 --all-targets -- -D warnings
       - name: Clippy (all features)
         run: cargo clippy -p fast-ssim2 --all-targets --features "imgref,rayon" -- -D warnings
+      - name: Clippy (hdr-pu)
+        run: cargo clippy -p fast-ssim2 --all-targets --features hdr-pu -- -D warnings
       - name: Clippy (CLI)
         run: cargo clippy -p fast-ssim2-cli --all-targets -- -D warnings
+      - name: Test (hdr-pu)
+        run: cargo test -p fast-ssim2 --features hdr-pu
 
   # ==========================================================================
   # Test matrix across platforms
