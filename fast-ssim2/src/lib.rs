@@ -618,7 +618,8 @@ fn linear_rgb_to_xyb(linear_rgb: LinearRgb, impl_type: SimdImpl) -> Xyb {
     }
 }
 
-// For backwards compatibility
+/// Convenience wrapper hardcoding the SIMD backend; used by the
+/// precompute and strip paths, which always run the SIMD XYB conversion.
 pub(crate) fn linear_rgb_to_xyb_simd(linear_rgb: LinearRgb) -> Xyb {
     linear_rgb_to_xyb(linear_rgb, SimdImpl::Simd)
 }

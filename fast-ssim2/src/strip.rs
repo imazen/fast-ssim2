@@ -88,7 +88,7 @@ use yuvxyb::LinearRgb;
 use crate::blur::Blur;
 use crate::input::ToLinearRgb;
 use crate::precompute::Ssimulacra2Reference;
-use crate::weights::{self, EDGE_HAS_WEIGHT, NUM_SCALES, SSIM_HAS_WEIGHT, WEIGHT};
+use crate::weights::{EDGE_HAS_WEIGHT, NUM_SCALES, SSIM_HAS_WEIGHT};
 use crate::{
     LinearRgbImage, Msssim, MsssimScale, Ssimulacra2Config, Ssimulacra2Error, downscale_by_2,
     image_multiply, linear_rgb_to_xyb_simd, make_positive_xyb, xyb_to_planar_into,
@@ -646,12 +646,6 @@ fn edge_diff_map_strip(
         out[c * 4 + 3] = sums[3];
     }
 
-    // Suppress unused-import warnings — `weights::WEIGHT` is reached
-    // via `Msssim::score()` and `count_scales` etc. via the
-    // accumulator's pixel-count book-keeping.
-    let _ = WEIGHT;
-    let _ = weights::count_scales;
-
     out
 }
 
@@ -746,30 +740,13 @@ impl Ssimulacra2Reference {
         strip_height: u32,
         config: Ssimulacra2StripConfig,
     ) -> Result<f64, Ssimulacra2Error> {
-        // For the cached-ref strip path we still need to walk the
-        // reference in matching strips. The clean way (no separate
-        // strip-cached struct) is to recompute the ref-side at each
-        // strip via the public LinearRgb data on the precomputed
-        // reference. Since we did NOT capture the raw LinearRgb on
-        // `Ssimulacra2Reference`, fall back to a strip-aware
-        // implementation that requires the caller to also pass the
-        // source. We expose this as the higher-level
-        // [`compute_ssimulacra2_strip`] entry point — `compare_strip`
-        // on a cached reference is documented as "strip-walks the
-        // dist side, ref-side held in full" and we accomplish that by
-        // converting dist to LinearRgb, then for each dist strip
-        // re-converting the corresponding rows of the reference's
-        // recomputed source.
-        //
-        // The current `Ssimulacra2Reference` does NOT retain the
-        // source linear RGB, only the per-scale precomputed planes.
-        // To make `compare_strip` work without a behavior change in
-        // `Ssimulacra2Reference::new`, the strip path reuses the
-        // already-precomputed scale-0 planar data (img1_planar, mu1,
-        // sigma1_sq) by accumulating strip-shaped slices from those
-        // full-image planes. The dist side still streams strip-by-strip.
-        //
-        // This is implemented in `compare_strip_impl`.
+        // `Ssimulacra2Reference` retains only the per-scale precomputed
+        // planes (img1_planar, mu1, sigma1_sq), not the source LinearRgb.
+        // The cached-ref strip walker therefore slices those full-image
+        // planes per strip (re-running only the ref-side blur, which must
+        // share the strip's IIR boundary handling — see
+        // `process_dist_strip_with_cached_ref`), while the dist side
+        // streams strip-by-strip.
         let img2: LinearRgb = distorted.into_linear_rgb().into();
         let width = img2.width().get();
         let height = img2.height().get();
