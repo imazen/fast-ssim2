@@ -151,8 +151,15 @@ struct ScaleData {
 #[derive(Clone, Debug)]
 pub struct Ssimulacra2Reference {
     scales: Vec<ScaleData>,
+    /// Dimensions of the source image as supplied by the caller
+    /// (before any sub-8px reflect-padding).
     original_width: usize,
     original_height: usize,
+    /// Working dimensions after sub-8px reflect-padding — equal to the
+    /// original dimensions whenever the source is at least 8x8. The
+    /// per-scale planes are sized from these.
+    padded_width: usize,
+    padded_height: usize,
 }
 
 /// Read-only view of a single scale of the precomputed reference.
@@ -188,9 +195,11 @@ impl Ssimulacra2Reference {
         let data = self.scales.get(scale)?;
         // Scale-s dimensions follow the same `div_ceil(2)` rule as
         // `downscale_by_2`. We recompute them here rather than store
-        // per-scale so this view stays zero-cost when not used.
-        let mut w = self.original_width;
-        let mut h = self.original_height;
+        // per-scale so this view stays zero-cost when not used. The walk
+        // starts from the padded dimensions — that is what the per-scale
+        // planes are sized from (== original dims for sources >= 8x8).
+        let mut w = self.padded_width;
+        let mut h = self.padded_height;
         for _ in 0..scale {
             w = w.div_ceil(2);
             h = h.div_ceil(2);
@@ -211,11 +220,20 @@ impl Ssimulacra2Reference {
     /// - `yuvxyb` types: `Rgb`, `LinearRgb`
     /// - Custom types implementing [`ToLinearRgb`]
     ///
+    /// Sub-8px sources are reflect(mirror)-padded up to the 8px pyramid
+    /// floor, matching [`crate::compute_ssimulacra2`]; [`Self::compare`]
+    /// then expects distorted images at the *original* (pre-padding)
+    /// dimensions and pads them the same way.
+    ///
     /// # Errors
-    /// - If the image is smaller than 8x8 pixels
-    /// - If the image exceeds [`crate::MAX_IMAGE_PIXELS`] pixels
+    /// - If the image (after padding) exceeds [`crate::MAX_IMAGE_PIXELS`] pixels
     pub fn new<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
-        let mut img1: LinearRgb = source.into_linear_rgb().into();
+        let source_img = source.into_linear_rgb();
+        let original_width = source_img.width();
+        let original_height = source_img.height();
+        // Reflect-pad sub-8px sources up to the pyramid floor, exactly as
+        // the one-shot `compute_ssimulacra2` path does. NO-OP at >= 8px.
+        let mut img1: LinearRgb = crate::reflect_pad_linear(source_img, 8).into();
         if img1.width().get() < 8 || img1.height().get() < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
@@ -230,10 +248,10 @@ impl Ssimulacra2Reference {
             return Err(Ssimulacra2Error::ImageTooLarge { actual: pixels });
         }
 
-        let original_width = img1.width().get();
-        let original_height = img1.height().get();
-        let mut width = original_width;
-        let mut height = original_height;
+        let padded_width = img1.width().get();
+        let padded_height = img1.height().get();
+        let mut width = padded_width;
+        let mut height = padded_height;
 
         let mut mul = [
             vec![0.0f32; width * height],
@@ -282,6 +300,8 @@ impl Ssimulacra2Reference {
             scales,
             original_width,
             original_height,
+            padded_width,
+            padded_height,
         })
     }
 
@@ -291,7 +311,7 @@ impl Ssimulacra2Reference {
     /// without allocating fresh working buffers on each call.
     #[must_use]
     pub fn compare_context(&self) -> CompareContext {
-        CompareContext::new(self.original_width, self.original_height)
+        CompareContext::new(self.padded_width, self.padded_height)
     }
 
     /// Compare a distorted image against the precomputed reference.
@@ -327,12 +347,17 @@ impl Ssimulacra2Reference {
         ctx: &mut CompareContext,
         distorted: T,
     ) -> Result<f64, Ssimulacra2Error> {
-        let mut img2: LinearRgb = distorted.into_linear_rgb().into();
-        if img2.width().get() != self.original_width || img2.height().get() != self.original_height
+        let distorted_img = distorted.into_linear_rgb();
+        // Dimensions must match the *original* (pre-padding) reference
+        // dimensions; sub-8px distorted images are then reflect-padded
+        // identically to the reference in `new`.
+        if distorted_img.width() != self.original_width
+            || distorted_img.height() != self.original_height
         {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
-        if ctx.width != self.original_width || ctx.height != self.original_height {
+        let mut img2: LinearRgb = crate::reflect_pad_linear(distorted_img, 8).into();
+        if ctx.width != self.padded_width || ctx.height != self.padded_height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
 
@@ -425,13 +450,15 @@ impl Ssimulacra2Reference {
         Ok(msssim.score())
     }
 
-    /// Get the width of the original reference image.
+    /// Get the width of the original reference image, as supplied by the
+    /// caller (before any sub-8px reflect-padding).
     #[must_use]
     pub fn width(&self) -> usize {
         self.original_width
     }
 
-    /// Get the height of the original reference image.
+    /// Get the height of the original reference image, as supplied by the
+    /// caller (before any sub-8px reflect-padding).
     #[must_use]
     pub fn height(&self) -> usize {
         self.original_height
@@ -636,6 +663,56 @@ mod tests {
         let mut ctx = ref_a.compare_context();
         assert!(matches!(
             ref_a.compare_with(&mut ctx, distorted_b),
+            Err(Ssimulacra2Error::NonMatchingImageDimensions)
+        ));
+    }
+
+    #[test]
+    fn test_sub_8_reference_pads_and_matches_one_shot() {
+        use crate::LinearRgbImage;
+        // Sub-8px references are reflect-padded like the one-shot path:
+        // identical pairs score ~100, differing pairs score the same as
+        // compute_ssimulacra2 on the same inputs, and width()/height()
+        // report the caller-supplied (pre-padding) dimensions.
+        for (w, h) in [(4usize, 4usize), (1, 1), (3, 7), (7, 3)] {
+            let img = LinearRgbImage::new(vec![[0.5f32, 0.5, 0.5]; w * h], w, h);
+            let reference = Ssimulacra2Reference::new(img.clone())
+                .unwrap_or_else(|e| panic!("{w}x{h} reference must build, got {e:?}"));
+            assert_eq!(reference.width(), w);
+            assert_eq!(reference.height(), h);
+            let score = reference.compare(img).unwrap();
+            assert!(
+                (score - 100.0).abs() < 0.01,
+                "identical {w}x{h} should score ~100, got {score}"
+            );
+        }
+
+        // Differing sub-8 pair: Reference path == one-shot path (both pad
+        // then run the same SIMD pipeline).
+        let a = LinearRgbImage::new(vec![[0.5f32, 0.5, 0.5]; 25], 5, 5);
+        let b = LinearRgbImage::new(vec![[0.9f32, 0.1, 0.2]; 25], 5, 5);
+        let one_shot = compute_ssimulacra2(a.clone(), b.clone()).unwrap();
+        let reference = Ssimulacra2Reference::new(a).unwrap();
+        let via_ref = reference.compare(b).unwrap();
+        assert!(
+            (one_shot - via_ref).abs() < 1e-9,
+            "one-shot {one_shot} vs reference {via_ref}"
+        );
+        assert!(via_ref.is_finite() && via_ref < 100.0);
+    }
+
+    #[test]
+    fn test_sub_8_reference_rejects_mismatched_dims() {
+        use crate::LinearRgbImage;
+        // A 5x5 reference must reject a 4x4 distorted image even though
+        // both would pad to 8x8 — dimension matching happens on the
+        // caller-supplied (pre-padding) dimensions.
+        let reference =
+            Ssimulacra2Reference::new(LinearRgbImage::new(vec![[0.5f32, 0.5, 0.5]; 25], 5, 5))
+                .unwrap();
+        let distorted = LinearRgbImage::new(vec![[0.5f32, 0.5, 0.5]; 16], 4, 4);
+        assert!(matches!(
+            reference.compare(distorted),
             Err(Ssimulacra2Error::NonMatchingImageDimensions)
         ));
     }

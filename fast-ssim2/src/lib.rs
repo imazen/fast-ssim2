@@ -387,7 +387,7 @@ fn reflect_index(i: usize, n: usize) -> usize {
 /// floor. Returns the input unchanged when already ≥ `min` on both axes
 /// (or empty — that falls through to the `InvalidImageSize` check). The
 /// original pixels occupy the top-left `w × h` region of the result.
-fn reflect_pad_linear(img: LinearRgbImage, min: usize) -> LinearRgbImage {
+pub(crate) fn reflect_pad_linear(img: LinearRgbImage, min: usize) -> LinearRgbImage {
     let (w, h) = (img.width(), img.height());
     if w == 0 || h == 0 {
         return img;
