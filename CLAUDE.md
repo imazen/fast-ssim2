@@ -2,6 +2,13 @@
 
 ## Current state (2026-06-10)
 
+- **v0.8.2 RELEASED 2026-06-10**: tag v0.8.2 = b7c2b4b3, GH release with
+  changelog notes, published to crates.io (verified). CI was 12/12 green
+  (incl. windows-11-arm, macos-26-intel, i686, WASM, MSRV 1.89.0). Ships
+  sub-8px reflect-pad unification, `hdr-pu` feature
+  (`compute_ssimulacra2_pu_nits`, UPIQ SROCC 0.7044), N1 blur
+  horizontal-pass vectorization. Downstream unblock: zenmetrics CPU-ssim2
+  HDR routing can now depend on the published `hdr-pu` feature.
 - `CompareContext` + `Ssimulacra2Reference::compare_with` (zero-alloc batch
   comparisons) shipped in 0.8.1, including the SIMD blur-state hoisting
   (bc9d011). The old TODO describing that design is done and was removed.
