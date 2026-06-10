@@ -165,7 +165,9 @@ impl Ssimulacra2StripConfig {
 ///
 /// # Errors
 /// - If `strip_height < 8`.
-/// - If the input images are smaller than 8x8, exceed
+/// - If the input images are smaller than 8x8 (the strip API targets
+///   very large images and does not reflect-pad — use
+///   [`crate::compute_ssimulacra2`] for tiny inputs), exceed
 ///   [`crate::MAX_IMAGE_PIXELS`], or have mismatched dimensions.
 pub fn compute_ssimulacra2_strip<S, D>(
     source: S,

@@ -38,6 +38,8 @@ let score = compute_ssimulacra2(source.as_ref(), distorted.as_ref())?;
 |----------|----------|
 | [`compute_ssimulacra2`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2.html) | Compare two images (recommended) |
 | [`Ssimulacra2Reference::new`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.Ssimulacra2Reference.html) | Precompute for batch comparisons (~2x faster) |
+| [`Ssimulacra2Reference::compare_with`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.Ssimulacra2Reference.html#method.compare_with) | Batch comparisons with a reusable [`CompareContext`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.CompareContext.html) — zero allocations after the first call |
+| [`compute_ssimulacra2_strip`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2_strip.html) | Very large images with bounded peak memory (horizontal strips) |
 
 ### Input Types
 
@@ -146,7 +148,7 @@ let score = compute_ssimulacra2(source, distorted)?;
 
 ## Requirements
 
-- **Minimum image size:** 8x8 pixels
+- **Image size:** 1x1 up to 16384x16384-equivalent pixels (`MAX_IMAGE_PIXELS`); inputs below the metric's 8x8 pyramid floor are reflect(mirror)-padded. The strip APIs (`compute_ssimulacra2_strip`, `compare_strip`) target very large images and require at least 8x8.
 - **MSRV:** 1.89.0
 
 ## Attribution

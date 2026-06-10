@@ -157,7 +157,12 @@
 //!
 //! ## Requirements
 //!
-//! - **Minimum image size:** 8×8 pixels
+//! - **Image size:** [`compute_ssimulacra2`] and [`Ssimulacra2Reference`]
+//!   accept any size from 1×1 up to [`MAX_IMAGE_PIXELS`] pixels; inputs
+//!   below the metric's 8×8 pyramid floor are reflect(mirror)-padded.
+//!   The strip APIs ([`compute_ssimulacra2_strip`],
+//!   [`Ssimulacra2Reference::compare_strip`]) target very large images and
+//!   require at least 8×8.
 //! - **MSRV:** 1.89.0
 
 #![forbid(unsafe_code)]

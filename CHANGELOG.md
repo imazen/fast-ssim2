@@ -1,11 +1,20 @@
+# Changelog
+
 ## [Unreleased]
 
+### QUEUED BREAKING CHANGES
+<!-- Breaking changes that will ship together in the next minor (0.x) release.
+     Do NOT ship these piecemeal — batch them. -->
+- Remove `compute_frame_ssimulacra2` / `compute_frame_ssimulacra2_with_config` (deprecated since 0.8.0; migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` with `ToLinearRgb` inputs). No 0.8.x consumer in the zen workspace uses them — pending user sign-off.
+
 ### Added
+- Sub-8px inputs are reflect(mirror)-padded up to the metric's 8px pyramid floor instead of returning `InvalidImageSize`: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` now score images down to 1×1 (identical pairs still score 100) (480df7e)
+- `Ssimulacra2Reference` applies the same sub-8px reflect-padding, so the batch path accepts the same inputs as the one-shot path and produces identical scores; `width()`/`height()` report the caller-supplied (pre-padding) dimensions and mismatched pre-padding dimensions are still rejected. Strip APIs intentionally keep the ≥8×8 requirement (54df4683)
 - Experimental `hdr-pu` feature: `compute_ssimulacra2_pu_nits` scores HDR content using the PU21 (banding_glare) encoding in place of the cube-root opsin nonlinearity; input is absolute-luminance linear RGB in cd/m². Validated on UPIQ HDR (380 pairs, SROCC 0.7044; see imazen/zenmetrics#25) (35f198af)
 - CI now lints (`clippy -D warnings`) and tests the non-default `hdr-pu` feature on the Linux clippy job, so the feature-gated path is exercised on every push (f987fc1c)
 
 ### Changed
-- Vectorise the recursive-Gaussian blur **horizontal pass** across rows (8 rows per SIMD lane group, one row per lane), mirroring the across-columns trick the vertical pass already uses. The horizontal IIR is a serial recurrence within a row but fully independent across rows; the prior implementation ran it scalar per row, which on the Ampere Altra (Neoverse-N1) was ~50% of the whole blur kernel (blur itself ~40% of the SSIMULACRA2 pipeline) because each row's recurrence serialised. Bit-identical output to the scalar path — the SIMD IIR replicates the scalar op order exactly, so the strict `< 1e-5` pinned-SIMD-score parity test is unchanged. Measured on Neoverse-N1: blur-only +9–12%, full SSIMULACRA2 +3.6–9.5% (criterion `ssimulacra2_1920x1080` 540.9 → 503.0 ms, +7.0%). x86 (AVX2) unaffected — blur was already well-vectorised there.
+- Vectorised the recursive-Gaussian blur **horizontal pass** across rows (8 rows per SIMD lane group, one row per lane), mirroring the across-columns trick the vertical pass already uses. Bit-identical output to the scalar path — the SIMD IIR replicates the scalar op order exactly. Measured on Neoverse-N1 (where the scalar per-row recurrence was ~50% of the blur kernel): blur-only +9–12%, full SSIMULACRA2 +3.6–9.5% (`ssimulacra2_1920x1080` 540.9 → 503.0 ms). x86 (AVX2) unaffected — blur was already well-vectorised there (87e06d5)
 
 ## [0.8.1] - 2026-05-27
 
