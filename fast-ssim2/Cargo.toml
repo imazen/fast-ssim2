@@ -9,6 +9,7 @@ documentation = "https://docs.rs/fast-ssim2"
 readme = "../README.md"
 exclude = [
     "test_data",
+    "tests/public_api_doc.rs",
     "CLAUDE.md",
     "CONTEXT-HANDOFF.md",
     "FEEDBACK.md",
