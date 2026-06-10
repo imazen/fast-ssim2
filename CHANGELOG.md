@@ -7,6 +7,8 @@
      Do NOT ship these piecemeal — batch them. -->
 - Remove `compute_frame_ssimulacra2` / `compute_frame_ssimulacra2_with_config` (deprecated since 0.8.0; migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` with `ToLinearRgb` inputs). No 0.8.x consumer in the zen workspace uses them — pending user sign-off.
 
+## [0.8.2] - 2026-06-10
+
 ### Added
 - Sub-8px inputs are reflect(mirror)-padded up to the metric's 8px pyramid floor instead of returning `InvalidImageSize`: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` now score images down to 1×1 (identical pairs still score 100) (480df7e)
 - `Ssimulacra2Reference` applies the same sub-8px reflect-padding, so the batch path accepts the same inputs as the one-shot path and produces identical scores; `width()`/`height()` report the caller-supplied (pre-padding) dimensions and mismatched pre-padding dimensions are still rejected. Strip APIs intentionally keep the ≥8×8 requirement (54df4683)
