@@ -36,7 +36,7 @@
 //! | Type | Color Space | Notes |
 //! |------|-------------|-------|
 //! | `ImgRef<[u8; 3]>` | sRGB | Standard 8-bit RGB images |
-//! | `ImgRef<[u16; 3]>` | sRGB | 16-bit RGB (HDR workflows) |
+//! | `ImgRef<[u16; 3]>` | sRGB | 16-bit RGB (high bit depth, SDR) |
 //! | `ImgRef<[f32; 3]>` | **Linear RGB** | Already linearized data |
 //! | `ImgRef<u8>` | sRGB grayscale | Expanded to R=G=B |
 //! | `ImgRef<f32>` | Linear grayscale | Expanded to R=G=B |
@@ -255,7 +255,15 @@ pub enum Ssimulacra2Error {
     #[error("Source and distorted image width and height must be equal")]
     NonMatchingImageDimensions,
 
-    /// One of the input images has a width and/or height of less than 8 pixels.
+    /// One of the input images is below the metric's 8×8 pyramid floor,
+    /// in a code path that does not reflect-pad.
+    ///
+    /// The primary entry points ([`compute_ssimulacra2`],
+    /// [`Ssimulacra2Reference`]) reflect-pad sub-8px inputs instead of
+    /// returning this error. It is still returned by the strip APIs
+    /// (which target very large images and also use it when
+    /// `strip_height < 8`) and by the deprecated `compute_frame_*`
+    /// entry points.
     #[error("Images must be at least 8x8 pixels")]
     InvalidImageSize,
 
