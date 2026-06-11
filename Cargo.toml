@@ -1,7 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["fast-ssim2", "ssimulacra2_bin"]
-exclude = ["compare_tool"]
+# apidoc/ is the CI-free public-API snapshot runner (its own tiny package, see
+# apidoc/Cargo.toml); excluded so plain `cargo test` and CI never build it.
+exclude = ["compare_tool", "apidoc"]
 
 [profile.release]
 lto = "thin"

@@ -9,7 +9,6 @@ documentation = "https://docs.rs/fast-ssim2"
 readme = "../README.md"
 exclude = [
     "test_data",
-    "tests/public_api_doc.rs",
     "CLAUDE.md",
     "CONTEXT-HANDOFF.md",
     "FEEDBACK.md",
@@ -48,7 +47,6 @@ chrono = "0.4"
 png = "0.18"
 which = "8.0"
 sha2 = "0.11.0"
-serde_json = "1.0.150"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }

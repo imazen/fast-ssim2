@@ -1,0 +1,15 @@
+# CI-free public-API snapshot runner — the only package depending on
+# zenutils-apidoc. The real workspace `exclude`s this directory, so plain
+# `cargo test` and every CI job (including --all-features ones) never
+# compile the apidoc tree or run rustdoc. Regenerate via `just api-doc`.
+[package]
+name = "fast-ssim2-apidoc"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Self-contained: stays out of the parent workspace regardless of its config.
+[workspace]
+
+[dependencies]
+zenutils-apidoc = "0.1.0"

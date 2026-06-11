@@ -1,0 +1,59 @@
+# fast-ssim2 public API — doc(hidden) items and excluded-feature surface
+# excluded features: (none)
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 1
+#   pub types (struct/enum/trait/alias)         2
+#   pub consts/statics                          1
+#   inherent methods                            6
+#   struct fields                              11
+#   trait roster entries (type × trait)         7
+#   auto-trait-complete types                   1
+#
+# per-module pub lines:
+#   (root)                           11
+#   reference_data                   10
+
+## items (21 lines)
+
+pub const reference_data::REFERENCE_CASES: &[reference_data::ReferenceCase]
+pub ScalePlanesView::height: usize
+pub ScalePlanesView::img1_planar: &'a [alloc::vec::Vec<f32>; 3]
+pub ScalePlanesView::mu1: &'a [alloc::vec::Vec<f32>; 3]
+pub ScalePlanesView::sigma1_sq: &'a [alloc::vec::Vec<f32>; 3]
+pub ScalePlanesView::width: usize
+pub reference_data::ReferenceCase::distorted_hash: &'static str
+pub reference_data::ReferenceCase::expected_score: f64
+pub reference_data::ReferenceCase::height: usize
+pub reference_data::ReferenceCase::name: &'static str
+pub reference_data::ReferenceCase::source_hash: &'static str
+pub reference_data::ReferenceCase::width: usize
+pub fn LinearRgbImageError::assert_fields_are_eq(&self)
+pub fn SimdImpl::assert_fields_are_eq(&self)
+pub fn Ssimulacra2Error::assert_fields_are_eq(&self)
+pub fn Ssimulacra2Reference::scale_planes(&self, usize) -> core::option::Option<ScalePlanesView<'_>>
+pub fn reference_data::ReferenceCase::clone(&self) -> reference_data::ReferenceCase
+pub fn reference_data::ReferenceCase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod reference_data
+pub struct ScalePlanesView<'a>
+pub struct reference_data::ReferenceCase
+
+## trait impls (6 types)
+
+LinearRgbImageError: TrivialClone
+SimdImpl: TrivialClone
+Ssimulacra2Config: TrivialClone
+Ssimulacra2Error: TrivialClone
+Ssimulacra2StripConfig: TrivialClone
+reference_data::ReferenceCase: Clone, Debug
+
+## auto traits
+
+1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

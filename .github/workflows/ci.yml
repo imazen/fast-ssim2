@@ -16,9 +16,6 @@ env:
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: "-Dwarnings"
   CI: true
-  # Public-API snapshot regen (tests/public_api_doc.rs) needs nightly rustdoc
-  # + cargo-public-api; only the clippy job carries them and runs the check.
-  ZEN_API_DOC: off
 
 jobs:
   # ==========================================================================
@@ -57,15 +54,6 @@ jobs:
         run: cargo clippy -p fast-ssim2-cli --all-targets -- -D warnings
       - name: Test (hdr-pu)
         run: cargo test -p fast-ssim2 --features hdr-pu
-      - uses: dtolnay/rust-toolchain@nightly # rustdoc JSON for cargo-public-api
-      - uses: dtolnay/rust-toolchain@stable # restore stable as default
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-public-api
-      - name: Public-API snapshot is current
-        run: cargo test -p fast-ssim2 --test public_api_doc
-        env:
-          ZEN_API_DOC: check
 
   # ==========================================================================
   # Test matrix across platforms
