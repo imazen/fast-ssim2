@@ -6,24 +6,24 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: fast-ssim2.txt 79 lines (supported surface) | fast-ssim2.features.txt 6 added (features: hdr-pu,imgref,rayon) | fast-ssim2.internal.txt 28 lines (35 hidden + 0 excluded-feature)
+# files: fast-ssim2.txt 86 lines (supported surface) | fast-ssim2.features.txt 6 added (features: hdr-pu,imgref,rayon) | fast-ssim2.internal.txt 28 lines (35 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)        10
 #   pub consts/statics                          3
-#   free functions                              9
-#   inherent methods                           30
+#   free functions                             11
+#   inherent methods                           34
 #   struct fields                               6
-#   enum variants                              10
+#   enum variants                              11
 #   trait roster entries (type × trait)        36
 #   auto-trait-complete types                   9
 #
 # per-module pub lines:
-#   (root)                           69
+#   (root)                           76
 
-## items (69 lines)
+## items (76 lines)
 
 pub mod fast_ssim2
 pub enum LinearRgbImageError
@@ -36,7 +36,8 @@ pub enum SimdImpl
 pub SimdImpl::Scalar
 pub SimdImpl::Simd
 pub fn SimdImpl::name(&self) -> &'static str
-pub enum Ssimulacra2Error
+#[non_exhaustive] pub enum Ssimulacra2Error
+pub Ssimulacra2Error::Cancelled(enough::reason::StopReason)
 pub Ssimulacra2Error::GaussianBlurError
 pub Ssimulacra2Error::ImageTooLarge
 pub Ssimulacra2Error::ImageTooLarge::actual: usize
@@ -68,12 +69,16 @@ pub struct Ssimulacra2Reference
 pub fn Ssimulacra2Reference::compare<T: ToLinearRgb>(&self, T) -> core::result::Result<f64, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::compare_context(&self) -> CompareContext
 pub fn Ssimulacra2Reference::compare_with<T: ToLinearRgb>(&self, &mut CompareContext, T) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_with_and_stop<T: ToLinearRgb>(&self, &mut CompareContext, T, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_with_stop<T: ToLinearRgb>(&self, T, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::height(&self) -> usize
 pub fn Ssimulacra2Reference::new<T: ToLinearRgb>(T) -> core::result::Result<Self, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::num_scales(&self) -> usize
 pub fn Ssimulacra2Reference::width(&self) -> usize
 pub fn Ssimulacra2Reference::compare_strip<T: ToLinearRgb>(&self, T, u32) -> core::result::Result<f64, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::compare_strip_with_config<T: ToLinearRgb>(&self, T, u32, Ssimulacra2StripConfig) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_strip_with_config_and_stop<T: ToLinearRgb>(&self, T, u32, Ssimulacra2StripConfig, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_strip_with_stop<T: ToLinearRgb>(&self, T, u32, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
 pub struct Ssimulacra2StripConfig
 pub Ssimulacra2StripConfig::halo_rows: usize
 pub Ssimulacra2StripConfig::inner: Ssimulacra2Config
@@ -90,7 +95,9 @@ pub fn compute_frame_ssimulacra2_with_config<T, U>(T, U, Ssimulacra2Config) -> c
 pub fn compute_ssimulacra2<S, D>(S, D) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
 pub fn compute_ssimulacra2_strip<S, D>(S, D, u32) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
 pub fn compute_ssimulacra2_strip_with_config<S, D>(S, D, u32, Ssimulacra2StripConfig) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
+pub fn compute_ssimulacra2_strip_with_stop<S, D>(S, D, u32, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
 pub fn compute_ssimulacra2_with_config<S, D>(S, D, Ssimulacra2Config) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
+pub fn compute_ssimulacra2_with_stop<S, D>(S, D, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
 pub fn srgb_to_linear(f32) -> f32
 pub fn srgb_u16_to_linear(u16) -> f32
 pub fn srgb_u8_to_linear(u8) -> f32

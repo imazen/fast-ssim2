@@ -331,6 +331,21 @@ impl Ssimulacra2Reference {
         self.compare_with(&mut ctx, distorted)
     }
 
+    /// [`Self::compare`] with cooperative cancellation. `stop` is checked once
+    /// per scale (never per-pixel); cancellation returns
+    /// [`Ssimulacra2Error::Cancelled`]. `compare` passes `enough::Unstoppable`.
+    ///
+    /// # Errors
+    /// As [`Self::compare`], plus `Cancelled`.
+    pub fn compare_with_stop<T: ToLinearRgb>(
+        &self,
+        distorted: T,
+        stop: &dyn enough::Stop,
+    ) -> Result<f64, Ssimulacra2Error> {
+        let mut ctx = self.compare_context();
+        self.compare_with_and_stop(&mut ctx, distorted, stop)
+    }
+
     /// Compare a distorted image against the precomputed reference, reusing
     /// the scratch buffers in `ctx`. Zero `Vec` allocations after the first
     /// call (`ctx` retains its buffers between invocations).
@@ -346,6 +361,21 @@ impl Ssimulacra2Reference {
         &self,
         ctx: &mut CompareContext,
         distorted: T,
+    ) -> Result<f64, Ssimulacra2Error> {
+        self.compare_with_and_stop(ctx, distorted, &enough::Unstoppable)
+    }
+
+    /// [`Self::compare_with`] with cooperative cancellation. `stop` is checked
+    /// once per scale (never per-pixel); cancellation returns
+    /// [`Ssimulacra2Error::Cancelled`].
+    ///
+    /// # Errors
+    /// As [`Self::compare_with`], plus `Cancelled`.
+    pub fn compare_with_and_stop<T: ToLinearRgb>(
+        &self,
+        ctx: &mut CompareContext,
+        distorted: T,
+        stop: &dyn enough::Stop,
     ) -> Result<f64, Ssimulacra2Error> {
         let distorted_img = distorted.into_linear_rgb();
         // Dimensions must match the *original* (pre-padding) reference
@@ -376,6 +406,9 @@ impl Ssimulacra2Reference {
         let mut msssim = Msssim::default();
 
         for (scale_idx, scale_data) in self.scales.iter().enumerate() {
+            // Cooperative cancellation: per-scale outer boundary (never
+            // per-pixel). `Unstoppable` short-circuits to a no-op.
+            stop.check().map_err(Ssimulacra2Error::Cancelled)?;
             if width < 8 || height < 8 {
                 break;
             }
