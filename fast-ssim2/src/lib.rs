@@ -186,7 +186,7 @@ pub use input::{LinearRgbImage, LinearRgbImageError, ToLinearRgb};
 pub use precompute::{CompareContext, ScalePlanesView, Ssimulacra2Reference};
 pub use strip::{
     HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, Ssimulacra2StripConfig, compute_ssimulacra2_strip,
-    compute_ssimulacra2_strip_with_config,
+    compute_ssimulacra2_strip_with_config, compute_ssimulacra2_strip_with_stop,
 };
 
 // Re-export sRGB conversion functions for users implementing custom input types
@@ -245,7 +245,12 @@ impl Ssimulacra2Config {
 }
 
 /// Errors which can occur when attempting to calculate a SSIMULACRA2 score from two input images.
+///
+/// `#[non_exhaustive]`: downstream `match` arms must include a wildcard `_ =>`,
+/// so future variants (like [`Ssimulacra2Error::Cancelled`]) can be added without
+/// breaking callers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum Ssimulacra2Error {
     /// The conversion from input image to [`yuvxyb::LinearRgb`] (via [TryFrom]) returned an [Err].
     #[error("Failed to convert input image to linear RGB")]
@@ -287,6 +292,16 @@ pub enum Ssimulacra2Error {
     /// Gaussian blur operation failed.
     #[error("Gaussian blur operation failed")]
     GaussianBlurError,
+
+    /// The computation was cooperatively cancelled via the
+    /// [`enough::Stop`] token passed to a `*_with_stop` entry point.
+    ///
+    /// The token is polled at the top of each multi-scale (and, in the
+    /// strip APIs, per-strip) outer-loop iteration, never inside the
+    /// per-pixel inner loops, so cancellation is responsive without
+    /// adding overhead to the hot path.
+    #[error("Computation cancelled: {0}")]
+    Cancelled(enough::StopReason),
 }
 
 /// Maximum supported image size in pixels (`width * height`).
@@ -310,7 +325,12 @@ pub fn compute_frame_ssimulacra2<T, U>(source: T, distorted: U) -> Result<f64, S
 where
     LinearRgb: TryFrom<T> + TryFrom<U>,
 {
-    compute_frame_ssimulacra2_impl(source, distorted, Ssimulacra2Config::default())
+    compute_frame_ssimulacra2_impl(
+        source,
+        distorted,
+        Ssimulacra2Config::default(),
+        &enough::Unstoppable,
+    )
 }
 
 /// Computes the SSIMULACRA2 score with custom implementation configuration.
@@ -326,7 +346,7 @@ pub fn compute_frame_ssimulacra2_with_config<T, U>(
 where
     LinearRgb: TryFrom<T> + TryFrom<U>,
 {
-    compute_frame_ssimulacra2_impl(source, distorted, config)
+    compute_frame_ssimulacra2_impl(source, distorted, config, &enough::Unstoppable)
 }
 
 /// Computes the SSIMULACRA2 score from any input type implementing [`ToLinearRgb`].
@@ -358,11 +378,51 @@ where
     compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::default())
 }
 
+/// Computes the SSIMULACRA2 score with cooperative cancellation.
+///
+/// Identical to [`compute_ssimulacra2`] but takes a [`enough::Stop`]
+/// token. The token is checked once at the top of each multi-scale
+/// outer-loop iteration (never inside the per-pixel inner loops), so
+/// cancellation is responsive at scale granularity without adding any
+/// cost to the hot path. On cancellation the function returns
+/// [`Ssimulacra2Error::Cancelled`].
+///
+/// Pass [`enough::Unstoppable`] for the never-cancel path, which is
+/// indistinguishable in cost from [`compute_ssimulacra2`].
+pub fn compute_ssimulacra2_with_stop<S, D>(
+    source: S,
+    distorted: D,
+    stop: &dyn enough::Stop,
+) -> Result<f64, Ssimulacra2Error>
+where
+    S: ToLinearRgb,
+    D: ToLinearRgb,
+{
+    compute_ssimulacra2_with_config_and_stop(source, distorted, Ssimulacra2Config::default(), stop)
+}
+
 /// Computes the SSIMULACRA2 score with custom configuration from [`ToLinearRgb`] inputs.
 pub fn compute_ssimulacra2_with_config<S, D>(
     source: S,
     distorted: D,
     config: Ssimulacra2Config,
+) -> Result<f64, Ssimulacra2Error>
+where
+    S: ToLinearRgb,
+    D: ToLinearRgb,
+{
+    compute_ssimulacra2_with_config_and_stop(source, distorted, config, &enough::Unstoppable)
+}
+
+/// Computes the SSIMULACRA2 score with custom configuration and
+/// cooperative cancellation from [`ToLinearRgb`] inputs.
+///
+/// See [`compute_ssimulacra2_with_stop`] for the cancellation semantics.
+fn compute_ssimulacra2_with_config_and_stop<S, D>(
+    source: S,
+    distorted: D,
+    config: Ssimulacra2Config,
+    stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error>
 where
     S: ToLinearRgb,
@@ -375,7 +435,7 @@ where
     // InvalidImageSize check in `compute_frame_ssimulacra2_impl`.
     let img1: LinearRgb = reflect_pad_linear(source.into_linear_rgb(), 8).into();
     let img2: LinearRgb = reflect_pad_linear(distorted.into_linear_rgb(), 8).into();
-    compute_frame_ssimulacra2_impl(img1, img2, config)
+    compute_frame_ssimulacra2_impl(img1, img2, config, stop)
 }
 
 /// Reflect-101 index map (OpenCV `BORDER_REFLECT_101`): fold an
@@ -437,6 +497,7 @@ fn compute_frame_ssimulacra2_impl<T, U>(
     source: T,
     distorted: U,
     config: Ssimulacra2Config,
+    stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error>
 where
     LinearRgb: TryFrom<T> + TryFrom<U>,
@@ -448,7 +509,7 @@ where
     let Ok(img2) = LinearRgb::try_from(distorted) else {
         return Err(Ssimulacra2Error::LinearRgbConversionFailed);
     };
-    compute_frame_flavored(img1, img2, config, XybFlavor::CubeRoot)
+    compute_frame_flavored(img1, img2, config, XybFlavor::CubeRoot, stop)
 }
 
 fn compute_frame_flavored(
@@ -456,6 +517,7 @@ fn compute_frame_flavored(
     mut img2: LinearRgb,
     config: Ssimulacra2Config,
     flavor: XybFlavor,
+    stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {
     if img1.width() != img2.width() || img1.height() != img2.height() {
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
@@ -502,6 +564,12 @@ fn compute_frame_flavored(
     let mut msssim = Msssim::default();
 
     for scale in 0..NUM_SCALES {
+        // Cooperative cancellation check at the per-scale OUTER-loop
+        // boundary only (never inside the per-pixel inner loops), so it
+        // adds no cost to the hot path. `Unstoppable` short-circuits to a
+        // no-op.
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+
         if width < 8 || height < 8 {
             break;
         }
@@ -614,7 +682,13 @@ pub fn compute_ssimulacra2_pu_nits(
 ) -> Result<f64, Ssimulacra2Error> {
     let img1: LinearRgb = reflect_pad_linear(source_nits, 8).into();
     let img2: LinearRgb = reflect_pad_linear(distorted_nits, 8).into();
-    compute_frame_flavored(img1, img2, Ssimulacra2Config::default(), XybFlavor::Pu21)
+    compute_frame_flavored(
+        img1,
+        img2,
+        Ssimulacra2Config::default(),
+        XybFlavor::Pu21,
+        &enough::Unstoppable,
+    )
 }
 
 /// Convert LinearRgb to Xyb using the specified implementation

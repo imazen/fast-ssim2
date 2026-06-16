@@ -186,6 +186,40 @@ where
     )
 }
 
+/// Strip-wise SSIMULACRA2 with cooperative cancellation.
+///
+/// Identical to [`compute_ssimulacra2_strip`] but takes a
+/// [`enough::Stop`] token. The token is checked once at the top of each
+/// per-strip outer-loop iteration (never inside the per-pixel or
+/// per-scale inner loops), so cancellation is responsive at strip
+/// granularity without adding any cost to the hot path. On cancellation
+/// the function returns [`crate::Ssimulacra2Error::Cancelled`].
+///
+/// Pass [`enough::Unstoppable`] for the never-cancel path, which is
+/// indistinguishable in cost from [`compute_ssimulacra2_strip`].
+///
+/// # Errors
+/// As [`compute_ssimulacra2_strip`], plus
+/// [`crate::Ssimulacra2Error::Cancelled`] if the token fires.
+pub fn compute_ssimulacra2_strip_with_stop<S, D>(
+    source: S,
+    distorted: D,
+    strip_height: u32,
+    stop: &dyn enough::Stop,
+) -> Result<f64, Ssimulacra2Error>
+where
+    S: ToLinearRgb,
+    D: ToLinearRgb,
+{
+    compute_ssimulacra2_strip_with_config_and_stop(
+        source,
+        distorted,
+        strip_height,
+        Ssimulacra2StripConfig::default(),
+        stop,
+    )
+}
+
 /// Strip-wise SSIMULACRA2 with explicit configuration (halo, SIMD impl).
 ///
 /// See [`compute_ssimulacra2_strip`] for the default-config path and
@@ -203,11 +237,36 @@ where
     S: ToLinearRgb,
     D: ToLinearRgb,
 {
+    compute_ssimulacra2_strip_with_config_and_stop(
+        source,
+        distorted,
+        strip_height,
+        config,
+        &enough::Unstoppable,
+    )
+}
+
+/// Strip-wise SSIMULACRA2 with explicit configuration and cooperative
+/// cancellation.
+///
+/// See [`compute_ssimulacra2_strip_with_stop`] for the cancellation
+/// semantics.
+fn compute_ssimulacra2_strip_with_config_and_stop<S, D>(
+    source: S,
+    distorted: D,
+    strip_height: u32,
+    config: Ssimulacra2StripConfig,
+    stop: &dyn enough::Stop,
+) -> Result<f64, Ssimulacra2Error>
+where
+    S: ToLinearRgb,
+    D: ToLinearRgb,
+{
     let img1: LinearRgbImage = source.into_linear_rgb();
     let img2: LinearRgbImage = distorted.into_linear_rgb();
     let lin1: LinearRgb = img1.into();
     let lin2: LinearRgb = img2.into();
-    compute_strip_impl(lin1, lin2, strip_height as usize, config)
+    compute_strip_impl(lin1, lin2, strip_height as usize, config, stop)
 }
 
 fn validate_strip_dims(
@@ -656,6 +715,7 @@ fn compute_strip_impl(
     img2: LinearRgb,
     strip_height: usize,
     config: Ssimulacra2StripConfig,
+    stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {
     if img1.width() != img2.width() || img1.height() != img2.height() {
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
@@ -677,6 +737,12 @@ fn compute_strip_impl(
 
     let mut y = 0usize;
     while y < height {
+        // Cooperative cancellation check at the per-strip OUTER-loop
+        // boundary only (never inside the per-scale/per-pixel inner
+        // loops in `process_strip`), so it adds no cost to the hot path.
+        // `Unstoppable` short-circuits to a no-op.
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+
         let mut next_y = (y + strip_h).next_multiple_of(ALIGNMENT);
         if next_y >= height || height - next_y < ALIGNMENT {
             next_y = height;
@@ -732,6 +798,28 @@ impl Ssimulacra2Reference {
         self.compare_strip_with_config(distorted, strip_height, Ssimulacra2StripConfig::default())
     }
 
+    /// [`Ssimulacra2Reference::compare_strip`] with cooperative cancellation.
+    ///
+    /// `stop` is checked once per strip (never per-pixel); on cancellation the
+    /// comparison returns [`Ssimulacra2Error::Cancelled`]. `compare_strip` is the
+    /// no-cancellation equivalent (it passes `enough::Unstoppable`).
+    ///
+    /// # Errors
+    /// As [`Ssimulacra2Reference::compare_strip`], plus `Cancelled`.
+    pub fn compare_strip_with_stop<T: ToLinearRgb>(
+        &self,
+        distorted: T,
+        strip_height: u32,
+        stop: &dyn enough::Stop,
+    ) -> Result<f64, Ssimulacra2Error> {
+        self.compare_strip_with_config_and_stop(
+            distorted,
+            strip_height,
+            Ssimulacra2StripConfig::default(),
+            stop,
+        )
+    }
+
     /// Strip-bounded comparison with explicit configuration.
     ///
     /// # Errors
@@ -741,6 +829,25 @@ impl Ssimulacra2Reference {
         distorted: T,
         strip_height: u32,
         config: Ssimulacra2StripConfig,
+    ) -> Result<f64, Ssimulacra2Error> {
+        self.compare_strip_with_config_and_stop(
+            distorted,
+            strip_height,
+            config,
+            &enough::Unstoppable,
+        )
+    }
+
+    /// [`Ssimulacra2Reference::compare_strip_with_config`] with cooperative cancellation.
+    ///
+    /// # Errors
+    /// As [`Ssimulacra2Reference::compare_strip_with_config`], plus `Cancelled`.
+    pub fn compare_strip_with_config_and_stop<T: ToLinearRgb>(
+        &self,
+        distorted: T,
+        strip_height: u32,
+        config: Ssimulacra2StripConfig,
+        stop: &dyn enough::Stop,
     ) -> Result<f64, Ssimulacra2Error> {
         // `Ssimulacra2Reference` retains only the per-scale precomputed
         // planes (img1_planar, mu1, sigma1_sq), not the source LinearRgb.
@@ -756,7 +863,7 @@ impl Ssimulacra2Reference {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
         validate_strip_dims(width, height, strip_height as usize)?;
-        compare_strip_with_cached_ref(self, img2, strip_height as usize, config)
+        compare_strip_with_cached_ref(self, img2, strip_height as usize, config, stop)
     }
 }
 
@@ -775,6 +882,7 @@ fn compare_strip_with_cached_ref(
     img2_full: LinearRgb,
     strip_height: usize,
     config: Ssimulacra2StripConfig,
+    stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {
     let width = img2_full.width().get();
     let height = img2_full.height().get();
@@ -787,6 +895,9 @@ fn compare_strip_with_cached_ref(
 
     let mut y = 0usize;
     while y < height {
+        // Cooperative cancellation: per-strip outer boundary (never per-pixel).
+        // `Unstoppable` short-circuits to a no-op.
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let mut next_y = (y + strip_h).next_multiple_of(ALIGNMENT);
         if next_y >= height || height - next_y < ALIGNMENT {
             next_y = height;

@@ -6,6 +6,10 @@
 <!-- Breaking changes that will ship together in the next minor (0.x) release.
      Do NOT ship these piecemeal — batch them. -->
 - Remove `compute_frame_ssimulacra2` / `compute_frame_ssimulacra2_with_config` (deprecated since 0.8.0; migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` with `ToLinearRgb` inputs). No 0.8.x consumer in the zen workspace uses them — pending user sign-off.
+- `Ssimulacra2Error` is now `#[non_exhaustive]` and gains a `Cancelled(enough::StopReason)` variant (for the new cooperative-cancellation API). Downstream `match` arms need a wildcard `_ =>`. Batched into the same 0.9.0 break as the deprecation removal above.
+
+### Added
+- Cooperative cancellation across every slow path: `compute_ssimulacra2_with_stop` / `compute_ssimulacra2_strip_with_stop` (one-shot), and on `Ssimulacra2Reference` the warm-reference batch paths `compare_with_stop` / `compare_with_and_stop` (zero-alloc, reuses a `CompareContext`) and the cached-ref strip paths `compare_strip_with_stop` / `compare_strip_with_config_and_stop`. All take a `&dyn enough::Stop` token and return `Err(Ssimulacra2Error::Cancelled)` if cancelled; the token is checked at the per-scale / per-strip outer-loop boundary — never per-pixel. The existing non-`_stop` methods delegate with `enough::Unstoppable` (unchanged behavior).
 
 ## [0.8.2] - 2026-06-10
 
