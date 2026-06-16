@@ -11,6 +11,9 @@
 ### Added
 - Cooperative cancellation across every slow path: `compute_ssimulacra2_with_stop` / `compute_ssimulacra2_strip_with_stop` (one-shot), and on `Ssimulacra2Reference` the warm-reference batch paths `compare_with_stop` / `compare_with_and_stop` (zero-alloc, reuses a `CompareContext`) and the cached-ref strip paths `compare_strip_with_stop` / `compare_strip_with_config_and_stop`. All take a `&dyn enough::Stop` token and return `Err(Ssimulacra2Error::Cancelled)` if cancelled; the token is checked at the per-scale / per-strip outer-loop boundary — never per-pixel. The existing non-`_stop` methods delegate with `enough::Unstoppable` (unchanged behavior).
 
+### Documentation
+- README: documented the cooperative-cancellation API (the `*_with_stop` variants were shipped but never appeared in the README — found via an insulated external-developer usability test), the flat-`Vec<u8>` → `ImgVec` on-ramp in the Quick Start, the `f64` score type, the no-`[u8; 4]`/alpha note, and the strip API signatures + strip-height semantics.
+
 ## [0.8.2] - 2026-06-10
 
 ### Added
