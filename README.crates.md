@@ -1,6 +1,6 @@
 <!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
 
-# fast-ssim2 [![CI](https://img.shields.io/github/actions/workflow/status/imazen/fast-ssim2/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/fast-ssim2/actions/workflows/ci.yml)
+# fast-ssim2
 
 fast-ssim2 is a SIMD-accelerated Rust implementation of [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2), the perceptual image-quality metric developed by Cloudinary and shipped in [libjxl](https://github.com/libjxl/libjxl). It scores a distorted image against a reference on a fixed 0–100 scale. Pure Rust, `#![forbid(unsafe_code)]`, with runtime CPU dispatch (AVX2+FMA on x86-64, NEON on aarch64, SIMD128 on wasm32, scalar elsewhere) via [archmage](https://crates.io/crates/archmage) — no C, no build-time ISA flags. Beyond the one-shot call it offers a precomputed-reference batch path, a bounded-memory strip path for very large images, and cooperative cancellation for servers.
 
