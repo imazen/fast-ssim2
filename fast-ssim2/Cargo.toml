@@ -6,7 +6,7 @@ description = "Fast SSIMULACRA2 image quality metric with SIMD acceleration"
 repository = "https://github.com/imazen/fast-ssim2"
 homepage = "https://github.com/imazen/fast-ssim2"
 documentation = "https://docs.rs/fast-ssim2"
-readme = "../README.md"
+readme = "../README.crates.md"
 exclude = [
     "test_data",
     "CLAUDE.md",

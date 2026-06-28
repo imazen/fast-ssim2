@@ -1,4 +1,6 @@
-# fast-ssim2 [![CI](https://img.shields.io/github/actions/workflow/status/imazen/fast-ssim2/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/fast-ssim2/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/fast-ssim2?style=flat-square)](https://crates.io/crates/fast-ssim2) [![lib.rs](https://img.shields.io/crates/v/fast-ssim2?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/fast-ssim2) [![docs.rs](https://img.shields.io/docsrs/fast-ssim2?style=flat-square)](https://docs.rs/fast-ssim2) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/fast-ssim2?style=flat-square)](#license)
+<!-- GENERATED FROM README.md by zenutils gen-readme-crates.sh — DO NOT EDIT. -->
+
+# fast-ssim2 [![CI](https://img.shields.io/github/actions/workflow/status/imazen/fast-ssim2/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/fast-ssim2/actions/workflows/ci.yml)
 
 fast-ssim2 is a SIMD-accelerated Rust implementation of [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2), the perceptual image-quality metric developed by Cloudinary and shipped in [libjxl](https://github.com/libjxl/libjxl). It scores a distorted image against a reference on a fixed 0–100 scale. Pure Rust, `#![forbid(unsafe_code)]`, with runtime CPU dispatch (AVX2+FMA on x86-64, NEON on aarch64, SIMD128 on wasm32, scalar elsewhere) via [archmage](https://crates.io/crates/archmage) — no C, no build-time ISA flags. Beyond the one-shot call it offers a precomputed-reference batch path, a bounded-memory strip path for very large images, and cooperative cancellation for servers.
 
@@ -259,31 +261,6 @@ cargo run --release --example benchmark_simd   # scalar vs SIMD, per kernel
 Full methodology, environment, the pinned competitor version, and the committed
 result files: **[benchmarks/README.md](https://github.com/imazen/fast-ssim2/blob/main/benchmarks/README.md)**.
 
-<!-- crates.io:skip-start -->
-Measured on a Ryzen 9 7950X (Rust 1.93, runtime dispatch, no `target-cpu=native`)
-with [`examples/precompute_benchmark.rs`](https://github.com/imazen/fast-ssim2/blob/main/fast-ssim2/examples/precompute_benchmark.rs),
-median of two 20-iteration runs (commit `c419b3d`, 2026-05-21):
-
-| Resolution | one-shot | warm `compare` | warm `compare_with` |
-|------------|----------|----------------|---------------------|
-| 256×256    | 7.8 ms   | 6.1 ms   | 4.2 ms   |
-| 512×512    | 33.4 ms  | 25.4 ms  | 20.5 ms  |
-| 1024×1024  | 148.6 ms | 107.6 ms | 90.4 ms  |
-| 1920×1080  | 279.8 ms | 207.4 ms | 160.3 ms |
-
-These figures are transcribed from committed result files under
-[`benchmarks/`](https://github.com/imazen/fast-ssim2/tree/main/benchmarks) — they
-describe those runs, not a fresh measurement on your machine. Run the commands
-above for your own numbers.
-
-To check **score agreement** against the upstream
-[`ssimulacra2`](https://crates.io/crates/ssimulacra2) crate (pinned to 0.5.1),
-the `compare_tool` binary prints both scores and their delta on a pair of images:
-
-```bash
-cd compare_tool && cargo run --release -- source.png distorted.png
-```
-<!-- crates.io:skip-end -->
 
 ## Advanced Usage
 

@@ -13,6 +13,7 @@
 
 ### Documentation
 - README: documented the cooperative-cancellation API (the `*_with_stop` variants were shipped but never appeared in the README — found via an insulated external-developer usability test), the flat-`Vec<u8>` → `ImgVec` on-ramp in the Quick Start, the `f64` score type, the no-`[u8; 4]`/alpha note, and the strip API signatures + strip-height semantics.
+- README overhaul to the zen-family conventions: canonical badge row (dropped `branch=` and the codecov badge, `license` → in-page anchor), rendered crosslink footer, credit to the SSIMULACRA2 authors (Cloudinary / libjxl) alongside the rust-av port, and a split crates.io README (`README.crates.md`, generated; `readme` now points at it). Replaced the unverifiable "vs upstream crate" speedup table with measured, committed scalar-vs-SIMD / batch figures + repro, and added `benchmarks/README.md` methodology.
 
 ## [0.8.2] - 2026-06-10
 
