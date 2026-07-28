@@ -18,3 +18,25 @@ butteraugli measures 3.4-3.7x NEON on the same host
 Both are multi-scale XYB + blur pipelines, so a 2x difference in SIMD payoff
 suggests parts of the SSIMULACRA2 pipeline are still scalar. That is a lead,
 not a conclusion — attributing it needs a profile.
+
+## Follow-up: downscale_by_2 de-clamping (same day)
+
+`downscale_by_2` was fully scalar — a 5-deep nested loop with a per-tap
+`.min()` clamp — and runs 12x per comparison (6 pyramid levels x 2 images).
+Hoisting the clamps out of the interior (they are no-ops except on the final
+row/column of an odd dimension) leaves a flat contiguous 2x2 sum that LLVM
+autovectorises.
+
+Isolated:   2.81ms -> 1.27ms per 5-level 1920x1080 pyramid = 2.21x
+End-to-end:  72.14ms -> 71.30ms at 1920x1080               = 1.2%
+            286.22ms -> 283.30ms at 3840x2160              = 1.0%
+              2.74ms ->   2.70ms at 320x240                = 1.5%
+
+NOTE the gap between those two lines. The isolated micro-benchmark predicted
+~4.3% of total runtime; the real end-to-end saving is ~1.2%, because the
+micro-benchmark re-cloned a cold buffer each iteration while the real pipeline
+hits this function with the data already warm. The 4.3% figure was a
+projection and it was wrong — only the end-to-end number is reported as the
+result. Bit-identical output (verified vs the previous implementation at
+1920x1080, 1921x1081, 17x5, 2x2: zero differing pixels; full reference-
+conformance suite green).
