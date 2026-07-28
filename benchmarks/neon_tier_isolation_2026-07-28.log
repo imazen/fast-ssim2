@@ -1,0 +1,189 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling autocfg v1.5.1
+   Compiling libc v0.2.189
+   Compiling cfg-if v1.0.4
+   Compiling crossbeam-utils v0.8.22
+   Compiling crossbeam-epoch v0.9.20
+   Compiling memchr v2.8.3
+   Compiling crossbeam-deque v0.8.7
+   Compiling num-traits v0.2.19
+   Compiling thiserror v2.0.19
+   Compiling rayon-core v1.13.0
+   Compiling bitflags v2.13.1
+   Compiling bytemuck v1.25.2
+   Compiling simd-adler32 v0.3.10
+   Compiling either v1.17.0
+   Compiling log v0.4.33
+   Compiling anyhow v1.0.104
+   Compiling paste v1.0.15
+   Compiling crc32fast v1.5.0
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling arrayvec v0.7.8
+   Compiling zerocopy v0.8.55
+   Compiling stable_deref_trait v1.2.1
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.8.9
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.4.8
+   Compiling rayon v1.12.0
+   Compiling as-slice v0.2.1
+   Compiling av-scenechange v0.14.1
+   Compiling libm v0.2.16
+   Compiling built v0.8.1
+   Compiling version_check v0.9.5
+   Compiling serde_core v1.0.229
+   Compiling utf8parse v0.2.2
+   Compiling typenum v1.20.1
+   Compiling rustix v1.1.4
+   Compiling num-rational v0.4.2
+   Compiling rav1e v0.8.1
+   Compiling thiserror-impl v2.0.19
+   Compiling hybrid-array v0.4.13
+   Compiling anstyle-parse v1.0.0
+   Compiling pulp v0.22.3
+   Compiling equator-macro v0.4.2
+   Compiling num-derive v0.4.2
+   Compiling zerocopy-derive v0.8.55
+   Compiling profiling-procmacros v1.0.18
+   Compiling arg_enum_proc_macro v0.3.4
+   Compiling aligned v0.4.3
+   Compiling errno v0.3.14
+   Compiling nom v8.0.0
+   Compiling no_std_io2 v0.9.4
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling equator v0.4.2
+   Compiling anstyle v1.0.14
+   Compiling anstyle-query v1.1.5
+   Compiling colorchoice v1.0.5
+   Compiling quick-error v2.0.1
+   Compiling zmij v1.0.23
+   Compiling y4m v0.8.0
+   Compiling rustversion v1.0.23
+   Compiling pastey v0.1.1
+   Compiling anstream v1.0.0
+   Compiling bitstream-io v4.10.0
+   Compiling profiling v1.0.18
+   Compiling aligned-vec v0.6.4
+   Compiling v_frame v0.3.9
+   Compiling maybe-rayon v0.1.1
+   Compiling archmage-macros v0.9.28
+   Compiling flate2 v1.1.9
+   Compiling num-complex v0.4.6
+   Compiling av1-grain v0.2.5
+   Compiling simd_helpers v0.1.0
+   Compiling itertools v0.14.0
+   Compiling wide v1.5.0
+   Compiling objc2-core-foundation v0.3.2
+   Compiling noop_proc_macro v0.3.0
+   Compiling clap_lex v1.1.0
+   Compiling byte-slice-cast v1.2.3
+   Compiling weezl v0.1.12
+   Compiling new_debug_unreachable v1.0.6
+   Compiling getrandom v0.4.3
+   Compiling zune-core v0.5.1
+   Compiling rand_core v0.10.1
+   Compiling serde v1.0.229
+   Compiling yuvxyb-math v0.1.1
+   Compiling pulp-wasm-simd-flag v0.1.1
+   Compiling safe_unaligned_simd v0.2.5
+   Compiling heck v0.5.0
+   Compiling reborrow v0.5.5
+   Compiling bytes v1.12.1
+   Compiling strsim v0.11.1
+   Compiling serde_json v1.0.151
+   Compiling imgref v1.12.2
+   Compiling archmage v0.9.28
+   Compiling loop9 v0.1.5
+   Compiling clap_builder v4.6.2
+   Compiling av-data v0.4.4
+   Compiling clap_derive v4.6.4
+   Compiling half v2.7.1
+   Compiling fast-ssim2 v0.8.2 (/Users/lilith/work/zen/fast-ssim2/fast-ssim2)
+   Compiling zune-jpeg v0.5.15
+   Compiling objc2-io-kit v0.3.2
+   Compiling v_frame v0.5.2
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling serde_derive v1.0.229
+   Compiling avif-serialize v0.8.9
+   Compiling fdeflate v0.3.7
+   Compiling zune-inflate v0.2.54
+   Compiling smallvec v1.15.2
+   Compiling color_quant v1.1.0
+   Compiling pxfm v0.1.30
+   Compiling fax v0.2.7
+   Compiling rgb v0.8.53
+   Compiling bit_field v0.10.3
+   Compiling enough v0.4.4
+   Compiling itoa v1.0.18
+   Compiling const-oid v0.10.2
+   Compiling byteorder-lite v0.1.0
+   Compiling lebe v0.5.3
+   Compiling core-foundation-sys v0.8.7
+   Compiling image-webp v0.2.4
+   Compiling digest v0.11.3
+   Compiling iana-time-zone v0.1.65
+   Compiling tiff v0.11.3
+   Compiling moxcms v0.8.1
+   Compiling gif v0.14.2
+   Compiling png v0.18.1
+   Compiling magetypes v0.9.28
+   Compiling exr v1.74.2
+   Compiling clap v4.6.4
+   Compiling yuvxyb v0.5.0
+   Compiling ravif v0.13.0
+   Compiling sysinfo v0.36.1
+   Compiling chacha20 v0.10.1
+   Compiling terminal_size v0.4.4
+   Compiling fs4 v1.1.0
+   Compiling cpufeatures v0.3.0
+   Compiling qoi v0.4.1
+   Compiling sha2 v0.11.0
+   Compiling zenbench v0.1.9
+   Compiling rand v0.10.2
+   Compiling chrono v0.4.45
+   Compiling image v0.25.10
+   Compiling almost-enough v0.4.4
+   Compiling which v8.0.5
+    Finished `bench` profile [optimized] target(s) in 22.08s
+     Running benches/tier_isolation.rs (/Users/lilith/work/zen/fast-ssim2/target/release/deps/tier_isolation-19c4609a40b87267)
+[tier_isolation] comparing neon vs forced scalar
+
+  ssimulacra2/320x240  0 rounds ⚠ only 0 rounds
+             mean ±mad ms  95% CI vs base
+  ├─ neon     2.7 ±0.0ms  [2.6–2.9]ms  
+  ╰─ scalar   4.8 ±0.0ms               
+
+  neon    ████████████████████████████████████ 2.74ms
+  scalar  ███████████████████████████████████████████████████████████████ 4.75ms
+
+  ssimulacra2/1920x1080  0 rounds ⚠ only 0 rounds
+              mean ±mad ms  95% CI vs base 
+  ├─ neon      72.1 ±0.2ms  [72.1–72.2]ms  
+  ╰─ scalar   129.8 ±0.4ms                 
+
+  neon    ██████████████████████████████████ 72.14ms
+  scalar  █████████████████████████████████████████████████████████████ 129.76ms
+
+  ssimulacra2/3840x2160  0 rounds ⚠ only 0 rounds
+              mean ±mad ms  95% CI vs base   
+  ├─ neon     286.2 ±0.4ms  [286.1–286.4]ms  
+  ╰─ scalar   519.7 ±0.7ms                   
+
+  neon    ██████████████████████████████████ 286.22ms
+  scalar  █████████████████████████████████████████████████████████████ 519.68ms
+[zenbench] calibration: int=0.30ns/iter mem_bw=105.6GiB/s mem_lat=7.4ns
+[zenbench] timer resolution: 41ns, loop overhead: 0.25ns/iter, TSC: 1.000 ticks/ns (invariant)
+[zenbench] results → /var/folders/sc/m9jbk0qj0jz4w09h7gg8v3p80000gn/T/zenbench/zenbench-1785243055-249f.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1785243055-249f
+  git: 585006cdf52890ebaebf8d86d1555844e46cd5d5
+═══════════════════════════════════════════════════════════════
+
+  total: 0.0s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json

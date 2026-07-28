@@ -1,0 +1,20 @@
+# fast-ssim2 NEON vs forced-scalar — first tier-isolated measurement
+date:    2026-07-28
+host:    Apple M4 Pro (12 core), macOS, aarch64
+command: cargo bench --bench tier_isolation
+build:   release, NO -C target-cpu=native
+
+## Result
+
+| size       | NEON     | scalar   | speedup |
+|------------|----------|----------|---------|
+| 320x240    |   2.74ms |   4.75ms |  1.73x  |
+| 1920x1080  |  72.14ms | 129.76ms |  1.80x  |
+| 3840x2160  | 286.22ms | 519.68ms |  1.82x  |
+
+No regression. But note the comparison against the sibling perceptual metric:
+butteraugli measures 3.4-3.7x NEON on the same host
+(butteraugli/benchmarks/neon_tier_isolation_2026-07-28.meta), roughly double.
+Both are multi-scale XYB + blur pipelines, so a 2x difference in SIMD payoff
+suggests parts of the SSIMULACRA2 pipeline are still scalar. That is a lead,
+not a conclusion — attributing it needs a profile.
