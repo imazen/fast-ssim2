@@ -83,3 +83,7 @@ uninlined_format_args = "allow"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("avx512"))'] }
+
+[[bench]]
+name = "kernel_tiers"
+harness = false

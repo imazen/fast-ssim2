@@ -1,0 +1,32 @@
+Host:    Apple Silicon (aarch64), darwin 25.5.0
+Command: cargo bench --bench kernel_tiers   (no -C target-cpu=native)
+Harness: fast-ssim2/benches/kernel_tiers.rs
+Method:  archmage NeonToken::dangerously_disable_token_process_wide toggles the
+         tier between arms in one process, so both arms run on identical data
+         with identical cache state.
+
+WHY THIS EXISTS
+  fast-ssim2 had only end-to-end measurement (1.7-1.8x on aarch64). An
+  end-to-end number cannot reveal a single kernel that is SLOWER than its own
+  scalar fallback -- the faster kernels average it away. That exact failure
+  mode was found and fixed in garb, zensim, zentone, zenpng and zenresize
+  during the same 2026-07-28 aarch64 sweep, so fast-ssim2 was checked the same
+  way rather than assumed healthy.
+
+RESULT: no losers. Every compute-bound kernel wins 1.76x-2.68x.
+
+  image_multiply's 0.99x is NOT a gap. At 1920x1080 it touches
+  3 planes x 3 arrays x 4 B x 2.07 Mpx = 74.6 MB in 577 us = ~129 GB/s,
+  at/above this host's measured memory bandwidth (zenbench calibration
+  reported 117.8 GiB/s). Both arms are pinned at the bandwidth ceiling, so
+  there is no arithmetic left for SIMD to remove. The crate's own
+  hand-written scalar reference lands at the same 569-576 us, confirming it.
+
+FUSION LEVER CONSIDERED AND REJECTED (measured, not assumed)
+  lib.rs:621-628 (and strip.rs:550/1067) call image_multiply three times on
+  the same two inputs (img1*img1, img2*img2, img1*img2), each followed by a
+  blur. Fusing the three into one pass would cut this stage's memory traffic
+  from ~7 to ~5 plane-touches (~1.4x). But the stage is ~1.7 ms of a >33 ms
+  pipeline (5 blurs at 6.2 ms each dominate), so the ceiling is ~1.5% -- and
+  it costs three live output buffers instead of one reused `mul` (+50 MB at
+  1080p). Bad trade; not shipped.

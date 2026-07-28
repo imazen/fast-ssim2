@@ -1,0 +1,12 @@
+# fast-ssim2 per-kernel NEON-vs-forced-scalar, aarch64 (Apple Silicon)
+# commit: see .meta	harness: benches/kernel_tiers.rs (zenbench)
+# NEON is BASELINE on aarch64, so the "scalar" arm is the magetypes scalar
+# tier WITH LLVM autovectorization. A ratio near 1.00 therefore does NOT
+# indicate a missing kernel -- it means both arms compiled to the same work.
+kernel	size	neon_us	scalar_us	ratio	bound
+image_multiply	1920x1080	577.9	572.2	0.99	memory-bandwidth
+ssim_map	512x512	199.2	403.1	2.02	compute
+edge_diff_map	512x512	343.9	850.7	2.47	compute
+linear_rgb_to_xyb	512x512	447.0	1197.8	2.68	compute
+blur	512x512	728.3	1330.1	1.83	compute
+blur	1920x1080	6200	10900	1.76	compute

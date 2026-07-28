@@ -755,6 +755,66 @@ pub(crate) fn image_multiply(
     }
 }
 
+/// Dev-only per-kernel access for `benches/kernel_tiers.rs`.
+///
+/// NOT public API, NOT semver-covered. Exists because this crate was only ever
+/// measured end-to-end (1.7-1.8x on aarch64), and an end-to-end number cannot
+/// reveal a single kernel that is SLOWER than its own scalar fallback — the
+/// faster kernels hide it. That failure mode was found in garb, zensim,
+/// zentone, zenpng and zenresize during the 2026-07-28 aarch64 sweep.
+#[doc(hidden)]
+pub mod __bench_kernels {
+    // Thin forwarders: the kernels are pub(crate) and re-exporting them
+    // directly would widen their visibility.
+    pub fn image_multiply_simd(
+        a: &[Vec<f32>; 3],
+        b: &[Vec<f32>; 3],
+        o: &mut [Vec<f32>; 3],
+    ) {
+        crate::simd_ops::image_multiply_simd(a, b, o)
+    }
+    pub fn image_multiply_scalar(
+        a: &[Vec<f32>; 3],
+        b: &[Vec<f32>; 3],
+        o: &mut [Vec<f32>; 3],
+    ) {
+        crate::image_multiply_scalar(a, b, o)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ssim_map_simd(
+        scales_n: usize,
+        scale_idx: usize,
+        w: usize,
+        h: usize,
+        m1: &[Vec<f32>; 3],
+        m2: &[Vec<f32>; 3],
+        s11: &[Vec<f32>; 3],
+        s22: &[Vec<f32>; 3],
+        s12: &[Vec<f32>; 3],
+    ) -> [f64; 6] {
+        crate::simd_ops::ssim_map_simd(scales_n, scale_idx, w, h, m1, m2, s11, s22, s12)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn edge_diff_map_simd(
+        scales_n: usize,
+        scale_idx: usize,
+        w: usize,
+        h: usize,
+        i1: &[Vec<f32>; 3],
+        mu1: &[Vec<f32>; 3],
+        i2: &[Vec<f32>; 3],
+        mu2: &[Vec<f32>; 3],
+    ) -> [f64; 12] {
+        crate::simd_ops::edge_diff_map_simd(scales_n, scale_idx, w, h, i1, mu1, i2, mu2)
+    }
+
+    pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
+        crate::xyb_simd::linear_rgb_to_xyb_simd(input)
+    }
+}
+
 fn image_multiply_scalar(img1: &[Vec<f32>; 3], img2: &[Vec<f32>; 3], out: &mut [Vec<f32>; 3]) {
     for ((plane1, plane2), out_plane) in img1.iter().zip(img2.iter()).zip(out.iter_mut()) {
         for ((&p1, &p2), o) in plane1.iter().zip(plane2.iter()).zip(out_plane.iter_mut()) {
