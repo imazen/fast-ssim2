@@ -21,7 +21,6 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
-#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Compare two still images. Resolutions must be identical.
     Image {
