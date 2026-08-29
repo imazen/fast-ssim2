@@ -25,18 +25,18 @@ exclude = [
 ]
 
 [dependencies]
-anyhow = "1.0.101"
-av-metrics-decoders = { version = "0.3.1", features = [
+anyhow = "1.0.104"
+av-metrics-decoders = { version = "0.3.2", features = [
     "vapoursynth",
     "y4m",
 ], optional = true }
-clap = { version = "4.6", features = ["derive"] }
+clap = { version = "4.6.6", features = ["derive"] }
 crossterm = "0.29.0"
-indicatif = "0.18.3"
-num-traits = { version = "0.2.15", optional = true }
+indicatif = "0.18.6"
+num-traits = { version = "0.2.19", optional = true }
 fast-ssim2 = { path = "../fast-ssim2", version = "0.8", default-features = false }
 yuvxyb = "0.5.0"
-statrs = { version = "0.18.0", optional = true }
+statrs = { version = "0.19.1", optional = true }
 
 [dependencies.image]
 version = "0.25.10"
@@ -44,7 +44,7 @@ default-features = false
 features = ["png", "jpeg", "webp", "hdr", "exr"]
 
 [dependencies.plotters]
-version = "0.3.4"
+version = "0.3.7"
 default-features = false
 features = ["bitmap_backend", "area_series", "ttf"]
 optional = true
