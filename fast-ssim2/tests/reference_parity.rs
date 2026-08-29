@@ -369,7 +369,9 @@ fn test_reference_parity() {
 
         // Convert to RGB format
         let source_rgb: Vec<[f32; 3]> = source_data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| {
                 [
                     c[0] as f32 / 255.0,
@@ -380,7 +382,9 @@ fn test_reference_parity() {
             .collect();
 
         let distorted_rgb: Vec<[f32; 3]> = distorted_data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| {
                 [
                     c[0] as f32 / 255.0,
@@ -478,7 +482,9 @@ fn test_reference_parity() {
         .map(|case| {
             let (source_data, distorted_data) = generate_test_image(case);
             let source_rgb: Vec<[f32; 3]> = source_data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|c| {
                     [
                         c[0] as f32 / 255.0,
@@ -488,7 +494,9 @@ fn test_reference_parity() {
                 })
                 .collect();
             let distorted_rgb: Vec<[f32; 3]> = distorted_data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .map(|c| {
                     [
                         c[0] as f32 / 255.0,

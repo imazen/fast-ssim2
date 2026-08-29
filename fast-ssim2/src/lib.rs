@@ -766,18 +766,10 @@ pub(crate) fn image_multiply(
 pub mod __bench_kernels {
     // Thin forwarders: the kernels are pub(crate) and re-exporting them
     // directly would widen their visibility.
-    pub fn image_multiply_simd(
-        a: &[Vec<f32>; 3],
-        b: &[Vec<f32>; 3],
-        o: &mut [Vec<f32>; 3],
-    ) {
+    pub fn image_multiply_simd(a: &[Vec<f32>; 3], b: &[Vec<f32>; 3], o: &mut [Vec<f32>; 3]) {
         crate::simd_ops::image_multiply_simd(a, b, o)
     }
-    pub fn image_multiply_scalar(
-        a: &[Vec<f32>; 3],
-        b: &[Vec<f32>; 3],
-        o: &mut [Vec<f32>; 3],
-    ) {
+    pub fn image_multiply_scalar(a: &[Vec<f32>; 3], b: &[Vec<f32>; 3], o: &mut [Vec<f32>; 3]) {
         crate::image_multiply_scalar(a, b, o)
     }
 
@@ -1120,7 +1112,9 @@ mod tests {
         .unwrap();
         let source_data = source
             .to_rgb32f()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect::<Vec<_>>();
         let source_data = Xyb::try_from(
@@ -1136,7 +1130,9 @@ mod tests {
         .unwrap();
         let distorted_data = distorted
             .to_rgb32f()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect::<Vec<_>>();
         let distorted_data = Xyb::try_from(
@@ -1171,7 +1167,9 @@ mod tests {
 
         let source_data: Vec<[f32; 3]> = source
             .to_rgb32f()
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|chunk| [chunk[0], chunk[1], chunk[2]])
             .collect();
 

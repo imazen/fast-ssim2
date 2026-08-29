@@ -20,7 +20,9 @@ fn load_exr_nits(path: &str) -> Result<LinearRgbImage, String> {
     let (w, h) = (img.width() as usize, img.height() as usize);
     let data: Vec<[f32; 3]> = img
         .into_raw()
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
     Ok(LinearRgbImage::new(data, w, h))
