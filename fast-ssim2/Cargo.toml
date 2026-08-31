@@ -9,6 +9,15 @@ documentation = "https://docs.rs/fast-ssim2"
 readme = "../README.crates.md"
 exclude = [
     "test_data",
+    # Dev-only parity harness: the generators in dev/ are include!d by the
+    # examples below, and all four need the C++ ssimulacra2 binary and a
+    # local image corpus to do anything. Excluded together so the published
+    # crate has no example that cannot build.
+    "dev/",
+    "examples/capture_cpp_reference.rs",
+    "examples/parity_report.rs",
+    "examples/photo_parity.rs",
+    "examples/flat_field_probe.rs",
     "CLAUDE.md",
     "CONTEXT-HANDOFF.md",
     "FEEDBACK.md",

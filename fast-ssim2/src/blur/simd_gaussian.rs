@@ -228,7 +228,21 @@ fn horizontal_pass_simd_inner(
             //   out_k  = sum * MUL_IN_k                 (rounded product)
             //   out_k  = -prev2_k + out_k               (the MUL_PREV2 step)
             //   out_k  = MUL_PREV_k * prev_k + out_k    (the MUL_PREV step)
-            // Fusing the first two into one mul_add would change rounding.
+            // Merging the first two into one mul_add would change rounding.
+            //
+            // The MUL_PREV step stays a **fused** multiply-add because the C++
+            // reference fuses it (`FastGaussian1D` -> highway `MulAdd`), and
+            // matching the reference here is worth more than the one place
+            // fast-ssim2 cannot currently be bit-identical across targets:
+            // `magetypes` lowers `mul_add` to a real FMA on NEON/AVX2/AVX-512
+            // but to `a * b + c` on wasm128 (no FMA in the wasm SIMD MVP) and
+            // on its scalar polyfill. Unfusing this recurrence was measured and
+            // rejected — it makes every target agree with every other, at the
+            // cost of agreeing with the reference 2.8x less well (mean |delta|
+            // vs the C++ binary over 576 real photographic pairs: 0.024 fused,
+            // 0.067 unfused, and the unfused form acquires a systematic -0.058
+            // bias). See `benchmarks/cpp_parity_2026-08-31.md`; the fix belongs
+            // in magetypes, whose own `f32x1::mul_add` already uses `fmaf`.
             let p1 = sum * mul_in_1;
             let p3 = sum * mul_in_3;
             let p5 = sum * mul_in_5;
@@ -314,6 +328,9 @@ fn horizontal_row(input: &[f32], output: &mut [f32], width: usize) {
         let mut out_3 = sum * consts::MUL_IN_3;
         let mut out_5 = sum * consts::MUL_IN_5;
 
+        // MUL_PREV2_k is exactly -1, so this product is exact and fusing it
+        // changes nothing; the MUL_PREV step below is unfused to match the
+        // vectorised body (see the note there on `magetypes` and wasm128).
         out_1 = consts::MUL_PREV2_1.mul_add(prev2_1, out_1);
         out_3 = consts::MUL_PREV2_3.mul_add(prev2_3, out_3);
         out_5 = consts::MUL_PREV2_5.mul_add(prev2_5, out_5);
@@ -438,6 +455,9 @@ fn vertical_pass_inner(
             let p23 = f32x8::from_array(token, prev2_3[col..][..LANES].try_into().unwrap());
             let p25 = f32x8::from_array(token, prev2_5[col..][..LANES].try_into().unwrap());
 
+            // Fused, matching the C++ reference's `MulAdd`/`NegMulSub` pair.
+            // See the horizontal pass for why this is not unfused for the sake
+            // of the non-FMA `magetypes` arms.
             let out1 = p1.mul_add(mul_prev_1, p21);
             let out3 = p3.mul_add(mul_prev_3, p23);
             let out5 = p5.mul_add(mul_prev_5, p25);
@@ -506,6 +526,7 @@ fn vertical_pass_scalar_columns(
 
             let sum = top_val + bottom_val;
 
+            // Fused, matching the vectorised body above.
             let out1 = prev_1.mul_add(consts::VERT_MUL_PREV_1, prev2_1);
             let out3 = prev_3.mul_add(consts::VERT_MUL_PREV_3, prev2_3);
             let out5 = prev_5.mul_add(consts::VERT_MUL_PREV_5, prev2_5);

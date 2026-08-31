@@ -63,6 +63,8 @@ impl RecursiveGaussian {
             let mut out_3 = sum * consts::MUL_IN_3;
             let mut out_5 = sum * consts::MUL_IN_5;
 
+            // MUL_PREV2_k is exactly -1, so this product is exact and fusing
+            // it changes nothing either way.
             out_1 = consts::MUL_PREV2_1.mul_add(prev2_1, out_1);
             out_3 = consts::MUL_PREV2_3.mul_add(prev2_3, out_3);
             out_5 = consts::MUL_PREV2_5.mul_add(prev2_5, out_5);

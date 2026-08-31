@@ -36,6 +36,33 @@ fn cbrtf_initial_f32(x: f32) -> f32 {
     f32::from_bits((ui & 0x8000_0000) | hx)
 }
 
+/// Two f32 Halley steps from [`cbrtf_initial_f32`] — the cube root the
+/// vectorised body evaluates, written out so the scalar arm and the
+/// short-plane remainder can compute the *same* value instead of a
+/// differently-rounded one.
+///
+/// Accuracy over the domain the opsin stage produces (`[kB0, 1.004]`,
+/// exhaustively swept over all 67.6M f32 values): max 1.92e-7 = 1.75 ulp.
+/// A third and fourth Halley step do not improve on that (1.58 ulp) — the
+/// iteration is rounding-limited, not convergence-limited — so raising the
+/// accuracy would mean carrying the iteration in f64, which is what the
+/// old scalar path did and what made the two backends disagree.
+///
+/// For reference, jpegli's own `CubeRootAndAdd` (what the C++ SSIMULACRA2
+/// binary evaluates) measures 3.34 ulp on the same sweep, and documents
+/// itself as "6 ulp max error".
+#[inline(always)]
+fn cbrtf_halley_f32(x: f32) -> f32 {
+    let mut t = cbrtf_initial_f32(x);
+    // Written to match the vectorised body operation-for-operation:
+    // `t *= fma(x, 2, r) / (x + fma(r, 2, 0))`.
+    for _ in 0..2 {
+        let r = t * t * t;
+        t *= x.mul_add(2.0, r) / (x + r.mul_add(2.0, 0.0));
+    }
+    t
+}
+
 /// Fast scalar cube root using bit manipulation + Newton-Raphson in f64.
 #[inline]
 fn cbrtf_fast(x: f32) -> f32 {
@@ -61,35 +88,26 @@ fn convert_pixel_scalar(pix: &mut [f32; 3], absorbance_bias: f32) {
     let g = pix[1];
     let b = pix[2];
 
-    let mut mixed0 = OPSIN_ABSORBANCE_MATRIX[0].mul_add(
-        r,
-        OPSIN_ABSORBANCE_MATRIX[1].mul_add(
-            g,
-            OPSIN_ABSORBANCE_MATRIX[2].mul_add(b, OPSIN_ABSORBANCE_BIAS),
-        ),
-    );
-    let mut mixed1 = OPSIN_ABSORBANCE_MATRIX[3].mul_add(
-        r,
-        OPSIN_ABSORBANCE_MATRIX[4].mul_add(
-            g,
-            OPSIN_ABSORBANCE_MATRIX[5].mul_add(b, OPSIN_ABSORBANCE_BIAS),
-        ),
-    );
-    let mut mixed2 = OPSIN_ABSORBANCE_MATRIX[6].mul_add(
-        r,
-        OPSIN_ABSORBANCE_MATRIX[7].mul_add(
-            g,
-            OPSIN_ABSORBANCE_MATRIX[8].mul_add(b, OPSIN_ABSORBANCE_BIAS),
-        ),
-    );
+    // Unfused, and in the same association order as the vectorised body.
+    // See `linear_rgb_to_xyb_inner` for why this must not be an FMA chain.
+    let m = &OPSIN_ABSORBANCE_MATRIX;
+    let mut mixed0 = m[0] * r + (m[1] * g + (m[2] * b + OPSIN_ABSORBANCE_BIAS));
+    let mut mixed1 = m[3] * r + (m[4] * g + (m[5] * b + OPSIN_ABSORBANCE_BIAS));
+    let mut mixed2 = m[6] * r + (m[7] * g + (m[8] * b + OPSIN_ABSORBANCE_BIAS));
 
     mixed0 = mixed0.max(0.0);
     mixed1 = mixed1.max(0.0);
     mixed2 = mixed2.max(0.0);
 
-    mixed0 = cbrtf_fast(mixed0) + absorbance_bias;
-    mixed1 = cbrtf_fast(mixed1) + absorbance_bias;
-    mixed2 = cbrtf_fast(mixed2) + absorbance_bias;
+    // Must be the SAME cube root the vectorised body uses. This function is
+    // both the scalar arm of the dispatch and the `len % 8` remainder of the
+    // vector arm; when it used the f64 `cbrtf_fast` instead, a plane's last
+    // seven pixels were converted with different math than the rest of it,
+    // and `SimdImpl::Scalar` computed a different metric than `SimdImpl::Simd`
+    // rather than the same metric more slowly.
+    mixed0 = cbrtf_halley_f32(mixed0) + absorbance_bias;
+    mixed1 = cbrtf_halley_f32(mixed1) + absorbance_bias;
+    mixed2 = cbrtf_halley_f32(mixed2) + absorbance_bias;
 
     pix[0] = 0.5 * (mixed0 - mixed1);
     pix[1] = 0.5 * (mixed0 + mixed1);
@@ -140,10 +158,23 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
         let g = f32x8::from_array(token, g_arr);
         let b = f32x8::from_array(token, b_arr);
 
-        // Matrix multiply with FMA
-        let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
-        let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
-        let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias)));
+        // Opsin matrix, deliberately NOT an FMA chain.
+        //
+        // `magetypes` implements `mul_add` for its 8-lane *scalar polyfill* as
+        // `a * b + c` — two roundings — while the NEON, AVX2 and AVX-512 arms
+        // emit a real fused multiply-add. Every fused expression in a
+        // `#[magetypes]` body therefore computes a different value on a target
+        // without SIMD (i686 below SSE4.2, wasm without simd128) than on one
+        // with it. Measured here: 1.79e-7 in the XYB output, which SSIMULACRA2
+        // amplifies to 0.085 on the 0..100 scale (`benchmarks/cpp_parity_2026-08-31.md`).
+        //
+        // Written unfused, every arm agrees bit-for-bit. The cost against the
+        // C++ reference (which does use `MulAdd` here) is at most 1 ulp per
+        // term — an order of magnitude below the 1.75 ulp the cube root that
+        // consumes these values already carries.
+        let mixed0 = m00 * r + (m01 * g + (m02 * b + bias));
+        let mixed1 = m10 * r + (m11 * g + (m12 * b + bias));
+        let mixed2 = m20 * r + (m21 * g + (m22 * b + bias));
 
         // Clamp to zero
         let mixed0 = mixed0.max(zero);
@@ -209,6 +240,22 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
 #[inline]
 pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
     incant!(linear_rgb_to_xyb_inner(input), [v3, neon, wasm128, scalar])
+}
+
+/// Converts linear RGB to XYB in place with no SIMD at all.
+///
+/// Bit-identical to [`linear_rgb_to_xyb_simd`]: the same matrix, the same
+/// operation order, and the same [`cbrtf_halley_f32`] cube root, evaluated one
+/// pixel at a time. `SimdImpl::Scalar` selects this so that the two backends
+/// differ only in how the arithmetic is scheduled, never in what arithmetic is
+/// performed. It previously called `yuvxyb`'s conversion, whose f64 cube root
+/// left the two backends computing measurably different scores (up to 0.88 on
+/// the 0..100 scale — see `benchmarks/cpp_parity_2026-08-31.md`).
+pub(crate) fn linear_rgb_to_xyb_scalar(input: &mut [[f32; 3]]) {
+    let absorbance_bias = -cbrtf_fast(OPSIN_ABSORBANCE_BIAS);
+    for pix in input.iter_mut() {
+        convert_pixel_scalar(pix, absorbance_bias);
+    }
 }
 
 #[cfg(test)]

@@ -168,6 +168,8 @@
 #![forbid(unsafe_code)]
 
 mod blur;
+#[cfg(test)]
+mod cpp_parity_diag;
 mod input;
 mod precompute;
 // Reference data for parity testing (hidden from docs but accessible for tests)
@@ -691,18 +693,23 @@ pub fn compute_ssimulacra2_pu_nits(
     )
 }
 
-/// Convert LinearRgb to Xyb using the specified implementation
+/// Convert LinearRgb to Xyb using the specified implementation.
+///
+/// Both arms run the same arithmetic; `Scalar` just refuses to vectorise it.
+/// Before 0.8.3 the `Scalar` arm delegated to `yuvxyb`, whose cube root is
+/// carried in f64 while ours is two f32 Halley steps. SSIMULACRA2 divides a
+/// blur residual of ~5e-7 by `kC2 = 9e-4`, so that 1.5e-7 difference in the
+/// opsin nonlinearity was amplified into score differences of up to 0.88
+/// between the two backends on real photographs.
 fn linear_rgb_to_xyb(linear_rgb: LinearRgb, impl_type: SimdImpl) -> Xyb {
+    let width = linear_rgb.width(); // NonZeroUsize
+    let height = linear_rgb.height(); // NonZeroUsize
+    let mut data = linear_rgb.into_data();
     match impl_type {
-        SimdImpl::Scalar => Xyb::from(linear_rgb),
-        SimdImpl::Simd => {
-            let width = linear_rgb.width(); // NonZeroUsize
-            let height = linear_rgb.height(); // NonZeroUsize
-            let mut data = linear_rgb.into_data();
-            xyb_simd::linear_rgb_to_xyb_simd(&mut data);
-            Xyb::new(data, width, height).expect("XYB construction should not fail")
-        }
+        SimdImpl::Scalar => xyb_simd::linear_rgb_to_xyb_scalar(&mut data),
+        SimdImpl::Simd => xyb_simd::linear_rgb_to_xyb_simd(&mut data),
     }
+    Xyb::new(data, width, height).expect("XYB construction should not fail")
 }
 
 /// Convenience wrapper hardcoding the SIMD backend; used by the
@@ -953,7 +960,9 @@ fn ssim_map_scalar(
                 let mu12 = mu1 * mu2;
                 let mu_diff = mu1 - mu2;
 
-                let num_m = mu_diff.mul_add(-mu_diff, 1.0f32);
+                // Unfused, matching the C++ reference and `simd_ops.rs`;
+                // see the note there on `magetypes`' unfused scalar polyfill.
+                let num_m = 1.0f32 - mu_diff * mu_diff;
                 let num_s = 2.0f32.mul_add(row_s12[x] - mu12, C2);
                 let denom_s = (row_s11[x] - mu11) + (row_s22[x] - mu22) + C2;
                 let d = (1.0f32 - (num_m * num_s) / denom_s).max(0.0f32);
@@ -1018,9 +1027,14 @@ fn edge_diff_map_scalar(
                 .zip(mu1[c].chunks_exact(width).zip(mu2[c].chunks_exact(width))),
         ) {
             for x in 0..width {
-                let d1: f64 = (1.0 + f64::from((row2[x] - rowm2[x]).abs()))
-                    / (1.0 + f64::from((row1[x] - rowm1[x]).abs()))
-                    - 1.0;
+                // (1 + diff2) / (1 + diff1) - 1  ==  (diff2 - diff1) / (1 + diff1).
+                // The C++ reference writes the left form and evaluates it in
+                // double; this is the same value without the cancellation, so
+                // the SIMD kernel (which cannot afford the cancellation in f32
+                // — see simd_ops.rs) computes the same expression as this one.
+                let diff1 = f64::from((row1[x] - rowm1[x]).abs());
+                let diff2 = f64::from((row2[x] - rowm2[x]).abs());
+                let d1: f64 = (diff2 - diff1) / (1.0 + diff1);
 
                 let artifact = d1.max(0.0);
                 sum1[0] += artifact;

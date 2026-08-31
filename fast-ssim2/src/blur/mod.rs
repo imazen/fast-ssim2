@@ -8,8 +8,16 @@ use simd_gaussian::SimdGaussian;
 /// Structure handling image blur with selectable implementation.
 ///
 /// Supports runtime switching between:
-/// - Scalar: f64 IIR baseline (most accurate)
-/// - SIMD: archmage cross-platform SIMD (AVX2, AVX-512, NEON, WASM128)
+/// - Scalar: the recursive-Gaussian IIR, one sample at a time
+/// - SIMD: the same IIR via archmage (AVX2, AVX-512, NEON, WASM128), 8 rows
+///   or 8 columns per lane group
+///
+/// Both are f32 and evaluate the same operations in the same order, so on any
+/// target whose `magetypes` backend fuses `mul_add` they agree bit-for-bit.
+/// (The doc here previously claimed the scalar path was "f64 IIR baseline
+/// (most accurate)"; it has always been f32.) The one exception is targets
+/// whose backend does *not* fuse — wasm128 and the scalar polyfill — where the
+/// `MUL_PREV` step differs by a rounding; see `benchmarks/cpp_parity_2026-08-31.md`.
 pub struct Blur {
     width: usize,
     height: usize,

@@ -80,7 +80,15 @@ fn ssim_map_inner(
             let mu12 = mu1 * mu2;
             let mu_diff = mu1 - mu2;
 
-            let num_m = mu_diff.mul_add(-mu_diff, one_simd);
+            // NOT `mu_diff.mul_add(-mu_diff, one)`. `magetypes`' 8-lane scalar
+            // polyfill implements `mul_add` as `a * b + c` (two roundings)
+            // while its NEON/AVX2/AVX-512 arms emit a real FMA, so any fused
+            // expression here scores differently on a target without SIMD —
+            // measured at 0.085 on a 32x32 image before this was made explicit.
+            // The C++ reference writes this term unfused as well.
+            let num_m = one_simd - mu_diff * mu_diff;
+            // `2 * x` is exact in binary floating point, so this one rounds
+            // identically fused or not; kept as an FMA for the free op.
             let num_s = two_simd.mul_add(s12_vals - mu12, c2_simd);
             let denom_s = (s11_vals - mu11) + (s22_vals - mu22) + c2_simd;
 
@@ -98,7 +106,8 @@ fn ssim_map_inner(
             let mu2 = m2c[x];
             let mu_diff = mu1 - mu2;
 
-            let num_m = mu_diff.mul_add(-mu_diff, 1.0f32);
+            // Same unfused form as the vectorised body above.
+            let num_m = 1.0f32 - mu_diff * mu_diff;
             let num_s = 2.0f32.mul_add(s12c[x] - mu1 * mu2, C2);
             let denom_s = (s11c[x] - mu1 * mu1) + (s22c[x] - mu2 * mu2) + C2;
             let d = (1.0f32 - (num_m * num_s) / denom_s).max(0.0f32);
@@ -194,7 +203,18 @@ fn edge_diff_map_inner(
             let d2_temp = r2 - rm2;
             let diff2 = d2_temp.max(-d2_temp);
 
-            let d1 = (one_simd + diff2) / (one_simd + diff1) - one_simd;
+            // (1 + diff2) / (1 + diff1) - 1  ==  (diff2 - diff1) / (1 + diff1)
+            //
+            // Algebraically identical; numerically not. The reference form
+            // subtracts two nearby quantities *after* rounding them, so in f32
+            // the result carries an absolute error of ~1 ulp of 1.0 (6e-8) no
+            // matter how small the true value is — on smooth content, where
+            // both diffs are ~1e-7, that is 100% error, and `max(d1, 0)`
+            // rectifies it into a one-directional bias. The right-hand form has
+            // no cancellation: its error is ~1 ulp *relative*. The C++ reference
+            // computes the left form in f64, where the same cancellation costs
+            // only ~1e-16 absolute, which is why it can afford it and we cannot.
+            let d1 = (diff2 - diff1) / (one_simd + diff1);
 
             let artifact = d1.max(zero_simd);
             let detail_lost = (-d1).max(zero_simd);
@@ -210,17 +230,20 @@ fn edge_diff_map_inner(
             sum_detail4 += dl4.reduce_add() as f64;
         }
 
-        // Scalar remainder
+        // Scalar remainder — same expression as the vectorised body above, so
+        // a pixel's treatment does not depend on its index modulo LANES.
         for x in (chunks * LANES)..total {
-            let d1: f64 = (1.0 + f64::from((img2c[x] - mu2c[x]).abs()))
-                / (1.0 + f64::from((img1c[x] - mu1c[x]).abs()))
-                - 1.0;
+            let diff1 = (img1c[x] - mu1c[x]).abs();
+            let diff2 = (img2c[x] - mu2c[x]).abs();
+            let d1 = (diff2 - diff1) / (1.0f32 + diff1);
             let artifact = d1.max(0.0);
             let detail_lost = (-d1).max(0.0);
-            sum_artifact += artifact;
-            sum_artifact4 += artifact.powi(4);
-            sum_detail += detail_lost;
-            sum_detail4 += detail_lost.powi(4);
+            let a2 = artifact * artifact;
+            let dl2 = detail_lost * detail_lost;
+            sum_artifact += f64::from(artifact);
+            sum_artifact4 += f64::from(a2 * a2);
+            sum_detail += f64::from(detail_lost);
+            sum_detail4 += f64::from(dl2 * dl2);
         }
 
         plane_averages[c * 4] = one_per_pixels * sum_artifact;
