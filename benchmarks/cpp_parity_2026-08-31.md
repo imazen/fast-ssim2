@@ -227,9 +227,19 @@ measured over the same 576 pairs:
 | unfused | **-0.0580** | 0.0674 | 1.036 | 0 (bit-identical) |
 
 Unfusing makes every target agree with every other at the cost of agreeing with
-the reference 2.8x less well *and* acquiring a systematic -0.058 bias. It is a
-permanent accuracy sacrifice to work around a fixable upstream gap, so it was
-rejected. Perf, for the record: unfusing cost +2.9% / +3.2% / +1.8% on
+the reference 2.8x less well *and* acquiring a systematic -0.058 bias, so it was
+rejected.
+
+**Correction (same day, after review):** this section originally called the
+magetypes behaviour "a fixable upstream gap." It is not fixable upstream and it
+is not a gap. `magetypes/src/simd/impls/wasm128.rs:112` emits
+`f32x4_add(f32x4_mul(a,b), c)` because **WASM SIMD128 has no FMA instruction**;
+`scalar.rs:125` calls `nostd_math::fmaf`, documented at its definition as a
+deliberate `a * b + c` fallback since there is no hardware FMA to use, and a
+correct software FMA would be slow. archmage documents the whole class in a
+table headed *"they are not bugs to fix"*, prescribing *"avoid near-zero
+cancellation"* — which is precisely the flat-field regime analysed above. The
+divergence is inherent to unfused targets, not pending an upstream fix. Perf, for the record: unfusing cost +2.9% / +3.2% / +1.8% on
 512/1024/2048 blur (`examples/benchmark_blur.rs`), i.e. it was not rejected on
 speed.
 

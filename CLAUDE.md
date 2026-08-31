@@ -28,15 +28,32 @@ different repo, read-only.**
 - **Fixed: the two `SimdImpl` backends were computing different metrics** (up to
   0.879 apart on real photos, hidden by a 0.5 tolerance and synthetic-only test
   images). Now 2.6e-7 apart. See CHANGELOG for the four defects.
-- **Known upstream gap: `magetypes` does not fuse `mul_add` on wasm128 or on its
-  scalar polyfill** (`impls/wasm128.rs`, `impls/scalar.rs`), while NEON/AVX2/
-  AVX-512 emit a real FMA — and its own `f32x1::mul_add` uses `fmaf`. Every
-  fusion-sensitive expression has been removed from our dispatched kernels
+- **The `magetypes` FMA difference is DOCUMENTED POLICY, not an upstream bug —
+  do not "fix" it.** An earlier version of this file called it a "known upstream
+  gap ... belongs in archmage." That was wrong, and acting on it would make
+  things worse. Verified in source:
+  - `magetypes/src/simd/impls/wasm128.rs:112` is `f32x4_add(f32x4_mul(a,b), c)`
+    because **WASM SIMD128 has no FMA instruction** — a spec limitation, not an
+    omission. (`relaxed_madd` exists in relaxed-simd but is *implementation-
+    defined* as to whether it fuses, so it would destroy bit-identity, not
+    provide it.)
+  - `magetypes/src/simd/scalar.rs:125` calls `nostd_math::fmaf`, which is
+    documented at its definition as *"non-fused fallback: `a * b + c` ... no
+    hardware FMA instruction to use."* A correct software FMA is possible but
+    **slow** — that is the tradeoff being made, deliberately.
+  - archmage's own `CLAUDE.md` carries a "Known Cross-Architecture Behavioral
+    Differences" table headed *"they are not bugs to fix"*, whose `mul_add` row
+    prescribes: *"Accept <=1 ULP difference; **avoid near-zero cancellation**."*
+    Our flat-field path is exactly the near-zero cancellation it warns about, so
+    fast-ssim2 walked into a documented hazard rather than hitting a defect.
+  Every fusion-sensitive expression has been removed from our dispatched kernels
   *except* the blur, which stays fused because the reference fuses it (unfusing
   was measured: it costs 2.8x worse C++ agreement plus a -0.058 bias). So
   fast-ssim2 is bit-identical on all FMA-capable targets and up to 0.497 apart
-  on wasm128 / no-SIMD builds until magetypes is fixed. **This is the one open
-  item; it belongs in archmage, not here.**
+  on wasm128 / no-SIMD builds. **That gap is inherent and the fix is not
+  upstream.** The only real options are: accept it (current choice), unfuse
+  everywhere and take 2.8x worse C++ agreement, or special-case the blur for
+  unfused targets — which needs a measurement, not a patch to archmage.
 - **Version question settled: 0.7.1 and 0.8.2 are equally faithful to C** (mean
   |delta| 0.0129 vs 0.0140 over 360 cells; 0.7.1 closer on 189/360 — a coin
   flip). They differ from each other by up to 0.143, so the workspace split
