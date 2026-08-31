@@ -9,6 +9,8 @@ _(none — both previously queued items shipped in 0.9.0.)_
 
 ## [0.9.0] - 2026-08-31
 
+`fast-ssim2-cli` goes to **0.6.1** in the same commit. Its own surface — the `image <source> <distorted>` command and the score it prints — is unchanged, so it takes a patch bump, not a leading-digit one; only its `fast-ssim2` requirement moved (`0.8` → `0.9.0`).
+
 ### Removed
 
 - **`compute_frame_ssimulacra2` and `compute_frame_ssimulacra2_with_config`** (deprecated since 0.8.0). Migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config`, which take `ToLinearRgb` inputs — including `Yuv`, which is new in this release (see below). No 0.8.x consumer in the zen workspace used them (68c22ee)
