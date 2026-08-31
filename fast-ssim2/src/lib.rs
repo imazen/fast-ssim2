@@ -263,12 +263,20 @@ pub enum Ssimulacra2Error {
     ///
     /// Returned by [`ToLinearRgb`] implementations that wrap a fallible
     /// `yuvxyb` conversion: a [`yuvxyb::Yuv`] frame whose
-    /// [`MatrixCoefficients`](yuvxyb::MatrixCoefficients) are `Reserved` or
-    /// `ICtCp` (no YUV→RGB matrix), or a [`yuvxyb::Rgb`] whose
-    /// [`TransferCharacteristic`](yuvxyb::TransferCharacteristic) or
-    /// [`ColorPrimaries`](yuvxyb::ColorPrimaries) are not implemented. This is
-    /// caller-supplied metadata off a decoded frame, so it is an error rather
-    /// than a panic.
+    /// [`MatrixCoefficients`](yuvxyb::MatrixCoefficients) have no YUV→RGB
+    /// matrix in `yuvxyb` (H.273 MC=3 `Reserved`, MC=12
+    /// `ChromaticityDerivedNonConstantLuminance`), or a [`yuvxyb::Yuv`] /
+    /// [`yuvxyb::Rgb`] whose
+    /// [`TransferCharacteristic`](yuvxyb::TransferCharacteristic) has no
+    /// `to_linear` (TC=0/3 `Reserved0`/`Reserved`, TC=12 `BT1361E`, TC=17
+    /// `ST428`), or whose
+    /// [`ColorPrimaries`](yuvxyb::ColorPrimaries) are not in its table. This
+    /// is caller-supplied metadata off a decoded frame, so it is an error
+    /// rather than a panic.
+    ///
+    /// `MatrixCoefficients::Unspecified` is *not* one of them — `Yuv::new`
+    /// rewrites it. Neither is `ICtCp`, which converts fine against BT.709 or
+    /// BT.2020 primaries despite reading like it should not.
     ///
     /// The variant carries no detail so that `yuvxyb`'s error type stays out
     /// of this crate's public API. Callers who need to distinguish the cases
