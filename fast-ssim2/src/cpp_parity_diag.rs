@@ -53,12 +53,20 @@ pub fn cpp_cube_root_and_add(x: f32, add: f32) -> f32 {
 
     for _ in 0..3 {
         let r2 = r * r;
-        // NegMulAdd(a, b, c) = c - a * b
-        r = K4_3.mul_add(r, -(xa_3 * (r2 * r2)));
+        // `NegMulAdd(xa_3, Mul(r2, r2), Mul(k4_3, r))`. Highway's
+        // `NegMulAdd(a, b, c)` is the *fused* `c - a * b`, so the product that
+        // escapes rounding is `xa_3 * r4`, and `k4_3 * r` rounds on its own
+        // first. Associating it the other way round (fusing `k4_3 * r` and
+        // rounding `xa_3 * r4`) is bit-identical on only 89.7% of the domain
+        // below and up to 3.6e-7 off on the rest, so the direction matters.
+        r = (-xa_3).mul_add(r2 * r2, K4_3 * r);
     }
     let mut r2 = r * r;
-    r = K1_3.mul_add(r.mul_add(1.0, -(xa * (r2 * r2))), r);
+    // `MulAdd(k1_3, NegMulAdd(xa, Mul(r2, r2), r), r)`.
+    r = K1_3.mul_add((-xa).mul_add(r2 * r2, r), r);
     r2 = r * r;
+    // The C++ fuses the additive constant into this last operation; our own
+    // paths round `cbrt(x)` first and add afterwards.
     r2.mul_add(x, add)
 }
 
