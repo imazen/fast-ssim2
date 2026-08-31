@@ -123,6 +123,23 @@ different repo, read-only.**
   MC=0/9/13/14/15. `MatrixCoefficients::Unspecified` is **not** one of them —
   `Yuv::new` rewrites it via `fix_unspecified_data`.
 
+## `ssimulacra2_320x240` is too noisy to draw conclusions from
+
+Full record: `benchmarks/ssim2_perf/2026-08-31_x86_0.9.0.md`. On r7900x,
+`cargo bench --bench benches` gives 7.5, 8.2, 7.5 ms for `ssimulacra2_320x240`
+across **three runs of one unchanged binary** — a 9.3% spread. Every other case
+(1080p, 4K, all three RGB sizes, `blur`) reproduces to ≤0.3% across runs *and*
+across builds. So a 0.5–1.0 ms move at 320×240 between two builds is not
+evidence of anything; a v0.8.2-vs-`f56991e` pair that read as "+8–9% regression"
+did not reproduce on 0.9.0.
+
+Cause is likely that zenbench prints `0 rounds ⚠ only 0 rounds` on every case —
+it never completes its round budget — and 320×240 is the only benchmark whose
+per-iteration time (7–8 ms) is short enough for that to dominate the mean. **Do
+not quote a 320×240 delta without ≥3 runs per build.** To measure per-call fixed
+overhead properly, fit `α + β·pixels` over ≥4 sizes on a build where zenbench
+reports a completed round count.
+
 ## The `video` feature of `fast-ssim2-cli` does not build (pre-existing)
 
 `cargo build -p fast-ssim2-cli --features video` fails with 8 errors, all in
