@@ -137,34 +137,52 @@ struct RealImageTestCase {
 
 const REAL_IMAGE_CASES: &[RealImageTestCase] = &[
     RealImageTestCase {
+        // Re-pinned 2026-08-31 for 0.9.0. The previous values were captured
+        // 2026-04-04; `82d9da8` deliberately changed the metric (both SimdImpl
+        // backends now share one cube root and one operation order), so all four
+        // moved. Deltas are mixed-sign, which is what a refinement looks like —
+        // a one-directional shift would have meant a bias, not a fix.
+        //
+        // VERIFIED ON TWO ARCHITECTURES before pinning: aarch64 (M4 Pro) and
+        // x86_64 (r7900x, Zen 4) produce these values bit-for-bit identically.
+        // That is the property worth pinning; do not re-pin from one machine.
         name: "JPEG Q20",
         distorted_file: "q20.jpg",
-        expected_simd: 57.093473, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 57.110739, // was 57.093473 (+0.017266)
     },
     RealImageTestCase {
         name: "JPEG Q45",
         distorted_file: "q45.jpg",
-        expected_simd: 68.675775, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 68.672158, // was 68.675775 (-0.003617)
     },
     RealImageTestCase {
         name: "JPEG Q70",
         distorted_file: "q70.jpg",
-        expected_simd: 79.491173, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 79.438655, // was 79.491173 (-0.052518)
     },
     RealImageTestCase {
         name: "JPEG Q90",
         distorted_file: "q90.jpg",
-        expected_simd: 90.834538, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 90.843097, // was 90.834538 (+0.008559)
     },
 ];
 
-// Only run on x86_64 since pinned values were captured on that platform.
-// ARM may produce slightly different results due to FP implementation differences.
+// Runs on EVERY architecture. It was `#[cfg(target_arch = "x86_64")]` until
+// 0.9.0, on the premise that "ARM may produce slightly different results due to
+// FP implementation differences" — which made the pin invisible on aarch64 and
+// let a score-changing fix (82d9da8) reach CI red on four x86 runners while
+// passing locally on an M4 Pro. Since 82d9da8 the dispatched kernels are
+// bit-identical across tiers and architectures, so a per-arch pin is exactly the
+// wrong shape: if the arches ever diverge again, this test is what must say so.
 #[test]
-#[cfg(target_arch = "x86_64")]
 fn test_simd_scores_pinned_real_images() {
     let source = load_image("source.png");
 
+    // Collect every mismatch rather than panicking on the first. A pin that
+    // reports one case at a time costs a full build per value when a deliberate
+    // change moves all of them, and it hides whether the whole set shifted
+    // together (a metric change) or just one did (a content-specific bug).
+    let mut drift = Vec::new();
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
         let score =
@@ -172,15 +190,24 @@ fn test_simd_scores_pinned_real_images() {
                 .unwrap();
 
         // Exact match - any deviation indicates a regression
-        assert!(
-            (score - case.expected_simd).abs() < 1e-5,
-            "{}: SIMD score changed! expected={:.6}, got={:.6}. \
-             If intentional, update expected_simd in test.",
-            case.name,
-            case.expected_simd,
-            score
-        );
+        if (score - case.expected_simd).abs() >= 1e-5 {
+            drift.push((case.name, case.expected_simd, score));
+        }
     }
+
+    assert!(
+        drift.is_empty(),
+        "SIMD scores changed on {} of {} cases (tolerance 1e-5). If intentional, \
+         update expected_simd — and re-pin from THIS architecture only after \
+         confirming another one agrees:\n{}",
+        drift.len(),
+        REAL_IMAGE_CASES.len(),
+        drift
+            .iter()
+            .map(|(n, e, g)| format!("  {n}: expected={e:.6}, got={g:.6}, delta={:+.6}", g - e))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 }
 
 #[test]
