@@ -8,7 +8,7 @@ fast-ssim2 is a SIMD-accelerated Rust implementation of [SSIMULACRA2](https://gi
 
 ```toml
 [dependencies]
-fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
+fast-ssim2 = { version = "0.9.0", features = ["imgref"] }
 imgref = "1.12"   # for ImgVec/ImgRef — the input container fast-ssim2 takes
 ```
 
