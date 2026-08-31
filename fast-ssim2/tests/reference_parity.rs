@@ -52,8 +52,9 @@ fn generate_test_image(case: &ReferenceCase) -> (Vec<u8>, Vec<u8>) {
 
 #[test]
 fn test_reference_parity() {
-    // The case table is compiled into src/reference_data.rs (67 cases as of
-    // 2026-06-10). An empty table would make this parity gate silently test
+    // The case table is compiled into src/reference_data.rs (66 cases; the
+    // file header records the capture date). An empty table would make this
+    // parity gate silently test
     // nothing — fail loudly instead of skipping. Regenerate the table with:
     // SSIMULACRA2_BIN=/path/to/ssimulacra2 cargo run --example capture_cpp_reference
     assert!(
