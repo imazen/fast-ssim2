@@ -21,6 +21,14 @@ fn write_const_usize<W: Write>(w: &mut W, name: &str, val: usize) -> io::Result<
     writeln!(w, "pub const {name}: usize = {val}_usize;")
 }
 
+fn write_const_f32x12<W: Write>(w: &mut W, name: &str, vals: &[f32; 12]) -> io::Result<()> {
+    write!(w, "pub const {name}: [f32; 12] = [")?;
+    for v in vals {
+        write!(w, "{v}_f32, ")?;
+    }
+    writeln!(w, "];")
+}
+
 fn init_recursive_gaussian(out_path: &str) -> io::Result<()> {
     const SIGMA: f64 = 1.5f64;
 
@@ -140,6 +148,19 @@ fn init_recursive_gaussian(out_path: &str) -> io::Result<()> {
     write_const_f32(&mut out_file, "MUL_PREV2_1", mul_prev2[0])?;
     write_const_f32(&mut out_file, "MUL_PREV2_3", mul_prev2[4])?;
     write_const_f32(&mut out_file, "MUL_PREV2_5", mul_prev2[8])?;
+
+    // Full 4-lane tables, in the layout jpegli's `RecursiveGaussian` uses.
+    // Lane 0 is the plain single-step recurrence (the three consts above);
+    // lanes 1..3 are the closed forms for 2, 3 and 4 steps, which is how the
+    // C++ FastGaussian1D produces four horizontal outputs per iteration. Only
+    // the test-only C++-parity diagnostic reads lanes 1..3 — production uses
+    // the sequential recurrence, which is the more accurate of the two.
+    writeln!(out_file, "#[allow(dead_code)]")?;
+    write_const_f32x12(&mut out_file, "CPP_MUL_IN", &mul_in)?;
+    writeln!(out_file, "#[allow(dead_code)]")?;
+    write_const_f32x12(&mut out_file, "CPP_MUL_PREV", &mul_prev)?;
+    writeln!(out_file, "#[allow(dead_code)]")?;
+    write_const_f32x12(&mut out_file, "CPP_MUL_PREV2", &mul_prev2)?;
 
     Ok(())
 }

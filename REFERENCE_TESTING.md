@@ -107,16 +107,67 @@ cargo test --release --test reference_parity -- --nocapture
 # All 66 reference tests passed! Max error: 0.954936
 ```
 
+### What this table can and cannot prove
+
+**40 of the 66 cases compare an image against itself.** Every implementation
+returns exactly `100.0` for an identical pair, whatever its arithmetic, so the
+zero error on `perfect_match`, `gradients`, `checkerboard`, `noise` and `edges`
+is a constant, not evidence of parity. The informative cases are the other 26,
+and 20 of those are `uniform_shift`, which is numerically degenerate (below).
+
+For parity evidence on content where the metric is well conditioned, run
+`examples/photo_parity.rs` against a real corpus. Measured 2026-08-31 on 576
+photographic pairs (CID22, KADID-10k, gb82, CLIC2025 x 4 sizes x 6 distortions):
+mean |fast-ssim2 - C++| = **0.024**, 283/576 deltas positive (no bias).
+
 ### Per-Pattern Tolerances
 
-Tests use **per-pattern tolerances** based on observed error characteristics:
+| Pattern | Tolerance | Max error measured 2026-08-31 |
+|---|--:|--:|
+| `uniform_shift` | 10.0 | 1.997 |
+| distortions (`boxblur8x8`, `sharpen`, `yuv_roundtrip`) | 0.2 | 0.182 |
+| `_vs_`, `perfect_match`, `gradient_h`/`gradient_v`, `checkerboard`, `noise_seed`, `edge_*` | 0.01 | 0.002 |
+| fallback | 0.05 | — |
 
-| Pattern Type | Tolerance | Reason |
-|--------------|-----------|--------|
-| **uniform_shift** | 1.2 | IIR filter FP precision (max observed: 0.955) |
-| **distortions** | 0.15 | Box blur/sharpen/YUV operations (max: 0.121) |
-| **synthetic_vs** | 0.002 | Non-identical patterns (max: 0.001) |
-| **identical** | 0.001 | Perfect match, gradients, noise, edges |
+### Why `uniform_shift` gets 10.0
+
+Not because the SIMD paths round differently — they agree with each other to
+~1e-8. The disagreement is with the C++ reference, and it is one-directional:
+**18 of the 20 cases score higher than the reference, mean +0.408.** FP noise
+does not do that.
+
+On a flat field the SSIM' term is degenerate. `sigma11 - mu1^2`,
+`sigma22 - mu2^2` and `sigma12 - mu1*mu2` are analytically zero away from the
+border, so `num_s` and `denom_s` both collapse onto `kC2 = 9e-4` plus whatever
+the f32 recursive Gaussian left behind — a residual of ~5e-7, about 1/1600 of
+the term it perturbs. Measured at the centre of `uniform_shift_1_32x32`: the
+true per-pixel error is 1.11e-5 and rounding contributes 3.31e-5, three times
+more; 60% of pixels have `|d - d_exact| > d_exact`; at 256x256 the centre
+pixel's `d` clamps to exactly 0. `d = max(..., 0)` rectifies the residual so it
+cannot cancel, and whichever implementation has the noisier blur reports the
+lower score.
+
+Three independent confirmations:
+
+1. The reference's own values are **not monotonic in the shift** — at 32x32,
+   shift 1 -> 97.749 but shift 5 -> 98.808.
+2. Perturbing any single stage by ~1e-7 moves the score by ~0.5. Swapping only
+   the cube root (ours, 1.75 ulp, for jpegli's own `CubeRootAndAdd`, 3.34 ulp)
+   moves `uniform_shift_1_32x32` and `uniform_shift_5_32x32` in *opposite*
+   directions relative to the reference.
+3. Transliterating jpegli's own 4-unrolled horizontal Gaussian into our
+   pipeline cuts the mean error on this family from 0.381 to 0.258, and at
+   64x64 brings three of five cases within 0.008. That also means **the C++
+   reference is not arch-consistent with itself** — its horizontal blur differs
+   between `HWY_SCALAR` and its vector targets.
+
+So this family cannot discriminate implementations, and the wide tolerance
+reflects that the *reference* is uninformative here. Do not tighten it into a
+pass/fail on a noise measurement; add well-conditioned cases instead.
+
+Full record, with every number and how it was obtained:
+`benchmarks/cpp_parity_2026-08-31.md`. Stage-level diagnostics:
+`cargo test --release --lib cpp_parity_diag -- --nocapture`.
 
 ### Detailed Variance Report
 
@@ -125,29 +176,31 @@ The test output includes:
 - **Error breakdown by pattern type** (count, max, mean, P95)
 - **Error percentiles** (p50, p90, p95, p99)
 
-Example output:
+Example output (2026-08-31, aarch64, reference binary jpeg-xl 0.12.0):
 ```
 ================================== REFERENCE PARITY TEST RESULTS ===================================
-All 66 reference tests passed! Max error: 0.954936
+All 66 reference tests passed! Max error: 1.996955
 
-Error percentiles: p50=0.0000, p90=0.2836, p95=0.4164, p99=0.9549
-Errors >0.1: 14, >0.5: 2, >1.0: 0
-
--------------------------------------- Top 10 Largest Errors ---------------------------------------
-Test Case                                                 Expected          Actual      Error
-----------------------------------------------------------------------------------------------------
-uniform_shift_5_32x32                                    98.808274       97.853338   0.954936
-uniform_shift_1_32x32                                    97.749214       98.363460   0.614246
-...
+Error percentiles: p50=0.0000, p90=0.4444, p95=0.7762, p99=1.9970
+Errors >0.1: 15, >0.5: 6, >1.0: 1
 
 --------------------------------- Error Breakdown by Pattern Type ----------------------------------
 Pattern                   Count       Max Error      Mean Error       P95 Error
 --------------------------------------------------------------------------------
-uniform_shift                20        0.954936        0.229443        0.954936
-distortions                   4        0.120631        0.064514        0.120631
-synthetic_vs                  2        0.001332        0.000936        0.001332
+checkerboard                 12        0.000000        0.000000        0.000000
+distortions                   4        0.181726        0.066305        0.181726
+edges                         4        0.000000        0.000000        0.000000
+gradients                     8        0.000000        0.000000        0.000000
+noise                        12        0.000000        0.000000        0.000000
 perfect_match                 4        0.000000        0.000000        0.000000
+synthetic_vs                  2        0.001659        0.001099        0.001659
+uniform_shift                20        1.996955        0.407777        1.996955
 ```
+
+For the **signed** version of this table, which is what distinguishes noise
+from bias, run `cargo run --release --example parity_report` (set
+`SSIMULACRA2_BIN` to re-verify the captured table against a live binary at the
+same time).
 
 ### SHA256 Hash Verification
 
