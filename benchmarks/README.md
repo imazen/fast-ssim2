@@ -91,6 +91,15 @@ not estimates.
   photographic pairs at mean |delta| 0.024, why the synthetic `uniform_shift`
   cases disagree one-directionally, per-archmage-tier maxima, and the
   0.7.1-vs-0.8.2 comparison. Raw per-case data in the two sibling `.tsv` files.
+- [`version_divergence_2026-09-09.md`](version_divergence_2026-09-09.md)
+  — why 0.8.2 scores differently from 0.7.1 (it is the cube root, and *only* the
+  cube root: HEAD with that one function reverted reproduces 0.7.1 to 6.1e-6),
+  which of the two is closer to the C++ binary (neither — the paired CI on the
+  difference straddles zero at 2016 cells), and the first attribution of the
+  residual C++ gap: every shipped version is +0.0067 high, and adopting jpegli's
+  own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
+  bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
+  [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
 - [`ssim2_perf/2026-08-31_x86_0.9.0.md`](ssim2_perf/2026-08-31_x86_0.9.0.md)
   — Ryzen 9 7900X check that the 0.9.0 API change costs nothing. Its real
   finding is about the harness, not the code: `ssimulacra2_320x240` spans

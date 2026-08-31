@@ -7,6 +7,14 @@
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 _(none — both previously queued items shipped in 0.9.0.)_
 
+### Fixed
+
+- **Test-only:** `cpp_parity_diag::cpp_cube_root_and_add` grouped its FMAs the wrong way round. Highway's `NegMulAdd(a, b, c)` is the fused `c - a*b`, so `NegMulAdd(xa_3, Mul(r2, r2), Mul(k4_3, r))` fuses `xa_3 * r4` and rounds `k4_3 * r` first; the old spelling fused the other product. The two agree on 89.7% of the opsin domain and are up to 3.6e-7 apart on the rest, so jpegli's cube root measures 2.62 ulp max error there, not the 3.34 ulp previously recorded. No shipped code path is affected — the module is `#[cfg(test)]`.
+
+### Documentation
+
+- **New parity record: [`benchmarks/version_divergence_2026-09-09.md`](benchmarks/version_divergence_2026-09-09.md).** Attributes the 0.7.1 → 0.8.2 score divergence to the cube root alone (HEAD with `cbrtf_fast` and the fused opsin matmul restored reproduces 0.7.1 to mean |Δ| 6.1e-6 over 2016 cells), confirms with a paired bootstrap that neither version is closer to the C++ binary (0.7.1 − 0.8.2 = +0.00036, 95% CI [−0.00050, +0.00124]), and measures that jpegli's own `CubeRootAndAdd` plus its 4-unrolled `FastGaussian1D` horizontal pass would remove the +0.0067 positive bias every shipped version carries, cutting mean |Δ| 21% and max |Δ| 51%. Reproduction sources committed alongside.
+
 ## [0.9.0] - 2026-08-31
 
 `fast-ssim2-cli` goes to **0.6.1** in the same commit. Its own surface — the `image <source> <distorted>` command and the score it prints — is unchanged, so it takes a patch bump, not a leading-digit one; only its `fast-ssim2` requirement moved (`0.8` → `0.9.0`).

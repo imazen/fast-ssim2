@@ -1,0 +1,18 @@
+[package]
+name = "ssim2-parity-attrib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+v071 = { package = "fast-ssim2", version = "=0.7.1" }
+v082 = { package = "fast-ssim2", version = "=0.8.2" }
+head = { package = "fast-ssim2", path = "/Users/lilith/work/zen/fast-ssim2/fast-ssim2" }
+repro = { package = "fast-ssim2-v071repro", path = "/Users/lilith/tmp/ssim2-parity-study/trees/v071repro/fast-ssim2" }
+cbrt64 = { package = "fast-ssim2-cbrt64", path = "/Users/lilith/tmp/ssim2-parity-study/trees/cbrt64/fast-ssim2" }
+cppcbrt = { package = "fast-ssim2-cppcbrt", path = "/Users/lilith/tmp/ssim2-parity-study/trees/cppcbrt/fast-ssim2" }
+cppcbrtu = { package = "fast-ssim2-cppcbrt_unfusedmm", path = "/Users/lilith/tmp/ssim2-parity-study/trees/cppcbrt_unfusedmm/fast-ssim2" }
+cppmax = { package = "fast-ssim2-cppmax", path = "/Users/lilith/tmp/ssim2-parity-study/trees/cppmax/fast-ssim2" }
+image = "0.25.10"
+
+[profile.release]
+opt-level = 3

@@ -59,13 +59,56 @@ different repo, read-only.**
   flip). They differ from each other by up to 0.143, so the workspace split
   (jxl-encoder/zengif/zenwebp on `^0.7.1`, which really resolves to 0.7.1
   because 0.7.2/0.7.3 are yanked; everything else on 0.8.2) has a cost and no
-  benefit. **Unify on 0.8.2+**, on recency, not accuracy.
+  benefit. **Unify on 0.8.2+**, on recency, not accuracy. Re-measured
+  2026-09-09 at 2016 cells (`benchmarks/version_divergence_2026-09-09.md`):
+  0.7.1 − 0.8.2 in agreement with C++ is +0.00036, 95% CI [−0.00050, +0.00124]
+  — still a coin flip, now with a paired CI behind it.
 - **x86_64 and wasm128 are NOT MEASURED** — this was an aarch64 host. Deferred.
 - The 3 "ignored" tests are 3 ```ignore doctest fences (`src/lib.rs` lines 10 and
   367, `src/strip.rs` line 72), not `#[ignore]` attributes. They are pseudo-code
   snippets (`load_image(...)`, `/* ... */`) and two of them need the `imgref`
   feature, which doctests do not build with. There are zero `#[ignore]`s.
 
+## What actually makes the versions differ, and what the C++ gap is (2026-09-09)
+
+Full record: `benchmarks/version_divergence_2026-09-09.md`. Same aarch64 M4 Pro
+host and `/opt/homebrew/bin/ssimulacra2` reference; 96 references x 3 sizes x 7
+distortions = 2016 cells.
+
+- **The 0.7.1 -> 0.8.2 score divergence is the cube root, and nothing else.**
+  0.8.2 swapped the f64 Newton `cbrtf_fast` in the vector XYB body for two f32
+  Halley steps (`844605f`, part of the `magetypes` port). HEAD with only that
+  and the opsin-matmul association reverted reproduces 0.7.1 to **mean |delta|
+  6.1e-6, max 7.4e-5** — so the blur row-vectorisation, the 4->8 NEON lane
+  widths, the zero-weight cell skips and the rest of the refactor are
+  numerically inert. Do NOT go looking for the divergence in the blur.
+  `844605f` knew it moved scores ("< 0.05 absolute delta", and it re-pinned the
+  `implementation_parity` expectations); on real content the worst case is 0.20.
+- **Cube-root accuracy and C++ fidelity are different axes.** Over the whole
+  opsin domain: 0.7.1's f64 Newton is exact (0 ulp), our f32 Halley is 0.49 mean
+  / 3 max ulp, and **jpegli's own `CubeRootAndAdd` is the least accurate of the
+  three** (0.72 mean / 5 max ulp). So "our cube root is better than C's" and
+  "our score is closer to C's" cannot both be optimised.
+- **Every shipped version is biased +0.0067 +/- 0.0016 high vs the C++ binary**,
+  and it is not the cube root. Adopting jpegli's *own* two approximations — its
+  `CubeRootAndAdd` (bias fused into the last multiply-add) plus its 4-unrolled
+  `FastGaussian1D` horizontal pass — removes the bias (+0.0010, CI includes 0),
+  cuts mean |delta| 0.0209 -> **0.0166** and max |delta| 0.49 -> **0.24**, all
+  significant under a paired bootstrap. The horizontal-blur form is the larger
+  half. **Not landed:** it is a metric change (needs the user's call), the
+  transliteration is FMA-shaped so it re-opens the wasm128/scalar
+  arch-consistency question 0.9.0's unfused matmul closed, and jpegli's
+  4-unrolled recurrence would have to be re-vectorised to be shippable.
+- **Ruled out as sources of the residual:** the sRGB transfer function (the C++
+  takes the `ExtraTF::kSRGB` fast path = `TF_SRGB().DisplayFromEncoded`, whose
+  ten rational-polynomial coefficients are bit-identical as f32 to
+  `input.rs::srgb_to_linear`'s) and `intensity_target` (255 for 8-bit sRGB PNG,
+  so the opsin matrix scale is exactly 1.0). Still open: `Downsample` and the
+  skcms linear->linear leg.
+- **`cpp_parity_diag::cpp_cube_root_and_add` had its FMAs grouped the wrong way
+  round** (Highway's `NegMulAdd(a,b,c)` fuses `a*b`, not the other product).
+  Fixed 2026-09-09; jpegli's cube root measures **2.62 ulp** max on the opsin
+  domain, not the 3.34 ulp this file used to quote.
 ## Current state (2026-06-10)
 
 - **v0.8.2 RELEASED 2026-06-10**: tag v0.8.2 = b7c2b4b3, GH release with
