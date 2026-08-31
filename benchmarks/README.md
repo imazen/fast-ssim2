@@ -86,6 +86,16 @@ not estimates.
   paths (256² … 1920×1080) across the three lossless Kanetaka-IWAIT-2026 changes
   (state hoisting, zero-weight skip-map, `CompareContext`); all bit-identical to
   the prior path.
+- [`cpp_parity_2026-08-31.md`](cpp_parity_2026-08-31.md) — M4 Pro (aarch64)
+  agreement with the C++ SSIMULACRA2 binary (jpeg-xl 0.12.0): 576 real
+  photographic pairs at mean |delta| 0.024, why the synthetic `uniform_shift`
+  cases disagree one-directionally, per-archmage-tier maxima, and the
+  0.7.1-vs-0.8.2 comparison. Raw per-case data in the two sibling `.tsv` files.
+- [`ssim2_perf/2026-08-31_x86_0.9.0.md`](ssim2_perf/2026-08-31_x86_0.9.0.md)
+  — Ryzen 9 7900X check that the 0.9.0 API change costs nothing. Its real
+  finding is about the harness, not the code: `ssimulacra2_320x240` spans
+  7.5–8.2 ms across **three runs of one unchanged binary**, so no sub-1 ms
+  delta at that size means anything. Every other case reproduces to ≤0.3%.
 
 `BENCHMARKS.md` at the repo root is **historical** (pre-archmage rewrite: it
 describes removed `simd` / `unsafe-simd` feature flags and the `wide` crate) and
