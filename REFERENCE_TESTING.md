@@ -270,7 +270,7 @@ jobs:
 ```rust
 #[test]
 fn test_ssimulacra2() {
-    let result = compute_frame_ssimulacra2(source, distorted).unwrap();
+    let result = compute_ssimulacra2(source, distorted).unwrap();
     let expected = 17.398_505_f64;
     assert!(
         // SOMETHING is WEIRD with Github CI where it gives different results
@@ -292,7 +292,7 @@ fn test_ssimulacra2() {
 #[test]
 fn test_reference_parity() {
     for case in REFERENCE_CASES {
-        let score = compute_frame_ssimulacra2(source, distorted).unwrap();
+        let score = compute_ssimulacra2(source, distorted).unwrap();
 
         // Per-pattern tolerance based on observed error characteristics
         let tolerance = if case.name.contains("uniform_shift") {

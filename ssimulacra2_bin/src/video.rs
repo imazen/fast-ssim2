@@ -9,7 +9,7 @@ use std::{
 
 use av_metrics_decoders::{Decoder, VapoursynthDecoder, y4m::new_decoder_from_stdin};
 use crossterm::tty::IsTty;
-use fast_ssim2::compute_frame_ssimulacra2;
+use fast_ssim2::compute_ssimulacra2;
 use image::ColorType;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
 use num_traits::FromPrimitive;
@@ -170,7 +170,7 @@ fn calc_score<S: Pixel, D: Pixel, E: Decoder, F: Decoder>(
 
     Some((
         frame_idx,
-        compute_frame_ssimulacra2(src_yuv, dst_yuv).expect("Failed to calculate ssimulacra2"),
+        compute_ssimulacra2(src_yuv, dst_yuv).expect("Failed to calculate ssimulacra2"),
     ))
 }
 

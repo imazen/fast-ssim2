@@ -1,6 +1,6 @@
 [package]
 name = "fast-ssim2-cli"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "CLI for the fast-ssim2 (SSIMULACRA2) image quality metric"
 repository = "https://github.com/imazen/fast-ssim2"
@@ -34,7 +34,7 @@ clap = { version = "4.6.6", features = ["derive"] }
 crossterm = "0.29.0"
 indicatif = "0.18.6"
 num-traits = { version = "0.2.19", optional = true }
-fast-ssim2 = { path = "../fast-ssim2", version = "0.8", default-features = false }
+fast-ssim2 = { path = "../fast-ssim2", version = "0.9.0", default-features = false }
 yuvxyb = "0.5.0"
 statrs = { version = "0.19.1", optional = true }
 

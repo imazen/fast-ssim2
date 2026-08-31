@@ -38,10 +38,10 @@ fn main() {
     let rustav = ssimulacra2::compute_frame_ssimulacra2(src.clone(), dst.clone()).unwrap();
 
     // fast-ssim2 default (SIMD)
-    let fast_simd = fast_ssim2::compute_frame_ssimulacra2(src.clone(), dst.clone()).unwrap();
+    let fast_simd = fast_ssim2::compute_ssimulacra2(src.clone(), dst.clone()).unwrap();
 
     // fast-ssim2 scalar path
-    let fast_scalar = fast_ssim2::compute_frame_ssimulacra2_with_config(
+    let fast_scalar = fast_ssim2::compute_ssimulacra2_with_config(
         src,
         dst,
         fast_ssim2::Ssimulacra2Config::scalar(),

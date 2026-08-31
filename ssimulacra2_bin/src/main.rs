@@ -1,12 +1,10 @@
-#![allow(deprecated)]
-
 #[cfg(feature = "video")]
 mod video;
 
 #[cfg(feature = "video")]
 use self::video::*;
 use clap::{Parser, Subcommand};
-use fast_ssim2::compute_frame_ssimulacra2;
+use fast_ssim2::compute_ssimulacra2;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "video")]
 use yuvxyb::MatrixCoefficients;
@@ -201,8 +199,8 @@ fn compare_images(source: &Path, distorted: &Path) {
     )
     .expect("Failed to process distorted_data into RGB");
 
-    let result = compute_frame_ssimulacra2(source_data, distorted_data)
-        .expect("Failed to calculate ssimulacra2");
+    let result =
+        compute_ssimulacra2(source_data, distorted_data).expect("Failed to calculate ssimulacra2");
 
     println!("Score: {result:.8}");
 }

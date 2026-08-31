@@ -2,9 +2,7 @@
 //!
 //! Run with: cargo run --release --example precompute_benchmark
 
-#![allow(deprecated)]
-
-use fast_ssim2::{Ssimulacra2Reference, compute_frame_ssimulacra2};
+use fast_ssim2::{Ssimulacra2Reference, compute_ssimulacra2};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -55,7 +53,7 @@ fn main() {
                 ColorPrimaries::BT709,
             )
             .unwrap();
-            let _ = compute_frame_ssimulacra2(source, distorted).unwrap();
+            let _ = compute_ssimulacra2(source, distorted).unwrap();
         }
         let full_time = start.elapsed() / iterations as u32;
 

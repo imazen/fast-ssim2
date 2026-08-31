@@ -95,7 +95,7 @@
 //! Implement [`ToLinearRgb`] to support your own image types:
 //!
 //! ```
-//! use fast_ssim2::{ToLinearRgb, LinearRgbImage, srgb_u8_to_linear};
+//! use fast_ssim2::{ToLinearRgb, LinearRgbImage, Ssimulacra2Error, srgb_u8_to_linear};
 //!
 //! struct MyImage {
 //!     pixels: Vec<[u8; 3]>,
@@ -104,7 +104,7 @@
 //! }
 //!
 //! impl ToLinearRgb for MyImage {
-//!     fn to_linear_rgb(&self) -> LinearRgbImage {
+//!     fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
 //!         let data: Vec<[f32; 3]> = self.pixels.iter()
 //!             .map(|[r, g, b]| [
 //!                 srgb_u8_to_linear(*r),
@@ -112,10 +112,15 @@
 //!                 srgb_u8_to_linear(*b),
 //!             ])
 //!             .collect();
-//!         LinearRgbImage::new(data, self.width, self.height)
+//!         LinearRgbImage::try_new(data, self.width, self.height)
+//!             .map_err(|_| Ssimulacra2Error::InvalidImageSize)
 //!     }
 //! }
 //! ```
+//!
+//! The conversion returns a `Result` because it genuinely fails for some
+//! inputs — a [`yuvxyb::Yuv`] frame's matrix coefficients may have no
+//! YUV→RGB matrix. Implementations that cannot fail return `Ok`.
 //!
 //! Helper functions for sRGB conversion:
 //! - [`srgb_u8_to_linear`] - 8-bit lookup table (fastest)
@@ -254,7 +259,21 @@ impl Ssimulacra2Config {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Ssimulacra2Error {
-    /// The conversion from input image to [`yuvxyb::LinearRgb`] (via [TryFrom]) returned an [Err].
+    /// An input image's color signaling has no conversion to linear RGB.
+    ///
+    /// Returned by [`ToLinearRgb`] implementations that wrap a fallible
+    /// `yuvxyb` conversion: a [`yuvxyb::Yuv`] frame whose
+    /// [`MatrixCoefficients`](yuvxyb::MatrixCoefficients) are `Reserved` or
+    /// `ICtCp` (no YUV→RGB matrix), or a [`yuvxyb::Rgb`] whose
+    /// [`TransferCharacteristic`](yuvxyb::TransferCharacteristic) or
+    /// [`ColorPrimaries`](yuvxyb::ColorPrimaries) are not implemented. This is
+    /// caller-supplied metadata off a decoded frame, so it is an error rather
+    /// than a panic.
+    ///
+    /// The variant carries no detail so that `yuvxyb`'s error type stays out
+    /// of this crate's public API. Callers who need to distinguish the cases
+    /// can run the `yuvxyb` conversion themselves and pass the resulting
+    /// [`yuvxyb::LinearRgb`], which this crate accepts infallibly.
     #[error("Failed to convert input image to linear RGB")]
     LinearRgbConversionFailed,
 
@@ -262,15 +281,17 @@ pub enum Ssimulacra2Error {
     #[error("Source and distorted image width and height must be equal")]
     NonMatchingImageDimensions,
 
-    /// One of the input images is below the metric's 8×8 pyramid floor,
-    /// in a code path that does not reflect-pad.
+    /// An input image's dimensions are unusable.
     ///
-    /// The primary entry points ([`compute_ssimulacra2`],
-    /// [`Ssimulacra2Reference`]) reflect-pad sub-8px inputs instead of
-    /// returning this error. It is still returned by the strip APIs
-    /// (which target very large images and also use it when
-    /// `strip_height < 8`) and by the deprecated `compute_frame_*`
-    /// entry points.
+    /// Covers two cases:
+    /// - **Zero-sized input.** Every [`ToLinearRgb`] implementation returns
+    ///   this rather than panicking when an axis is 0 (or, for a hand-written
+    ///   impl, when the pixel count disagrees with the stated dimensions).
+    /// - **Below the metric's 8×8 pyramid floor, in a code path that does not
+    ///   reflect-pad.** The primary entry points ([`compute_ssimulacra2`],
+    ///   [`Ssimulacra2Reference`]) reflect-pad sub-8px inputs instead of
+    ///   returning this error; the strip APIs (which target very large images,
+    ///   and also use it when `strip_height < 8`) still return it.
     #[error("Images must be at least 8x8 pixels")]
     InvalidImageSize,
 
@@ -318,50 +339,25 @@ pub enum Ssimulacra2Error {
 /// still-image use case (8K UHD = 33 MP, full-frame 100 MP DSLR sensors fit).
 pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 
-/// Computes the SSIMULACRA2 score with default configuration (safe SIMD).
-#[deprecated(
-    since = "0.8.0",
-    note = "use compute_ssimulacra2 with ToLinearRgb types instead"
-)]
-pub fn compute_frame_ssimulacra2<T, U>(source: T, distorted: U) -> Result<f64, Ssimulacra2Error>
-where
-    LinearRgb: TryFrom<T> + TryFrom<U>,
-{
-    compute_frame_ssimulacra2_impl(
-        source,
-        distorted,
-        Ssimulacra2Config::default(),
-        &enough::Unstoppable,
-    )
-}
-
-/// Computes the SSIMULACRA2 score with custom implementation configuration.
-#[deprecated(
-    since = "0.8.0",
-    note = "use compute_ssimulacra2_with_config with ToLinearRgb types instead"
-)]
-pub fn compute_frame_ssimulacra2_with_config<T, U>(
-    source: T,
-    distorted: U,
-    config: Ssimulacra2Config,
-) -> Result<f64, Ssimulacra2Error>
-where
-    LinearRgb: TryFrom<T> + TryFrom<U>,
-{
-    compute_frame_ssimulacra2_impl(source, distorted, config, &enough::Unstoppable)
-}
-
 /// Computes the SSIMULACRA2 score from any input type implementing [`ToLinearRgb`].
 ///
-/// This is the recommended API for new code. It supports:
+/// It supports:
 /// - `imgref` types (with the `imgref` feature): `ImgRef<[u8; 3]>`, `ImgRef<[f32; 3]>`, etc.
-/// - `yuvxyb` types: `Rgb`, `LinearRgb`
+/// - `yuvxyb` types: `Yuv<u8>`, `Yuv<u16>` (and `&Yuv<_>`), `Rgb`, `Xyb`, `LinearRgb`
 /// - Custom types implementing [`ToLinearRgb`]
 ///
 /// # Color space conventions
 /// - Integer types (`u8`, `u16`) are assumed to be sRGB (gamma-encoded)
 /// - Float types (`f32`) are assumed to be linear RGB
 /// - Grayscale types are expanded to RGB (R=G=B)
+///
+/// # Errors
+///
+/// Returns [`Ssimulacra2Error::LinearRgbConversionFailed`] if either input's
+/// color signaling has no conversion to linear RGB (see [`ToLinearRgb`]),
+/// [`Ssimulacra2Error::NonMatchingImageDimensions`] if the two images differ
+/// in size, or [`Ssimulacra2Error::ImageTooLarge`] above
+/// [`MAX_IMAGE_PIXELS`].
 ///
 /// # Example
 /// ```ignore
@@ -370,7 +366,7 @@ where
 ///
 /// let source: ImgVec<[u8; 3]> = /* ... */;
 /// let distorted: ImgVec<[u8; 3]> = /* ... */;
-/// let score = compute_ssimulacra2(&source, &distorted)?;
+/// let score = compute_ssimulacra2(source.as_ref(), distorted.as_ref())?;
 /// ```
 pub fn compute_ssimulacra2<S, D>(source: S, distorted: D) -> Result<f64, Ssimulacra2Error>
 where
@@ -433,11 +429,11 @@ where
     // Reflect(mirror)-pad sub-8px inputs up to the pyramid floor so the
     // metric scores down to 1×1 instead of Err(InvalidImageSize). The
     // pad runs on the converted LinearRgbImage (reflect-101 boundary);
-    // NO-OP at ≥8px. Empty (0-dim) inputs fall through to the
-    // InvalidImageSize check in `compute_frame_ssimulacra2_impl`.
-    let img1: LinearRgb = reflect_pad_linear(source.into_linear_rgb(), 8).into();
-    let img2: LinearRgb = reflect_pad_linear(distorted.into_linear_rgb(), 8).into();
-    compute_frame_ssimulacra2_impl(img1, img2, config, stop)
+    // NO-OP at ≥8px. Empty (0-dim) inputs never reach here — every
+    // `ToLinearRgb` impl rejects them with `InvalidImageSize`.
+    let img1: LinearRgb = reflect_pad_linear(source.try_into_linear_rgb()?, 8).into();
+    let img2: LinearRgb = reflect_pad_linear(distorted.try_into_linear_rgb()?, 8).into();
+    compute_frame_flavored(img1, img2, config, XybFlavor::CubeRoot, stop)
 }
 
 /// Reflect-101 index map (OpenCV `BORDER_REFLECT_101`): fold an
@@ -493,25 +489,6 @@ enum XybFlavor {
     CubeRoot,
     #[cfg(feature = "hdr-pu")]
     Pu21,
-}
-
-fn compute_frame_ssimulacra2_impl<T, U>(
-    source: T,
-    distorted: U,
-    config: Ssimulacra2Config,
-    stop: &dyn enough::Stop,
-) -> Result<f64, Ssimulacra2Error>
-where
-    LinearRgb: TryFrom<T> + TryFrom<U>,
-{
-    let Ok(img1) = LinearRgb::try_from(source) else {
-        return Err(Ssimulacra2Error::LinearRgbConversionFailed);
-    };
-
-    let Ok(img2) = LinearRgb::try_from(distorted) else {
-        return Err(Ssimulacra2Error::LinearRgbConversionFailed);
-    };
-    compute_frame_flavored(img1, img2, config, XybFlavor::CubeRoot, stop)
 }
 
 fn compute_frame_flavored(
@@ -1103,7 +1080,6 @@ impl Msssim {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use std::path::PathBuf;
 
@@ -1160,7 +1136,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let result = compute_frame_ssimulacra2(source_data, distorted_data).unwrap();
+        let result = compute_ssimulacra2(source_data, distorted_data).unwrap();
         let expected = 17.398_505_f64;
         assert!(
             (result - expected).abs() < 0.25f64,

@@ -13,10 +13,21 @@
 //! | `ImgRef<u8>` | sRGB grayscale | `/255` + linearize + expand |
 //! | `ImgRef<f32>` | Linear grayscale | expand to RGB |
 //!
+//! ## Supported `yuvxyb` input formats (always available)
+//!
+//! | Type | Fallible? | Conversion |
+//! |------|-----------|------------|
+//! | [`yuvxyb::LinearRgb`] | no | none |
+//! | [`yuvxyb::Rgb`] | yes | transfer function → linear, primaries → BT.709 |
+//! | [`yuvxyb::Xyb`] | no | inverse opsin |
+//! | [`yuvxyb::Yuv<T>`], `&Yuv<T>` (`T` = `u8`/`u16`) | yes | matrix coefficients → RGB, then as `Rgb` |
+//!
 //! ## Convention
 //!
 //! - Integer types (u8, u16) are assumed to be **sRGB** (gamma-encoded)
 //! - Float types (f32) are assumed to be **linear**
+
+use crate::Ssimulacra2Error;
 
 /// Internal linear RGB image representation.
 ///
@@ -109,37 +120,110 @@ impl LinearRgbImage {
     }
 }
 
+/// Build a [`LinearRgbImage`] inside a [`ToLinearRgb`] implementation.
+///
+/// Every failure mode of [`LinearRgbImage::try_new`] is a dimension problem
+/// (zero axis, `width * height` overflow, or a pixel count that disagrees with
+/// the stated dimensions), so they all map to
+/// [`Ssimulacra2Error::InvalidImageSize`]. Using this instead of
+/// [`LinearRgbImage::new`] keeps a zero-sized input — which `imgref` will
+/// happily hand us — a recoverable error rather than a panic.
+fn build(
+    data: Vec<[f32; 3]>,
+    width: usize,
+    height: usize,
+) -> Result<LinearRgbImage, Ssimulacra2Error> {
+    LinearRgbImage::try_new(data, width, height).map_err(|_| Ssimulacra2Error::InvalidImageSize)
+}
+
 /// Trait for converting image types to linear RGB.
 ///
 /// Implement this trait to add support for custom image types.
 ///
-/// Override [`into_linear_rgb`](ToLinearRgb::into_linear_rgb) for owned types
-/// that can convert in-place without allocating a new pixel buffer.
+/// # Why conversion is fallible
+///
+/// Conversion is a `Result` because it genuinely fails for some inputs. A
+/// [`yuvxyb::Yuv`] frame or a [`yuvxyb::Rgb`] image carries caller-supplied
+/// matrix coefficients, transfer characteristics and primaries; `yuvxyb` has
+/// no conversion for several spec-legal values (H.273 MC=12
+/// `ChromaticityDerivedNonConstantLuminance`, TC=17 `ST428`), so for those the
+/// conversion has nothing to return. That is ordinary user input, not a
+/// programming error, so it must be recoverable. Making the fallible form the
+/// required method means no implementation is ever tempted to turn a
+/// recoverable `Err` into a panic — which is what the infallible
+/// `to_linear_rgb` it replaced did, via `.expect()`, for any `Rgb` with an
+/// unsupported transfer function.
+///
+/// Implementations whose conversion cannot fail simply return `Ok`.
+///
+/// Override [`try_into_linear_rgb`](ToLinearRgb::try_into_linear_rgb) for
+/// owned types that can convert in-place without allocating a new pixel
+/// buffer.
+///
+/// # Example
+///
+/// ```
+/// use fast_ssim2::{LinearRgbImage, Ssimulacra2Error, ToLinearRgb, srgb_u8_to_linear};
+///
+/// struct MyImage {
+///     pixels: Vec<u8>, // RGB8, tightly packed
+///     width: usize,
+///     height: usize,
+/// }
+///
+/// impl ToLinearRgb for MyImage {
+///     fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+///         let data = self
+///             .pixels
+///             .chunks_exact(3)
+///             .map(|c| {
+///                 [
+///                     srgb_u8_to_linear(c[0]),
+///                     srgb_u8_to_linear(c[1]),
+///                     srgb_u8_to_linear(c[2]),
+///                 ]
+///             })
+///             .collect();
+///         LinearRgbImage::try_new(data, self.width, self.height)
+///             .map_err(|_| Ssimulacra2Error::InvalidImageSize)
+///     }
+/// }
+/// ```
 pub trait ToLinearRgb {
     /// Convert to linear RGB image (borrowing).
-    fn to_linear_rgb(&self) -> LinearRgbImage;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Ssimulacra2Error::LinearRgbConversionFailed`] if the input's
+    /// color signaling cannot be converted to linear RGB, or
+    /// [`Ssimulacra2Error::InvalidImageSize`] if it has a zero dimension.
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error>;
 
     /// Convert to linear RGB image, consuming self.
     ///
-    /// The default implementation calls [`to_linear_rgb`](ToLinearRgb::to_linear_rgb).
-    /// Override this for owned types that can reuse their pixel buffer
-    /// to avoid allocation.
-    fn into_linear_rgb(self) -> LinearRgbImage
+    /// The default implementation calls
+    /// [`try_to_linear_rgb`](ToLinearRgb::try_to_linear_rgb). Override this
+    /// for owned types that can reuse their pixel buffer to avoid allocation.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`try_to_linear_rgb`](ToLinearRgb::try_to_linear_rgb).
+    fn try_into_linear_rgb(self) -> Result<LinearRgbImage, Ssimulacra2Error>
     where
         Self: Sized,
     {
-        self.to_linear_rgb()
+        self.try_to_linear_rgb()
     }
 }
 
 /// Identity implementation for already-converted images.
 impl ToLinearRgb for LinearRgbImage {
-    fn to_linear_rgb(&self) -> LinearRgbImage {
-        self.clone()
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        Ok(self.clone())
     }
 
-    fn into_linear_rgb(self) -> LinearRgbImage {
-        self
+    fn try_into_linear_rgb(self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        Ok(self)
     }
 }
 
@@ -227,7 +311,7 @@ mod imgref_impl {
 
     /// RGB u8 (sRGB) -> Linear RGB
     impl ToLinearRgb for ImgRef<'_, [u8; 3]> {
-        fn to_linear_rgb(&self) -> LinearRgbImage {
+        fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
             let data: Vec<[f32; 3]> = self
                 .pixels()
                 .map(|[r, g, b]| {
@@ -238,13 +322,13 @@ mod imgref_impl {
                     ]
                 })
                 .collect();
-            LinearRgbImage::new(data, self.width(), self.height())
+            build(data, self.width(), self.height())
         }
     }
 
     /// RGB u16 (sRGB) -> Linear RGB
     impl ToLinearRgb for ImgRef<'_, [u16; 3]> {
-        fn to_linear_rgb(&self) -> LinearRgbImage {
+        fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
             let data: Vec<[f32; 3]> = self
                 .pixels()
                 .map(|[r, g, b]| {
@@ -255,21 +339,21 @@ mod imgref_impl {
                     ]
                 })
                 .collect();
-            LinearRgbImage::new(data, self.width(), self.height())
+            build(data, self.width(), self.height())
         }
     }
 
     /// RGB f32 (already linear) -> Linear RGB
     impl ToLinearRgb for ImgRef<'_, [f32; 3]> {
-        fn to_linear_rgb(&self) -> LinearRgbImage {
+        fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
             let data: Vec<[f32; 3]> = self.pixels().collect();
-            LinearRgbImage::new(data, self.width(), self.height())
+            build(data, self.width(), self.height())
         }
     }
 
     /// Grayscale u8 (sRGB) -> Linear RGB
     impl ToLinearRgb for ImgRef<'_, u8> {
-        fn to_linear_rgb(&self) -> LinearRgbImage {
+        fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
             let data: Vec<[f32; 3]> = self
                 .pixels()
                 .map(|v| {
@@ -277,15 +361,15 @@ mod imgref_impl {
                     [l, l, l]
                 })
                 .collect();
-            LinearRgbImage::new(data, self.width(), self.height())
+            build(data, self.width(), self.height())
         }
     }
 
     /// Grayscale f32 (linear) -> Linear RGB
     impl ToLinearRgb for ImgRef<'_, f32> {
-        fn to_linear_rgb(&self) -> LinearRgbImage {
+        fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
             let data: Vec<[f32; 3]> = self.pixels().map(|v| [v, v, v]).collect();
-            LinearRgbImage::new(data, self.width(), self.height())
+            build(data, self.width(), self.height())
         }
     }
 }
@@ -295,18 +379,18 @@ mod imgref_impl {
 // =============================================================================
 
 impl ToLinearRgb for yuvxyb::LinearRgb {
-    fn to_linear_rgb(&self) -> LinearRgbImage {
-        LinearRgbImage::new(
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        build(
             self.data().to_vec(),
             self.width().get(),
             self.height().get(),
         )
     }
 
-    fn into_linear_rgb(self) -> LinearRgbImage {
+    fn try_into_linear_rgb(self) -> Result<LinearRgbImage, Ssimulacra2Error> {
         let width = self.width().get();
         let height = self.height().get();
-        LinearRgbImage::new(self.into_data(), width, height)
+        build(self.into_data(), width, height)
     }
 }
 
@@ -337,7 +421,7 @@ impl From<LinearRgbImage> for yuvxyb::LinearRgb {
 }
 
 impl ToLinearRgb for yuvxyb::Rgb {
-    fn to_linear_rgb(&self) -> LinearRgbImage {
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
         if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
             // Use our own IEC 61966-2-1 sRGB linearization (standard constants)
             // instead of yuvxyb's smoothed variant, for C++ ssimulacra2 parity.
@@ -346,16 +430,20 @@ impl ToLinearRgb for yuvxyb::Rgb {
                 .iter()
                 .map(|&[r, g, b]| [srgb_to_linear(r), srgb_to_linear(g), srgb_to_linear(b)])
                 .collect();
-            LinearRgbImage::new(data, self.width().get(), self.height().get())
+            build(data, self.width().get(), self.height().get())
         } else {
-            // For non-sRGB transfers, fall back to yuvxyb's conversion
-            let linear: yuvxyb::LinearRgb = yuvxyb::LinearRgb::try_from(self.clone())
-                .expect("Rgb to LinearRgb conversion should not fail");
-            linear.to_linear_rgb()
+            // For any other transfer, defer to yuvxyb. It rejects transfer
+            // characteristics and primaries it has no conversion for
+            // (`Reserved`, and anything the primaries table does not cover),
+            // which is caller-supplied signaling, so the error is returned
+            // rather than unwrapped.
+            let linear = yuvxyb::LinearRgb::try_from(self.clone())
+                .map_err(|_| Ssimulacra2Error::LinearRgbConversionFailed)?;
+            linear.try_into_linear_rgb()
         }
     }
 
-    fn into_linear_rgb(self) -> LinearRgbImage {
+    fn try_into_linear_rgb(self) -> Result<LinearRgbImage, Ssimulacra2Error> {
         let width = self.width().get();
         let height = self.height().get();
         if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
@@ -366,12 +454,65 @@ impl ToLinearRgb for yuvxyb::Rgb {
                 pixel[1] = srgb_to_linear(pixel[1]);
                 pixel[2] = srgb_to_linear(pixel[2]);
             }
-            LinearRgbImage::new(data, width, height)
+            build(data, width, height)
         } else {
-            let linear: yuvxyb::LinearRgb = yuvxyb::LinearRgb::try_from(self)
-                .expect("Rgb to LinearRgb conversion should not fail");
-            linear.into_linear_rgb()
+            let linear = yuvxyb::LinearRgb::try_from(self)
+                .map_err(|_| Ssimulacra2Error::LinearRgbConversionFailed)?;
+            linear.try_into_linear_rgb()
         }
+    }
+}
+
+/// XYB -> Linear RGB. Infallible (yuvxyb models it as [`From`]).
+impl ToLinearRgb for yuvxyb::Xyb {
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        yuvxyb::LinearRgb::from(self.clone()).try_into_linear_rgb()
+    }
+
+    fn try_into_linear_rgb(self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        yuvxyb::LinearRgb::from(self).try_into_linear_rgb()
+    }
+}
+
+/// YUV -> Linear RGB, shared by the owned and borrowed impls.
+///
+/// Routed through `yuvxyb::LinearRgb` (matrix coefficients → RGB, then that
+/// `Rgb`'s transfer function → linear) rather than through this crate's
+/// [`ToLinearRgb`] impl for [`yuvxyb::Rgb`], which substitutes our own sRGB
+/// linearization for C++ parity. Keeping yuvxyb's path here makes the scores
+/// for YUV input bit-identical to what the removed `compute_frame_ssimulacra2`
+/// produced, so 0.9.0 is an API change and not a metric change. Callers who
+/// want the parity linearization can convert `Yuv` → `Rgb` themselves and pass
+/// the `Rgb`.
+fn yuv_to_linear_rgb<T: yuvxyb::Pixel>(
+    yuv: &yuvxyb::Yuv<T>,
+) -> Result<LinearRgbImage, Ssimulacra2Error> {
+    let linear = yuvxyb::LinearRgb::try_from(yuv)
+        .map_err(|_| Ssimulacra2Error::LinearRgbConversionFailed)?;
+    linear.try_into_linear_rgb()
+}
+
+/// YUV -> Linear RGB.
+///
+/// Fails with [`Ssimulacra2Error::LinearRgbConversionFailed`] when
+/// `yuvxyb` has no conversion for the frame's
+/// [`MatrixCoefficients`](yuvxyb::MatrixCoefficients),
+/// [`TransferCharacteristic`](yuvxyb::TransferCharacteristic), or
+/// [`ColorPrimaries`](yuvxyb::ColorPrimaries) — for example H.273 MC=12
+/// (`ChromaticityDerivedNonConstantLuminance`) or TC=17 (`ST428`, digital
+/// cinema). Those are values a decoder hands you off a real bitstream, so
+/// they are an error, not a panic.
+impl<T: yuvxyb::Pixel> ToLinearRgb for yuvxyb::Yuv<T> {
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        yuv_to_linear_rgb(self)
+    }
+}
+
+/// Borrowed YUV -> Linear RGB. The conversion reads the frame either way, so
+/// this costs nothing over the owned impl and saves callers a clone.
+impl<T: yuvxyb::Pixel> ToLinearRgb for &yuvxyb::Yuv<T> {
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        yuv_to_linear_rgb(self)
     }
 }
 
@@ -463,7 +604,7 @@ mod tests {
         )
         .expect("valid dimensions");
 
-        let our_img = yuvxyb_img.to_linear_rgb();
+        let our_img = yuvxyb_img.try_to_linear_rgb().unwrap();
         assert_eq!(our_img.width(), 2);
         assert_eq!(our_img.height(), 2);
         assert_eq!(our_img.data(), &data[..]);
@@ -471,6 +612,163 @@ mod tests {
         // Convert back
         let back: yuvxyb::LinearRgb = our_img.into();
         assert_eq!(back.data(), &data[..]);
+    }
+}
+
+#[cfg(test)]
+mod yuv_tests {
+    use super::*;
+    use yuvxyb::{
+        ChromaSubsampling, ColorPrimaries, Frame, FrameBuilder, MatrixCoefficients,
+        TransferCharacteristic, Yuv, YuvConfig,
+    };
+
+    /// A 16x16 4:4:4 8-bit YUV frame with a deterministic ramp, tagged with
+    /// the caller's matrix coefficients.
+    fn make_yuv(mc: MatrixCoefficients) -> Yuv<u8> {
+        let dim = std::num::NonZeroUsize::new(16).unwrap();
+        let bit_depth = std::num::NonZeroU8::new(8).unwrap();
+        let mut data: Frame<u8> = FrameBuilder::new(dim, dim, ChromaSubsampling::Yuv444, bit_depth)
+            .build::<u8>()
+            .unwrap();
+        for (i, val) in data.y_plane.pixels_mut().enumerate() {
+            *val = (i * 7 % 220 + 16) as u8;
+        }
+        for plane in [data.u_plane.as_mut(), data.v_plane.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            for (i, val) in plane.pixels_mut().enumerate() {
+                *val = (i * 11 % 200 + 20) as u8;
+            }
+        }
+        Yuv::new(
+            data,
+            YuvConfig {
+                bit_depth: 8,
+                subsampling_x: 0,
+                subsampling_y: 0,
+                full_range: true,
+                matrix_coefficients: mc,
+                transfer_characteristics: TransferCharacteristic::SRGB,
+                color_primaries: ColorPrimaries::BT709,
+            },
+        )
+        .unwrap()
+    }
+
+    /// The YUV path must reproduce `yuvxyb`'s own `Yuv -> LinearRgb`
+    /// conversion bit-for-bit. That is what the removed
+    /// `compute_frame_ssimulacra2` did, so this pins 0.9.0 as an API change
+    /// rather than a metric change — and it fires if someone later reroutes
+    /// `Yuv` through the `Rgb` impl, which substitutes our own sRGB
+    /// linearization.
+    #[test]
+    fn yuv_conversion_matches_yuvxyb_bit_for_bit() {
+        let yuv = make_yuv(MatrixCoefficients::BT709);
+
+        let ours = yuv.try_to_linear_rgb().expect("BT709 YUV converts");
+        let theirs = yuvxyb::LinearRgb::try_from(&yuv).expect("BT709 YUV converts");
+
+        assert_eq!(ours.width(), theirs.width().get());
+        assert_eq!(ours.height(), theirs.height().get());
+        assert_eq!(ours.data(), theirs.data());
+    }
+
+    /// Route through a generic bound, which is the only way to select the
+    /// `&Yuv<T>` impl — method-call syntax on a `&Yuv<T>` receiver autorefs
+    /// into the *owned* impl, so `(&yuv).try_to_linear_rgb()` would not test
+    /// this at all. `compute_ssimulacra2(&yuv, ...)` monomorphises exactly
+    /// like `via_bound` does.
+    fn via_bound<T: ToLinearRgb>(input: T) -> Result<LinearRgbImage, Ssimulacra2Error> {
+        input.try_into_linear_rgb()
+    }
+
+    /// The borrowed impl exists so callers need not clone a frame; it must be
+    /// indistinguishable from the owned one.
+    #[test]
+    fn borrowed_yuv_matches_owned_yuv() {
+        let yuv = make_yuv(MatrixCoefficients::BT709);
+
+        let borrowed = via_bound(&yuv).expect("BT709 YUV converts");
+        let owned = via_bound(yuv).expect("BT709 YUV converts");
+
+        assert_eq!(borrowed.data(), owned.data());
+    }
+
+    /// The reason `ToLinearRgb` is fallible. H.273 MC=12
+    /// (`ChromaticityDerivedNonConstantLuminance`) and MC=3 (`Reserved`) are
+    /// values a decoder can hand you off a real bitstream, and `yuvxyb` has no
+    /// YUV->RGB matrix for either, so conversion must return `Err` rather than
+    /// panicking.
+    #[test]
+    fn unsupported_matrix_coefficients_are_an_error_not_a_panic() {
+        for mc in [
+            MatrixCoefficients::ChromaticityDerivedNonConstantLuminance,
+            MatrixCoefficients::Reserved,
+        ] {
+            let yuv = make_yuv(mc);
+            assert_eq!(
+                yuv.try_to_linear_rgb().unwrap_err(),
+                Ssimulacra2Error::LinearRgbConversionFailed,
+                "owned Yuv with {mc:?}"
+            );
+            assert_eq!(
+                via_bound(&yuv).unwrap_err(),
+                Ssimulacra2Error::LinearRgbConversionFailed,
+                "borrowed Yuv with {mc:?}"
+            );
+        }
+    }
+
+    /// The same failure must surface from the public entry point rather than
+    /// aborting the process.
+    #[test]
+    fn compute_ssimulacra2_propagates_yuv_conversion_failure() {
+        let yuv = make_yuv(MatrixCoefficients::ChromaticityDerivedNonConstantLuminance);
+
+        assert_eq!(
+            crate::compute_ssimulacra2(&yuv, &yuv).unwrap_err(),
+            Ssimulacra2Error::LinearRgbConversionFailed
+        );
+    }
+
+    /// The `Rgb` impl had the same reachable panic before 0.9.0: its non-sRGB
+    /// arm unwrapped `LinearRgb::try_from` with
+    /// `.expect("... should not fail")`. It does fail — H.273 TC=17 (`ST428`,
+    /// digital cinema) has no `to_linear` in `yuvxyb` — so an ST428-tagged
+    /// image aborted the process instead of returning an error.
+    #[test]
+    fn unsupported_transfer_on_rgb_is_an_error_not_a_panic() {
+        let dim = std::num::NonZeroUsize::new(16).unwrap();
+        let rgb = yuvxyb::Rgb::new(
+            vec![[0.5, 0.4, 0.3]; 16 * 16],
+            dim,
+            dim,
+            TransferCharacteristic::ST428,
+            ColorPrimaries::BT709,
+        )
+        .unwrap();
+
+        assert_eq!(
+            rgb.try_to_linear_rgb().unwrap_err(),
+            Ssimulacra2Error::LinearRgbConversionFailed
+        );
+        assert_eq!(
+            rgb.try_into_linear_rgb().unwrap_err(),
+            Ssimulacra2Error::LinearRgbConversionFailed
+        );
+    }
+
+    /// End to end: a supported YUV pair scores, and scores 100 against itself.
+    #[test]
+    fn identical_yuv_frames_score_100() {
+        let yuv = make_yuv(MatrixCoefficients::BT709);
+        let score = crate::compute_ssimulacra2(&yuv, &yuv).expect("BT709 YUV scores");
+        assert!(
+            (score - 100.0).abs() < 0.01,
+            "identical YUV frames should score 100, got {score}"
+        );
     }
 }
 
@@ -490,7 +788,7 @@ mod imgref_tests {
         ];
         let img: ImgVec<[u8; 3]> = Img::new(pixels, 2, 2);
 
-        let linear = img.as_ref().to_linear_rgb();
+        let linear = img.as_ref().try_to_linear_rgb().unwrap();
         assert_eq!(linear.width(), 2);
         assert_eq!(linear.height(), 2);
 
@@ -512,7 +810,7 @@ mod imgref_tests {
         let pixels: Vec<[f32; 3]> = vec![[0.5, 0.3, 0.1], [0.9, 0.8, 0.7]];
         let img: ImgVec<[f32; 3]> = Img::new(pixels.clone(), 2, 1);
 
-        let linear = img.as_ref().to_linear_rgb();
+        let linear = img.as_ref().try_to_linear_rgb().unwrap();
         assert_eq!(linear.data(), &pixels[..]);
     }
 
@@ -522,7 +820,7 @@ mod imgref_tests {
         let pixels: Vec<u8> = vec![0, 255, 128];
         let img: ImgVec<u8> = Img::new(pixels, 3, 1);
 
-        let linear = img.as_ref().to_linear_rgb();
+        let linear = img.as_ref().try_to_linear_rgb().unwrap();
 
         // Black
         let black = linear.data()[0];
@@ -547,7 +845,7 @@ mod imgref_tests {
         let pixels: Vec<f32> = vec![0.0, 1.0, 0.5];
         let img: ImgVec<f32> = Img::new(pixels, 3, 1);
 
-        let linear = img.as_ref().to_linear_rgb();
+        let linear = img.as_ref().try_to_linear_rgb().unwrap();
 
         assert_eq!(linear.data()[0], [0.0, 0.0, 0.0]);
         assert_eq!(linear.data()[1], [1.0, 1.0, 1.0]);

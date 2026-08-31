@@ -3,13 +3,11 @@
 //! Run with:
 //!   cargo run --release --example benchmark_allocations
 
-#![allow(deprecated)]
-
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
+use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
 // Custom allocator that tracks allocations
@@ -106,12 +104,12 @@ fn benchmark_with_tracking(
     let distorted = create_test_image(width, height, 67890);
 
     // Warmup (don't count)
-    let _ = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
+    let _ = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
 
     // Reset and measure
     reset_counters();
     let start = Instant::now();
-    let _ = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
+    let _ = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     let (alloc_count, alloc_bytes, _, _) = get_stats();

@@ -92,16 +92,16 @@ From `tests/reference_parity.rs`:
 ## API Usage
 
 ```rust
-use ssimulacra2::{compute_frame_ssimulacra2_with_config, Ssimulacra2Config};
+use fast_ssim2::{compute_ssimulacra2, compute_ssimulacra2_with_config, Ssimulacra2Config};
 
 // Default (safe SIMD)
-let score = compute_frame_ssimulacra2(source, distorted)?;
+let score = compute_ssimulacra2(source, distorted)?;
 
 // Explicit configuration
-let score = compute_frame_ssimulacra2_with_config(
+let score = compute_ssimulacra2_with_config(
     source,
     distorted,
-    Ssimulacra2Config::unsafe_simd()  // or ::simd() or ::scalar()
+    Ssimulacra2Config::simd()  // or ::scalar()
 )?;
 ```
 

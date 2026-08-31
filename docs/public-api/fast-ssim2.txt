@@ -6,24 +6,24 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: fast-ssim2.txt 86 lines (supported surface) | fast-ssim2.features.txt 6 added (features: hdr-pu,imgref,rayon) | fast-ssim2.internal.txt 28 lines (35 hidden + 0 excluded-feature)
+# files: fast-ssim2.txt 87 lines (supported surface) | fast-ssim2.features.txt 6 added (features: hdr-pu,imgref,rayon) | fast-ssim2.internal.txt 34 lines (41 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)        10
 #   pub consts/statics                          3
-#   free functions                             11
+#   free functions                              9
 #   inherent methods                           34
 #   struct fields                               6
 #   enum variants                              11
-#   trait roster entries (type × trait)        36
+#   trait roster entries (type × trait)        39
 #   auto-trait-complete types                   9
 #
 # per-module pub lines:
-#   (root)                           76
+#   (root)                           74
 
-## items (76 lines)
+## items (74 lines)
 
 pub mod fast_ssim2
 pub enum LinearRgbImageError
@@ -88,10 +88,8 @@ pub const HALO_ROWS_DEFAULT: usize
 pub const MAX_IMAGE_PIXELS: usize
 pub const MIN_STRIP_HEIGHT: usize
 pub trait ToLinearRgb
-pub fn ToLinearRgb::into_linear_rgb(self) -> LinearRgbImage where Self: core::marker::Sized
-pub fn ToLinearRgb::to_linear_rgb(&self) -> LinearRgbImage
-pub fn compute_frame_ssimulacra2<T, U>(T, U) -> core::result::Result<f64, Ssimulacra2Error> where yuvxyb::linear_rgb::LinearRgb: core::convert::TryFrom<T> + core::convert::TryFrom<U>
-pub fn compute_frame_ssimulacra2_with_config<T, U>(T, U, Ssimulacra2Config) -> core::result::Result<f64, Ssimulacra2Error> where yuvxyb::linear_rgb::LinearRgb: core::convert::TryFrom<T> + core::convert::TryFrom<U>
+pub fn ToLinearRgb::try_into_linear_rgb(self) -> core::result::Result<LinearRgbImage, Ssimulacra2Error> where Self: core::marker::Sized
+pub fn ToLinearRgb::try_to_linear_rgb(&self) -> core::result::Result<LinearRgbImage, Ssimulacra2Error>
 pub fn compute_ssimulacra2<S, D>(S, D) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
 pub fn compute_ssimulacra2_strip<S, D>(S, D, u32) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
 pub fn compute_ssimulacra2_strip_with_config<S, D>(S, D, u32, Ssimulacra2StripConfig) -> core::result::Result<f64, Ssimulacra2Error> where S: ToLinearRgb, D: ToLinearRgb
@@ -102,8 +100,9 @@ pub fn srgb_to_linear(f32) -> f32
 pub fn srgb_u16_to_linear(u16) -> f32
 pub fn srgb_u8_to_linear(u8) -> f32
 
-## trait impls (9 types)
+## trait impls (12 types)
 
+&yuvxyb::yuv::Yuv<T>: ToLinearRgb
 LinearRgbImage: Clone, Debug, ToLinearRgb
 LinearRgbImageError: Clone, Copy, Debug, Display, Eq, Error, PartialEq
 SimdImpl: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -113,6 +112,8 @@ Ssimulacra2Reference: Clone, Debug
 Ssimulacra2StripConfig: Clone, Copy, Debug, Default
 yuvxyb::linear_rgb::LinearRgb: From<LinearRgbImage>, ToLinearRgb
 yuvxyb::rgb::Rgb: ToLinearRgb
+yuvxyb::xyb::Xyb: ToLinearRgb
+yuvxyb::yuv::Yuv<T>: ToLinearRgb
 
 ## auto traits
 

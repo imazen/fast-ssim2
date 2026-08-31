@@ -136,7 +136,7 @@ pub(crate) const WEIGHT: [f64; 108] = [
 /// Number of pyramid scales SSIMULACRA2 evaluates.
 pub(crate) const NUM_SCALES: usize = 6;
 
-/// Count of pyramid scales that `compute_frame_ssimulacra2_impl` will produce
+/// Count of pyramid scales that `compute_frame_flavored` will produce
 /// for an input of the given dimensions. Mirrors the break logic of the main
 /// loop (downscale by 2 each octave; stop when either side drops below 8).
 pub(crate) const fn count_scales(width: usize, height: usize) -> usize {

@@ -161,8 +161,8 @@ fn score_everywhere(source: &LinearRgbImage, distorted: &LinearRgbImage) -> Vec<
             ("simd", Ssimulacra2Config::new(SimdImpl::Simd)),
             ("scalar", Ssimulacra2Config::new(SimdImpl::Scalar)),
         ] {
-            let s = source.to_linear_rgb();
-            let d = distorted.to_linear_rgb();
+            let s = source.try_to_linear_rgb().unwrap();
+            let d = distorted.try_to_linear_rgb().unwrap();
             let score = compute_ssimulacra2_with_config(s, d, cfg).expect("score");
             out.push(Combo {
                 label: format!("{}/{name}", perm.label),
@@ -413,13 +413,13 @@ fn ssimulacra2_roundtrip_stability() {
     let distorted = generate_distorted_image(32, 32);
 
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-        let s1 = source.to_linear_rgb();
-        let d1 = distorted.to_linear_rgb();
+        let s1 = source.try_to_linear_rgb().unwrap();
+        let d1 = distorted.try_to_linear_rgb().unwrap();
         let score1 =
             compute_ssimulacra2_with_config(s1, d1, Ssimulacra2Config::simd()).expect("score1");
 
-        let s2 = source.to_linear_rgb();
-        let d2 = distorted.to_linear_rgb();
+        let s2 = source.try_to_linear_rgb().unwrap();
+        let d2 = distorted.try_to_linear_rgb().unwrap();
         let score2 =
             compute_ssimulacra2_with_config(s2, d2, Ssimulacra2Config::simd()).expect("score2");
 

@@ -97,7 +97,11 @@ If alpha is meaningful to your comparison (e.g. transparent regions), composite
 both images over the same opaque background first, then drop alpha — comparing
 straight (un-premultiplied) RGB ignores how transparency would actually render.
 
-Without `imgref`, use `yuvxyb::Rgb` or `yuvxyb::LinearRgb` (add `yuvxyb` to your own dependencies), or implement [`ToLinearRgb`](https://docs.rs/fast-ssim2/latest/fast_ssim2/trait.ToLinearRgb.html) for custom types.
+Without `imgref`, use a `yuvxyb` type (add `yuvxyb` to your own dependencies) —
+`Yuv<u8>` / `Yuv<u16>` (or a `&Yuv<_>`, for planar YUV straight off a decoder),
+`Rgb`, `Xyb`, or `LinearRgb` — or implement [`ToLinearRgb`](https://docs.rs/fast-ssim2/latest/fast_ssim2/trait.ToLinearRgb.html) for custom types.
+YUV and `Rgb` inputs return `Err(Ssimulacra2Error::LinearRgbConversionFailed)`
+when their color signaling has no conversion to linear RGB.
 
 ## Batch Comparisons
 
@@ -267,12 +271,12 @@ result files: **[benchmarks/README.md](https://github.com/imazen/fast-ssim2/blob
 ### Custom Input Types
 
 ```rust
-use fast_ssim2::{ToLinearRgb, LinearRgbImage, srgb_u8_to_linear};
+use fast_ssim2::{ToLinearRgb, LinearRgbImage, Ssimulacra2Error, srgb_u8_to_linear};
 
 struct MyImage { /* ... */ }
 
 impl ToLinearRgb for MyImage {
-    fn to_linear_rgb(&self) -> LinearRgbImage {
+    fn try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error> {
         let data: Vec<[f32; 3]> = self.pixels.iter()
             .map(|[r, g, b]| [
                 srgb_u8_to_linear(*r),
@@ -280,10 +284,18 @@ impl ToLinearRgb for MyImage {
                 srgb_u8_to_linear(*b),
             ])
             .collect();
-        LinearRgbImage::new(data, self.width, self.height)
+        LinearRgbImage::try_new(data, self.width, self.height)
+            .map_err(|_| Ssimulacra2Error::InvalidImageSize)
     }
 }
 ```
+
+Conversion returns a `Result` because it genuinely fails for some inputs — a
+`yuvxyb::Yuv` frame or `yuvxyb::Rgb` image can carry matrix coefficients or a
+transfer function that has no conversion to linear RGB (H.273 MC=12, TC=17).
+Implementations that cannot fail return `Ok`. There is a second, provided
+method, `try_into_linear_rgb(self)`, which owned types override to reuse their
+pixel buffer instead of allocating.
 
 ### Explicit SIMD Backend
 

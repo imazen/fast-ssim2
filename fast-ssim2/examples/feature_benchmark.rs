@@ -5,9 +5,7 @@
 //! cargo run --release --example feature_benchmark
 //! ```
 
-#![allow(deprecated)]
-
-use fast_ssim2::{Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
+use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -68,7 +66,7 @@ fn benchmark_config(
 ) -> (f64, f64, f64, f64) {
     // Warmup
     for _ in 0..3 {
-        let _ = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
+        let _ = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
     }
 
     // Actual benchmark
@@ -76,8 +74,7 @@ fn benchmark_config(
     let mut score = 0.0;
     for _ in 0..iterations {
         let start = Instant::now();
-        score = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config)
-            .unwrap();
+        score = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config).unwrap();
         times.push(start.elapsed().as_secs_f64() * 1000.0); // Convert to ms
     }
 

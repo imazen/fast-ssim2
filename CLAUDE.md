@@ -87,4 +87,49 @@ different repo, read-only.**
   consistency, strip-vs-full parity, monotonicity, white-point landing).
 - Deprecated since 0.8.0, removal queued for 0.9.0 (see CHANGELOG QUEUED
   BREAKING CHANGES when added): `compute_frame_ssimulacra2`,
-  `compute_frame_ssimulacra2_with_config`.
+  `compute_frame_ssimulacra2_with_config`. **DONE — removed in 0.9.0.**
+
+## 0.9.0 API break (2026-08-31)
+
+- **`ToLinearRgb` is fallible.** Required method is now
+  `try_to_linear_rgb(&self) -> Result<LinearRgbImage, Ssimulacra2Error>`; the
+  provided buffer-reusing method is `try_into_linear_rgb(self)`. There is **no
+  infallible convenience method** — a panicking provided method on a trait
+  whose point is to stop panicking would defeat the change.
+- **Why:** the removed `compute_frame_ssimulacra2` pair was the only public
+  YUV entry point (bounded on `LinearRgb: TryFrom<T>`, which accepts
+  `Yuv<u8>`), and there was no `ToLinearRgb for Yuv` impl, so its "use
+  `compute_ssimulacra2` instead" note was false. YUV→linear fails on real
+  metadata, so the replacement impl had to be able to return `Err`.
+- **New impls:** `Yuv<T>` and `&Yuv<T>` for `T: yuvxyb::Pixel` (= `u8`, `u16`
+  — the only `Pixel` impls), and `Xyb` (which `src/lib.rs`'s own
+  `test_ssimulacra2` feeds). **`Hsl` was reachable through the old
+  `TryFrom` bound and is NOT covered** — nothing uses it; the workaround is
+  `yuvxyb::LinearRgb::from(hsl)`.
+- **Not a metric change.** `Yuv` routes through `yuvxyb::LinearRgb::try_from`,
+  exactly as the deleted function did — *not* through our `Rgb` impl, which
+  substitutes our own sRGB linearization for C++ parity. So `Yuv` and `Rgb`
+  inputs of the same picture still linearize differently; that is carried over
+  deliberately, not fixed here. `input.rs::yuv_tests::
+  yuv_conversion_matches_yuvxyb_bit_for_bit` pins it.
+- **The old infallible trait hid a reachable panic in the `Rgb` impl.** Its
+  non-sRGB arm did `.expect("Rgb to LinearRgb conversion should not fail")`,
+  and it does fail — H.273 TC=17 (`ST428`, digital cinema) has no `to_linear`
+  in yuvxyb. Regression test:
+  `input.rs::yuv_tests::unsupported_transfer_on_rgb_is_an_error_not_a_panic`.
+- Reachable `Err` values, verified in yuvxyb 0.5.0 source: MC=3 `Reserved`,
+  MC=12 `ChromaticityDerivedNonConstantLuminance`, TC=17 `ST428`, TC=0/3
+  `Reserved0`/`Reserved`, TC=22 `BT1361E`, plus unsupported primaries under
+  MC=0/9/13/14/15. `MatrixCoefficients::Unspecified` is **not** one of them —
+  `Yuv::new` rewrites it via `fix_unspecified_data`.
+
+## The `video` feature of `fast-ssim2-cli` does not build (pre-existing)
+
+`cargo build -p fast-ssim2-cli --features video` fails with 8 errors, all in
+`src/video.rs`: `av-metrics-decoders 0.3.2` pulls `v_frame 0.3.9` while
+`yuvxyb 0.5.0` uses `v_frame 0.5.2`, so `Frame<S>` and the `Pixel` bound come
+from two different crate versions. **Verified pre-existing at `f56991e`** (the
+parent commit fails identically). No CI job builds it — CI only ever runs
+`cargo clippy -p fast-ssim2-cli --all-targets` and `cargo test -p
+fast-ssim2-cli` with default features. Do not assume `--all-features` works on
+this workspace; fixing it needs a dependency bump, not a source edit.

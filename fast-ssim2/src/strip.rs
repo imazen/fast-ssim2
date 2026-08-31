@@ -262,8 +262,8 @@ where
     S: ToLinearRgb,
     D: ToLinearRgb,
 {
-    let img1: LinearRgbImage = source.into_linear_rgb();
-    let img2: LinearRgbImage = distorted.into_linear_rgb();
+    let img1: LinearRgbImage = source.try_into_linear_rgb()?;
+    let img2: LinearRgbImage = distorted.try_into_linear_rgb()?;
     let lin1: LinearRgb = img1.into();
     let lin2: LinearRgb = img2.into();
     compute_strip_impl(lin1, lin2, strip_height as usize, config, stop)
@@ -856,7 +856,7 @@ impl Ssimulacra2Reference {
         // share the strip's IIR boundary handling — see
         // `process_dist_strip_with_cached_ref`), while the dist side
         // streams strip-by-strip.
-        let img2: LinearRgb = distorted.into_linear_rgb().into();
+        let img2: LinearRgb = distorted.try_into_linear_rgb()?.into();
         let width = img2.width().get();
         let height = img2.height().get();
         if width != self.width() || height != self.height() {

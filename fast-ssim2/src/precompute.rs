@@ -228,7 +228,7 @@ impl Ssimulacra2Reference {
     /// # Errors
     /// - If the image (after padding) exceeds [`crate::MAX_IMAGE_PIXELS`] pixels
     pub fn new<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
-        let source_img = source.into_linear_rgb();
+        let source_img = source.try_into_linear_rgb()?;
         let original_width = source_img.width();
         let original_height = source_img.height();
         // Reflect-pad sub-8px sources up to the pyramid floor, exactly as
@@ -377,7 +377,7 @@ impl Ssimulacra2Reference {
         distorted: T,
         stop: &dyn enough::Stop,
     ) -> Result<f64, Ssimulacra2Error> {
-        let distorted_img = distorted.into_linear_rgb();
+        let distorted_img = distorted.try_into_linear_rgb()?;
         // Dimensions must match the *original* (pre-padding) reference
         // dimensions; sub-8px distorted images are then reflect-padded
         // identically to the reference in `new`.

@@ -1,6 +1,4 @@
-#![allow(deprecated)]
-
-use fast_ssim2::{Blur, compute_frame_ssimulacra2, compute_ssimulacra2};
+use fast_ssim2::{Blur, compute_ssimulacra2};
 use num_traits::clamp;
 use rand::RngExt;
 use std::hint::black_box;
@@ -98,19 +96,19 @@ fn bench_ssimulacra2(c: &mut Criterion) {
     // 320x240 (legacy)
     let (input, distorted) = make_test_pair(320, 240);
     c.bench_function("ssimulacra2_320x240", |b| {
-        b.iter(|| compute_frame_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
+        b.iter(|| compute_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
     });
 
     // 1920x1080 (FHD)
     let (input, distorted) = make_test_pair(1920, 1080);
     c.bench_function("ssimulacra2_1920x1080", |b| {
-        b.iter(|| compute_frame_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
+        b.iter(|| compute_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
     });
 
     // 3840x2160 (4K)
     let (input, distorted) = make_test_pair(3840, 2160);
     c.bench_function("ssimulacra2_3840x2160", |b| {
-        b.iter(|| compute_frame_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
+        b.iter(|| compute_ssimulacra2(black_box(&input), black_box(&distorted)).unwrap())
     });
 }
 

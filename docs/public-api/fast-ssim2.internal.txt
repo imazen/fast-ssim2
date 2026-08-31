@@ -9,19 +9,21 @@
 
 ## summary
 #
-#   pub modules                                 1
+#   pub modules                                 2
 #   pub types (struct/enum/trait/alias)         2
 #   pub consts/statics                          1
+#   free functions                              5
 #   inherent methods                            6
 #   struct fields                              11
 #   trait roster entries (type × trait)         7
 #   auto-trait-complete types                   1
 #
 # per-module pub lines:
-#   (root)                           11
+#   (root)                           12
+#   __bench_kernels                   5
 #   reference_data                   10
 
-## items (21 lines)
+## items (27 lines)
 
 pub const reference_data::REFERENCE_CASES: &[reference_data::ReferenceCase]
 pub ScalePlanesView::height: usize
@@ -39,8 +41,14 @@ pub fn LinearRgbImageError::assert_fields_are_eq(&self)
 pub fn SimdImpl::assert_fields_are_eq(&self)
 pub fn Ssimulacra2Error::assert_fields_are_eq(&self)
 pub fn Ssimulacra2Reference::scale_planes(&self, usize) -> core::option::Option<ScalePlanesView<'_>>
+pub fn __bench_kernels::edge_diff_map_simd(usize, usize, usize, usize, &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3]) -> [f64; 12]
+pub fn __bench_kernels::image_multiply_scalar(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &mut [alloc::vec::Vec<f32>; 3])
+pub fn __bench_kernels::image_multiply_simd(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &mut [alloc::vec::Vec<f32>; 3])
+pub fn __bench_kernels::linear_rgb_to_xyb_simd(&mut [[f32; 3]])
+pub fn __bench_kernels::ssim_map_simd(usize, usize, usize, usize, &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3]) -> [f64; 6]
 pub fn reference_data::ReferenceCase::clone(&self) -> reference_data::ReferenceCase
 pub fn reference_data::ReferenceCase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod __bench_kernels
 pub mod reference_data
 pub struct ScalePlanesView<'a>
 pub struct reference_data::ReferenceCase

@@ -3,11 +3,9 @@
 //! Run with:
 //!   cargo run --release --example benchmark_simd
 
-#![allow(deprecated)]
-
 use std::time::Instant;
 
-use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
+use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_ssimulacra2_with_config};
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
 fn create_test_image(width: usize, height: usize, seed: u64) -> Rgb {
@@ -71,13 +69,13 @@ fn benchmark_full_ssimulacra2(
 
     // Warmup
     for _ in 0..3 {
-        let _ = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
+        let _ = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
     }
 
     // Timed runs
     let start = Instant::now();
     for _ in 0..iterations {
-        let _ = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
+        let _ = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
     }
     let elapsed = start.elapsed();
 

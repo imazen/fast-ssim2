@@ -2,9 +2,7 @@
 //!
 //! Run with: cargo run --release --example profile_simd
 
-#![allow(deprecated)]
-
-use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_frame_ssimulacra2_with_config};
+use fast_ssim2::{Blur, SimdImpl, Ssimulacra2Config, compute_ssimulacra2_with_config};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -62,14 +60,13 @@ fn benchmark_config(
 ) -> f64 {
     // Warmup
     for _ in 0..3 {
-        let _ = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
+        let _ = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config);
     }
 
     let start = Instant::now();
     let mut score = 0.0;
     for _ in 0..iterations {
-        score = compute_frame_ssimulacra2_with_config(source.clone(), distorted.clone(), config)
-            .unwrap();
+        score = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config).unwrap();
     }
     let elapsed = start.elapsed();
     let ms_per_iter = elapsed.as_secs_f64() * 1000.0 / iterations as f64;

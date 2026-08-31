@@ -27,8 +27,8 @@
 
 | Item | Status |
 |------|--------|
-| `compute_frame_ssimulacra2<T,U>(T, U)` | QUEUED: deprecated since 0.8.0, removal in 0.9.0 |
-| `compute_frame_ssimulacra2_with_config<T,U>(T, U, Ssimulacra2Config)` | QUEUED: same |
+| `compute_frame_ssimulacra2<T,U>(T, U)` | **SHIPPED 0.9.0** — removed |
+| `compute_frame_ssimulacra2_with_config<T,U>(T, U, Ssimulacra2Config)` | **SHIPPED 0.9.0** — removed |
 
 No external org consumers found in the scan. Migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config`.
 
@@ -66,6 +66,18 @@ No external org consumers found in the scan. Migration: `compute_ssimulacra2` / 
 ```
 - Remove `Ssimulacra2Error::LinearRgbConversionFailed` — only constructed inside the deprecated `compute_frame_ssimulacra2*` path; unreachable after that removal
 ```
+
+> **SUPERSEDED 2026-08-31 (0.9.0) — do NOT remove this variant.** The premise
+> ("zero construction sites after the removal") no longer holds. 0.9.0 made
+> `ToLinearRgb` fallible and added `ToLinearRgb` impls for `yuvxyb::Yuv<T>` /
+> `&Yuv<T>` / `Xyb`, which is how YUV input reaches the non-deprecated API at
+> all. `LinearRgbConversionFailed` is now constructed in `src/input.rs` by the
+> `Yuv` and `Rgb` impls and is covered by tests in `input.rs::yuv_tests`. It is
+> load-bearing.
+
+> **Note on A-1 (`GaussianBlurError`):** still never constructed as of 0.9.0,
+> and still **not** removed — it was not in the approved 0.9.0 scope. It stays
+> queued.
 
 ---
 
