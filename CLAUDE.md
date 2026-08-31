@@ -117,11 +117,17 @@ different repo, read-only.**
   and it does fail — H.273 TC=17 (`ST428`, digital cinema) has no `to_linear`
   in yuvxyb. Regression test:
   `input.rs::yuv_tests::unsupported_transfer_on_rgb_is_an_error_not_a_panic`.
-- Reachable `Err` values, verified in yuvxyb 0.5.0 source: MC=3 `Reserved`,
-  MC=12 `ChromaticityDerivedNonConstantLuminance`, TC=17 `ST428`, TC=0/3
-  `Reserved0`/`Reserved`, TC=22 `BT1361E`, plus unsupported primaries under
-  MC=0/9/13/14/15. `MatrixCoefficients::Unspecified` is **not** one of them —
-  `Yuv::new` rewrites it via `fix_unspecified_data`.
+- Reachable `Err` values, read out of yuvxyb 0.5.0's `yuv_rgb/color.rs` +
+  `yuv_rgb/transfer/mod.rs` with the discriminants checked against
+  `av-data 0.4.4`'s enums: **MC=3** `Reserved` and **MC=12**
+  `ChromaticityDerivedNonConstantLuminance` (`get_yuv_constants` has no KR/KB
+  for it); **TC=0/3** `Reserved0`/`Reserved`, **TC=12** `BT1361E`, **TC=17**
+  `ST428`; plus unsupported `ColorPrimaries` under MC=0/10/11/13/14, which are
+  the values routed to `ncl_rgb_to_yuv_matrix_from_primaries`.
+  `MatrixCoefficients::Unspecified` (MC=2) is **not** one of them — `Yuv::new`
+  rewrites it via `fix_unspecified_data`. Note MC=14 `ICtCp` and MC=8 `YCgCo`
+  do *not* fail with BT.709/BT.2020 primaries, despite reading like they
+  should; the first test written for this used ICtCp and passed.
 
 ## `ssimulacra2_320x240` is too noisy to draw conclusions from
 
@@ -139,6 +145,46 @@ per-iteration time (7–8 ms) is short enough for that to dominate the mean. **D
 not quote a 320×240 delta without ≥3 runs per build.** To measure per-call fixed
 overhead properly, fit `α + β·pixels` over ≥4 sizes on a build where zenbench
 reports a completed round count.
+
+## Who consumes fast-ssim2 in `~/work` (audited 2026-08-31)
+
+- **Path deps — these compile against whatever is in this working tree, with no
+  version bump:** `codec-eval/crates/codec-iter`,
+  `zenmetrics/crates/zenmetrics-cli`, `glassa`. A break here reaches them
+  immediately. None of the three call the removed `compute_frame_*` pair or
+  implement `ToLinearRgb`, so 0.9.0 does not touch them.
+- **Registry deps** (unaffected until someone widens the requirement):
+  zenjpeg / codec-eval / zensim-bench / zenavif / heic `0.8.0`; zenmetrics-
+  orchestrator `0.8.1`; ravif / zensr-bench / zencodecs / imageflow's jpeg-q
+  harness `0.8.2`; zengif `0.7.1`; zenimage `0.6`.
+- **The only workspace caller of the removed pair** is
+  `zenjpeg/tests/bundled/edge_tile_ssim2_comparison.rs` (a `#[ignore]`d test
+  behind `#[allow(deprecated)]`), on the `0.8.0` requirement. Migration is one
+  line — it passes `LinearRgbImage`s, which implement `ToLinearRgb`, so
+  `compute_frame_ssimulacra2(a, b)` → `compute_ssimulacra2(a, b)`.
+  **The 2026-06-11 ablation report's "no external org consumers found" was
+  wrong** — re-grep before repeating it.
+- **Zero `ToLinearRgb` implementors exist outside this repo**, so the trait's
+  fallibility break has no downstream implementor to migrate. Every other
+  `compute_frame_ssimulacra2` hit in `~/work` (zensim-bench, ssim2-gpu,
+  jpegli-rs) is the *external* rust-av `ssimulacra2` crate, not this one.
+
+## `compare_tool/` does not build either (pre-existing, unrelated)
+
+`cargo build --manifest-path compare_tool/Cargo.toml` fails with 3 errors, none
+of them in code this repo controls:
+
+- `src/main.rs:17` — `yuvxyb::Rgb::new` takes `NonZeroUsize` since yuvxyb 0.5.0;
+  `compare_tool` still passes `usize`. It has been stale since that bump.
+- `src/main.rs:38` — the *external* `ssimulacra2 0.5.1` crate (rust-av) pins
+  `yuvxyb 0.4.2`, so `ssimulacra2::LinearRgb: TryFrom<yuvxyb::Rgb>` does not
+  hold against our `yuvxyb 0.5.0`. Two versions of yuvxyb in one graph.
+
+`compare_tool` is `exclude`d from the workspace and no CI job builds it. Its
+0.9.0 call sites were updated anyway (`fast_ssim2::compute_frame_ssimulacra2` →
+`compute_ssimulacra2`); the `ssimulacra2::compute_frame_ssimulacra2` call on
+line 38 is the upstream crate's function and stays. Fixing the build needs a
+yuvxyb-version decision, not an edit here.
 
 ## The `video` feature of `fast-ssim2-cli` does not build (pre-existing)
 
