@@ -7,6 +7,26 @@
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 _(none — both previously queued items shipped in 0.9.0.)_
 
+### Changed
+
+- **BEHAVIOUR: scores move. The opsin cube root and the horizontal Gaussian are now jpegli's own, which is what the C++ SSIMULACRA2 evaluates.** Both were adopted because they are simultaneously *faster* and *closer to the reference* — there was no trade-off to weigh.
+
+  Against the C++ binary (`/opt/homebrew/bin/ssimulacra2`, jpeg-xl 0.12.0), 96 references × 3 sizes × 7 distortions = 2016 cells:
+
+  | | 0.9.0 | now |
+  |---|--:|--:|
+  | mean(ours − C++) | +0.00740 | **+0.00012** |
+  | mean \|Δ\| | 0.02056 | **0.01658** |
+  | max \|Δ\| | 0.5223 | **0.1726** |
+
+  The systematic positive bias every released version has carried is gone, and the worst case is a third of what it was. Speed, paired A/B over three interleaved rounds on an M4 Pro: `ssimulacra2_1920x1080` −5.3%, `3840x2160` −4.3%, the `blur` kernel −12.9%.
+
+  **What moves:** scores shift by mean \|Δ\| 0.020 against 0.9.0 (max 0.45; 48% of cells move more than 0.01). Anything holding fast-ssim2 scores to a fixed value — pinned fixtures, cached quality decisions, RD curves — needs re-baselining. `tests/implementation_parity.rs` re-pinned its four real-image scores accordingly (verified identical on aarch64 and x86_64 before re-pinning).
+
+  Two mechanical notes: the cube root is jpegli's `CubeRootAndAdd`, which iterates the *reciprocal* cube root (no divisions, vectorisable seed); the horizontal Gaussian is jpegli's `FastGaussian1D`, four outputs per iteration from the closed forms for 2/3/4 recurrence steps, replacing the eight-rows-per-lane-group form. The opsin matrix multiply stays **unfused** — measured indistinguishable from the fused form in C++ agreement (0.01953 vs 0.01968) while keeping the scalar/wasm arms bit-identical, so 0.9.0's arch-consistency decision stands.
+
+  The cube root is FMA-shaped, so like the blur it now differs on targets without hardware FMA (the `magetypes` scalar polyfill: measured 2.98e-7 per XYB sample, 0 on every FMA-capable tier). `tests/simd_consistency.rs` gates that the same way it already gated the blur: bit-identity required within an FMA class, a measured per-sample bound across classes. Both `SimdImpl` backends and both architectures were re-verified bit-identical.
+
 ### Fixed
 
 - **Horizontal blur fell off a 4 KiB-aliasing cliff at power-of-two widths.** The pass runs the IIR over eight rows at once, one row per SIMD lane, so each column access is eight loads at stride `width * 4` bytes; at a power-of-two width those are congruent modulo 4096, and when the destination plane is page-aligned as well — deterministic for planes of a few MB — the loads, the stores and each other all collide in one cache set. Measured 5.34 ns/px at width 1024 against 0.70 at 1032 on a Ryzen 9 7900X (7.6×), and 3.89 against 0.72 at width 4096 on an Apple M4 Pro. `SimdGaussian` now keeps 1024 spare floats and places the temp plane 256 bytes past the source plane's own position within a page, computed from the actual pointers. **Scores are bit-identical** — this moves where the intermediate lives, not what it contains. End-to-end `compute_ssimulacra2`, paired A/B over three interleaved rounds: **−14.7% at 2048×1024** and −11.8% at 1024×1024 on x86, **−35.1% at 4096×512** on aarch64, every non-power-of-two width within ±1.2%. Regression guard: the new `blur_stride` bench. See [`benchmarks/blur_stride_2026-09-09.md`](benchmarks/blur_stride_2026-09-09.md)

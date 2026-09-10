@@ -148,16 +148,39 @@ distortions = 2016 cells.
   / 3 max ulp, and **jpegli's own `CubeRootAndAdd` is the least accurate of the
   three** (0.72 mean / 5 max ulp). So "our cube root is better than C's" and
   "our score is closer to C's" cannot both be optimised.
-- **Every shipped version is biased +0.0067 +/- 0.0016 high vs the C++ binary**,
-  and it is not the cube root. Adopting jpegli's *own* two approximations — its
-  `CubeRootAndAdd` (bias fused into the last multiply-add) plus its 4-unrolled
-  `FastGaussian1D` horizontal pass — removes the bias (+0.0010, CI includes 0),
-  cuts mean |delta| 0.0209 -> **0.0166** and max |delta| 0.49 -> **0.24**, all
-  significant under a paired bootstrap. The horizontal-blur form is the larger
-  half. **Not landed:** it is a metric change (needs the user's call), the
-  transliteration is FMA-shaped so it re-opens the wasm128/scalar
-  arch-consistency question 0.9.0's unfused matmul closed, and jpegli's
-  4-unrolled recurrence would have to be re-vectorised to be shippable.
+- **LANDED 2026-09-09: the opsin cube root and the horizontal Gaussian are now
+  jpegli's own.** Every released version through 0.9.0 was biased **+0.0067 high**
+  against the C++ binary; the two jpegli kernels remove it. Measured over the
+  same 2016 cells, shipped configuration (jpegli cbrt + jpegli blur + our
+  *unfused* opsin matmul):
+
+  | | 0.9.0 | now |
+  |---|--:|--:|
+  | mean(ours - C++) | +0.00740 | **+0.00012** |
+  | mean abs | 0.02056 | **0.01658** |
+  | max abs | 0.5223 | **0.1726** |
+
+  It is also faster: `ssimulacra2_1920x1080` -5.3%, `3840x2160` -4.3%, the blur
+  kernel -12.9% (paired A/B, 3 interleaved rounds, M4 Pro). **Scores moved**:
+  mean |delta| 0.020 vs 0.9.0, max 0.45, 48% of cells beyond 0.01 — anything
+  pinning fast-ssim2 scores needs re-baselining.
+- **Keep the opsin matmul UNFUSED.** Measured indistinguishable from the fused
+  form in C++ agreement (0.01953 vs 0.01968 mean abs) while keeping the
+  non-FMA arms bit-identical — and the shipped unfused combination actually beat
+  the fused one on bias (+0.00012 vs +0.00099) and worst case (0.173 vs 0.240).
+  0.9.0's arch-consistency decision stands; do not "restore" the FMA chain.
+- **The XYB stage is now FMA-shaped, like the blur.** jpegli's `CubeRootAndAdd`
+  uses genuine multiply-adds, unlike the Halley pair it replaced (whose only
+  multiplier was an exactly representable 2.0, which made fusion irrelevant).
+  Measured: **0 difference on every FMA-capable tier, 2.98e-7 per sample with
+  NEON disabled**. `simd_consistency` gates this by FMA class — bit-identity
+  within a class, a measured bound across — exactly as it already did for the
+  blur. If you touch the cube root, keep the two arms
+  (`cbrt_and_add_jpegli` and the vectorised body) operation-for-operation
+  identical, and keep `blur/gaussian.rs` (the `SimdImpl::Scalar` path) in step
+  with `blur/simd_gaussian.rs`: they are separate implementations of the same
+  arithmetic and letting them drift cost a 1.5e-3 backend split when the blur
+  was first swapped.
 - **Ruled out as sources of the residual:** the sRGB transfer function (the C++
   takes the `ExtraTF::kSRGB` fast path = `TF_SRGB().DisplayFromEncoded`, whose
   ten rational-polynomial coefficients are bit-identical as f32 to

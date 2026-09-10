@@ -100,6 +100,13 @@ not estimates.
   own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
   bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
   [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
+- [`jpegli_kernels_2026-09-09.md`](jpegli_kernels_2026-09-09.md) — landing
+  jpegli's cube root and horizontal Gaussian, the two kernels the C++
+  SSIMULACRA2 actually evaluates. Removes the +0.0067 bias every released
+  version carried (mean(ours − C++) now +0.00012, mean |Δ| 0.0206 → 0.0166, max
+  0.52 → 0.17) *and* runs 4–6% faster end to end. Records what moved (mean |Δ|
+  0.020 vs 0.9.0), why the opsin matmul stays unfused, and the FMA-class gating
+  the fusion-sensitive cube root now needs.
 - [`arch_consistency_2026-09-09.md`](arch_consistency_2026-09-09.md) — 28
   score pairs computed on an M4 Pro (NEON) and a Ryzen 9 7900X (AVX2) agree
   **bit for bit**, so the aarch64-measured C++ parity transfers to x86.

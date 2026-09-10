@@ -148,22 +148,22 @@ const REAL_IMAGE_CASES: &[RealImageTestCase] = &[
         // That is the property worth pinning; do not re-pin from one machine.
         name: "JPEG Q20",
         distorted_file: "q20.jpg",
-        expected_simd: 57.110739, // was 57.093473 (+0.017266)
+        expected_simd: 57.121009, // was 57.110739 (+0.010270)
     },
     RealImageTestCase {
         name: "JPEG Q45",
         distorted_file: "q45.jpg",
-        expected_simd: 68.672158, // was 68.675775 (-0.003617)
+        expected_simd: 68.633849, // was 68.672158 (-0.038309)
     },
     RealImageTestCase {
         name: "JPEG Q70",
         distorted_file: "q70.jpg",
-        expected_simd: 79.438655, // was 79.491173 (-0.052518)
+        expected_simd: 79.450310, // was 79.438655 (+0.011655)
     },
     RealImageTestCase {
         name: "JPEG Q90",
         distorted_file: "q90.jpg",
-        expected_simd: 90.843097, // was 90.834538 (+0.008559)
+        expected_simd: 90.751943, // was 90.843097 (-0.091154)
     },
 ];
 

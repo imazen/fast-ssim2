@@ -74,6 +74,21 @@ const TIER_TOLERANCE: f64 = 6e-1;
 /// different metrics — they disagreed by up to 0.879 on real photographs.
 const KERNEL_TOLERANCE: f64 = 1e-4;
 
+/// Per-sample bound on the XYB stage between two tiers in *different* FMA
+/// classes, i.e. a hardware-FMA target against the `magetypes` scalar polyfill.
+///
+/// Since 0.9.1 the opsin nonlinearity is jpegli's `CubeRootAndAdd` — the exact
+/// expression the C++ SSIMULACRA2 evaluates, which is why fast-ssim2's bias
+/// against the reference binary fell from +0.0067 to +0.0001. It iterates the
+/// reciprocal cube root through genuine multiply-adds, so unlike the two f32
+/// Halley steps it replaced (whose only multiplier was an exactly representable
+/// 2.0, making fusion irrelevant) it is fusion-sensitive.
+///
+/// aarch64 / Apple M4 Pro, 2026-09-09, every archmage token permutation:
+/// **0.0 for every permutation that keeps NEON**, 2.98e-7 with NEON disabled.
+/// The bound is set just above the measured value, not at a round guess.
+const XYB_FMA_CLASS_TOLERANCE: f64 = 1e-6;
+
 /// Generate a deterministic test image of varied linear RGB pixels.
 fn generate_test_image(width: usize, height: usize) -> LinearRgbImage {
     let mut data = Vec::with_capacity(width * height);
@@ -146,10 +161,33 @@ fn blur_fingerprint() -> u64 {
     h
 }
 
+/// Fingerprint of the XYB stage under the currently enabled tiers.
+///
+/// Same idea as [`blur_fingerprint`]: group permutations by what they actually
+/// compute rather than by what they claim to support. Since the opsin cube root
+/// became jpegli's FMA-shaped `CubeRootAndAdd`, this stage splits along the
+/// same hardware-FMA boundary the blur does.
+fn xyb_fingerprint() -> u64 {
+    let mut px: Vec<[f32; 3]> = (0..64)
+        .map(|i| {
+            let f = i as f32 / 64.0;
+            [0.05 + 0.9 * f, 0.5 - 0.4 * f, 0.2 + 0.6 * f * f]
+        })
+        .collect();
+    fast_ssim2::__bench_kernels::linear_rgb_to_xyb_simd(&mut px);
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for v in px.iter().flatten() {
+        h ^= u64::from(v.to_bits());
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
 struct Combo {
     label: String,
     score: f64,
     blur: u64,
+    xyb: u64,
 }
 
 /// Score `(source, distorted)` under every tier permutation and both backends.
@@ -157,6 +195,7 @@ fn score_everywhere(source: &LinearRgbImage, distorted: &LinearRgbImage) -> Vec<
     let mut out = Vec::new();
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let blur = blur_fingerprint();
+        let xyb = xyb_fingerprint();
         for (name, cfg) in [
             ("simd", Ssimulacra2Config::new(SimdImpl::Simd)),
             ("scalar", Ssimulacra2Config::new(SimdImpl::Scalar)),
@@ -168,6 +207,7 @@ fn score_everywhere(source: &LinearRgbImage, distorted: &LinearRgbImage) -> Vec<
                 label: format!("{}/{name}", perm.label),
                 score,
                 blur,
+                xyb,
             });
         }
     });
@@ -189,18 +229,23 @@ fn assert_agreement(case: &str, combos: &[Combo]) -> (f64, f64) {
         if diff > worst_any.0 {
             worst_any = (diff, c.label.clone());
         }
-        if c.blur == base.blur && diff > worst_same.0 {
+        // "Same class" means both FMA-shaped stages computed the same bits.
+        // Two stages are now fusion-sensitive — the blur's MUL_PREV step and
+        // the opsin cube root — so grouping on the blur alone would compare a
+        // hardware-FMA XYB against a polyfill one and call the difference a
+        // kernel bug.
+        if c.blur == base.blur && c.xyb == base.xyb && diff > worst_same.0 {
             worst_same = (diff, c.label.clone());
         }
     }
     let classes = {
-        let mut v: Vec<u64> = combos.iter().map(|c| c.blur).collect();
+        let mut v: Vec<(u64, u64)> = combos.iter().map(|c| (c.blur, c.xyb)).collect();
         v.sort_unstable();
         v.dedup();
         v.len()
     };
     println!(
-        "{case:<20} combos={:<3} blur-classes={classes}  same-blur spread {:.3e}  \
+        "{case:<20} combos={:<3} fma-classes={classes}  same-class spread {:.3e}  \
          cross-blur spread {:.3e}",
         combos.len(),
         worst_same.0,
@@ -210,9 +255,10 @@ fn assert_agreement(case: &str, combos: &[Combo]) -> (f64, f64) {
     assert!(
         worst_same.0 < KERNEL_TOLERANCE,
         "{case}: two tiers with a bit-identical blur still disagree by {:e} \
-         (bound {KERNEL_TOLERANCE:e}); worst is '{}' vs '{}'. That cannot be the \
-         known magetypes FMA gap — something in the XYB, SSIM' or edge-diff \
-         kernels is tier-dependent.",
+         (bound {KERNEL_TOLERANCE:e}); worst is '{}' vs '{}'. Both fusion-sensitive \
+         stages (blur, opsin cube root) produced identical bits here, so this \
+         cannot be the known magetypes FMA gap — something in the SSIM' or \
+         edge-diff kernels is tier-dependent.",
         worst_same.0,
         worst_same.1,
         base.label
@@ -303,6 +349,7 @@ fn dispatched_kernels_are_bit_identical_across_tiers() {
     type KernelOutputs = (Vec<[f32; 3]>, [f64; 6], [f64; 12], [Vec<f32>; 3]);
     let mut baseline: Option<KernelOutputs> = None;
     let mut checked = 0usize;
+    let mut saw_xyb_class_split = false;
 
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let mut xyb = rgb.clone();
@@ -316,16 +363,33 @@ fn dispatched_kernels_are_bit_identical_across_tiers() {
             None => baseline = Some((xyb, ssim, edge, mulout)),
             Some((x0, s0, e0, m0)) => {
                 checked += 1;
-                for (i, (p, q)) in xyb.iter().zip(x0.iter()).enumerate() {
-                    for (c, (a, b)) in p.iter().zip(q.iter()).enumerate() {
-                        assert_eq!(
-                            a.to_bits(),
-                            b.to_bits(),
-                            "linear_rgb_to_xyb_simd differs under '{}' at pixel {i} channel {c}: \
-                             {a} vs {b}",
-                            perm.label,
-                        );
+                // The opsin cube root is jpegli's `CubeRootAndAdd`, which is
+                // FMA-shaped, so the XYB stage now behaves exactly like the
+                // blur: bit-identical wherever `mul_add` is a real fused
+                // multiply-add, ~1 ulp off on the `magetypes` scalar polyfill.
+                // Bit-identity is therefore required *within* an FMA class and
+                // a per-sample bound across classes — the same discipline
+                // `blur_tier_divergence_is_bounded` applies, not a loosening.
+                let mut worst = 0.0f64;
+                let mut bit_identical = true;
+                for (p, q) in xyb.iter().zip(x0.iter()) {
+                    for (a, b) in p.iter().zip(q.iter()) {
+                        if a.to_bits() != b.to_bits() {
+                            bit_identical = false;
+                        }
+                        worst = worst.max((f64::from(*a) - f64::from(*b)).abs());
                     }
+                }
+                if !bit_identical {
+                    saw_xyb_class_split = true;
+                    assert!(
+                        worst <= XYB_FMA_CLASS_TOLERANCE,
+                        "linear_rgb_to_xyb_simd differs by {worst:e} under '{}' \
+                         (bound {XYB_FMA_CLASS_TOLERANCE:e}). A permutation without \
+                         hardware FMA is expected to differ by ~1 ulp; anything \
+                         larger is a real tier dependence, not the known gap.",
+                        perm.label,
+                    );
                 }
                 assert_eq!(ssim, *s0, "ssim_map_simd differs under '{}'", perm.label);
                 assert_eq!(

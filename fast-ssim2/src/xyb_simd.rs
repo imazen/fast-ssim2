@@ -7,6 +7,7 @@
 use archmage::incant;
 use archmage::magetypes;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
+use magetypes::simd::generic::i32x8 as GenericI32x8;
 
 // XYB color space constants from jpegli
 pub(crate) const K_M02: f32 = 0.078f32;
@@ -26,41 +27,54 @@ const OPSIN_ABSORBANCE_MATRIX: [f32; 9] = [
 
 const OPSIN_ABSORBANCE_BIAS: f32 = K_B0;
 
-/// Scalar cube root initial estimate via integer bit manipulation.
-/// Returns an approximation to cbrt(x) suitable for refinement by Halley iterations.
+/// jpegli `CubeRootAndAdd` (`lib/base/fast_math-inl.h`) — `cbrt(x) + add`, and
+/// the exact expression the C++ SSIMULACRA2 binary evaluates. `libjxl` and
+/// `cloudinary/ssimulacra2` carry byte-identical copies of it.
+///
+/// Newton–Raphson on the *reciprocal* cube root: `r` converges to `x^(-1/3)`
+/// and the final `r*r*x` recovers the root, so there is no division anywhere
+/// and the seed is pure integer arithmetic. That is why it is both faster than
+/// the two f32 Halley steps this crate used through 0.9.0 (measured: 2.7–2.9%
+/// on NEON, 6–8% on AVX2 in the XYB kernel) and bit-identical to the reference
+/// rather than 3e-8 away from it. See `benchmarks/cbrt_perf_2026-09-09.md`.
+///
+/// Highway's `NegMulAdd(a, b, c)` is the fused `c - a*b` and `MulAdd(a, b, c)`
+/// is `a*b + c`; the association below matches it operation for operation, and
+/// the vectorised body in [`linear_rgb_to_xyb_inner`] matches this one, so the
+/// scalar arm, the `len % 8` remainder and the vector arm all agree bit-for-bit.
+///
+/// Accuracy is deliberately *not* the goal here — this approximation is the
+/// least accurate of the three we have measured (0.72 mean / 5 max ulp against
+/// f64 `cbrt`, versus 0.49/3 for the old Halley pair and 0 for a f64 Newton
+/// pair). Matching the reference is the goal, and the reference computes this.
 #[inline(always)]
-fn cbrtf_initial_f32(x: f32) -> f32 {
-    const B1: u32 = 709_958_130;
-    let ui = x.to_bits();
-    let hx = (ui & 0x7FFF_FFFF) / 3 + B1;
-    f32::from_bits((ui & 0x8000_0000) | hx)
-}
+fn cbrt_and_add_jpegli(x: f32, add: f32) -> f32 {
+    const K_EXP_BIAS: i32 = 0x5480_0000; // cast(1.) + cast(1.) / 3
+    const K_EXP_MUL: i32 = 0x002A_AAAA; // shifted 1/3
+    const K1_3: f32 = 1.0 / 3.0;
+    const K4_3: f32 = 4.0 / 3.0;
 
-/// Two f32 Halley steps from [`cbrtf_initial_f32`] — the cube root the
-/// vectorised body evaluates, written out so the scalar arm and the
-/// short-plane remainder can compute the *same* value instead of a
-/// differently-rounded one.
-///
-/// Accuracy over the domain the opsin stage produces (`[kB0, 1.004]`,
-/// exhaustively swept over all 67.6M f32 values): max 1.92e-7 = 1.75 ulp.
-/// A third and fourth Halley step do not improve on that (1.58 ulp) — the
-/// iteration is rounding-limited, not convergence-limited — so raising the
-/// accuracy would mean carrying the iteration in f64, which is what the
-/// old scalar path did and what made the two backends disagree.
-///
-/// For reference, jpegli's own `CubeRootAndAdd` (what the C++ SSIMULACRA2
-/// binary evaluates) measures 3.34 ulp on the same sweep, and documents
-/// itself as "6 ulp max error".
-#[inline(always)]
-fn cbrtf_halley_f32(x: f32) -> f32 {
-    let mut t = cbrtf_initial_f32(x);
-    // Written to match the vectorised body operation-for-operation:
-    // `t *= fma(x, 2, r) / (x + fma(r, 2, 0))`.
-    for _ in 0..2 {
-        let r = t * t * t;
-        t *= x.mul_add(2.0, r) / (x + r.mul_add(2.0, 0.0));
+    let xa_3 = K1_3 * x;
+    let m1 = x.to_bits() as i32;
+    // Special case for 0, exactly as the C++ does (`IfThenZeroElse`): an
+    // exponent of 0 makes `kExpBias - exp/3` wrong and would feed NaN forward.
+    let m2 = if m1 == 0 {
+        0
+    } else {
+        K_EXP_BIAS - (m1 >> 23) * K_EXP_MUL
+    };
+    let mut r = f32::from_bits(m2 as u32);
+
+    for _ in 0..3 {
+        let r2 = r * r;
+        r = (-xa_3).mul_add(r2 * r2, K4_3 * r);
     }
-    t
+    let mut r2 = r * r;
+    r = K1_3.mul_add((-x).mul_add(r2 * r2, r), r);
+    r2 = r * r;
+    // The C++ folds the additive constant into this last operation rather than
+    // rounding `cbrt(x)` first and adding after.
+    r2.mul_add(x, add)
 }
 
 /// Fast scalar cube root using bit manipulation + Newton-Raphson in f64.
@@ -104,10 +118,11 @@ fn convert_pixel_scalar(pix: &mut [f32; 3], absorbance_bias: f32) {
     // vector arm; when it used the f64 `cbrtf_fast` instead, a plane's last
     // seven pixels were converted with different math than the rest of it,
     // and `SimdImpl::Scalar` computed a different metric than `SimdImpl::Simd`
-    // rather than the same metric more slowly.
-    mixed0 = cbrtf_halley_f32(mixed0) + absorbance_bias;
-    mixed1 = cbrtf_halley_f32(mixed1) + absorbance_bias;
-    mixed2 = cbrtf_halley_f32(mixed2) + absorbance_bias;
+    // rather than the same metric more slowly. The additive constant is folded
+    // into the cube root's last operation, as the C++ does.
+    mixed0 = cbrt_and_add_jpegli(mixed0, absorbance_bias);
+    mixed1 = cbrt_and_add_jpegli(mixed1, absorbance_bias);
+    mixed2 = cbrt_and_add_jpegli(mixed2, absorbance_bias);
 
     pix[0] = 0.5 * (mixed0 - mixed1);
     pix[1] = 0.5 * (mixed0 + mixed1);
@@ -119,6 +134,8 @@ fn convert_pixel_scalar(pix: &mut [f32; 3], absorbance_bias: f32) {
 fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
+    #[allow(non_camel_case_types)]
+    type i32x8 = GenericI32x8<Token>;
     const LANES: usize = 8;
 
     let absorbance_bias = -cbrtf_fast(OPSIN_ABSORBANCE_BIAS);
@@ -134,9 +151,14 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
     let m22 = f32x8::splat(token, OPSIN_ABSORBANCE_MATRIX[8]);
     let bias = f32x8::splat(token, OPSIN_ABSORBANCE_BIAS);
     let zero = f32x8::zero(token);
-    let two = f32x8::splat(token, 2.0);
     let absorb_bias = f32x8::splat(token, absorbance_bias);
     let half = f32x8::splat(token, 0.5);
+    // jpegli `CubeRootAndAdd` constants.
+    let k1_3 = f32x8::splat(token, 1.0 / 3.0);
+    let k4_3 = f32x8::splat(token, 4.0 / 3.0);
+    let exp_bias = i32x8::splat(token, 0x5480_0000);
+    let exp_mul = i32x8::splat(token, 0x002A_AAAA);
+    let izero = i32x8::zero(token);
 
     let chunks = input.len() / LANES;
 
@@ -181,40 +203,33 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
         let mixed1 = mixed1.max(zero);
         let mixed2 = mixed2.max(zero);
 
-        // Scalar initial estimates (integer bit manipulation — can't vectorize)
-        let mut est0 = mixed0.to_array();
-        let mut est1 = mixed1.to_array();
-        let mut est2 = mixed2.to_array();
-        for i in 0..LANES {
-            est0[i] = cbrtf_initial_f32(est0[i]);
-            est1[i] = cbrtf_initial_f32(est1[i]);
-            est2[i] = cbrtf_initial_f32(est2[i]);
-        }
+        // jpegli `CubeRootAndAdd`, vectorised: same operations, same order and
+        // the same FMA association as `cbrt_and_add_jpegli`, so the two arms
+        // and the `len % 8` remainder all produce identical bits. The seed is
+        // integer-only, so unlike the Halley pair it needs no per-lane scalar
+        // round trip, and the iteration converges on `x^(-1/3)` so there is no
+        // division to wait on.
+        let cbrt_and_add = |x: f32x8| -> f32x8 {
+            let xa_3 = k1_3 * x;
+            let m1 = x.bitcast_to_i32();
+            let m2 = exp_bias - m1.shr_arithmetic_const::<23>() * exp_mul;
+            // `IfThenZeroElse(m1 == 0, ...)`
+            let m2 = i32x8::blend(m1.simd_eq(izero), izero, m2);
+            let mut r = m2.bitcast_to_f32();
+            for _ in 0..3 {
+                let r2 = r * r;
+                // `NegMulAdd(xa_3, r2*r2, k4_3 * r)`
+                r = (zero - xa_3).mul_add(r2 * r2, k4_3 * r);
+            }
+            let r2 = r * r;
+            r = k1_3.mul_add((zero - x).mul_add(r2 * r2, r), r);
+            let r2 = r * r;
+            r2.mul_add(x, absorb_bias)
+        };
 
-        // Halley's method iterations in SIMD (3 channels interleaved for ILP)
-        let mut t0 = f32x8::from_array(token, est0);
-        let mut t1 = f32x8::from_array(token, est1);
-        let mut t2 = f32x8::from_array(token, est2);
-
-        // Iteration 1
-        let mut r0 = t0 * t0 * t0;
-        let mut r1 = t1 * t1 * t1;
-        let mut r2 = t2 * t2 * t2;
-        t0 *= mixed0.mul_add(two, r0) / (mixed0 + r0.mul_add(two, zero));
-        t1 *= mixed1.mul_add(two, r1) / (mixed1 + r1.mul_add(two, zero));
-        t2 *= mixed2.mul_add(two, r2) / (mixed2 + r2.mul_add(two, zero));
-
-        // Iteration 2
-        r0 = t0 * t0 * t0;
-        r1 = t1 * t1 * t1;
-        r2 = t2 * t2 * t2;
-        t0 *= mixed0.mul_add(two, r0) / (mixed0 + r0.mul_add(two, zero));
-        t1 *= mixed1.mul_add(two, r1) / (mixed1 + r1.mul_add(two, zero));
-        t2 *= mixed2.mul_add(two, r2) / (mixed2 + r2.mul_add(two, zero));
-
-        let mixed0 = t0 + absorb_bias;
-        let mixed1 = t1 + absorb_bias;
-        let mixed2 = t2 + absorb_bias;
+        let mixed0 = cbrt_and_add(mixed0);
+        let mixed1 = cbrt_and_add(mixed1);
+        let mixed2 = cbrt_and_add(mixed2);
 
         // XYB transform
         let x = half * (mixed0 - mixed1);
@@ -245,7 +260,7 @@ pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
 /// Converts linear RGB to XYB in place with no SIMD at all.
 ///
 /// Bit-identical to [`linear_rgb_to_xyb_simd`]: the same matrix, the same
-/// operation order, and the same [`cbrtf_halley_f32`] cube root, evaluated one
+/// operation order, and the same [`cbrt_and_add_jpegli`] cube root, evaluated one
 /// pixel at a time. `SimdImpl::Scalar` selects this so that the two backends
 /// differ only in how the arithmetic is scheduled, never in what arithmetic is
 /// performed. It previously called `yuvxyb`'s conversion, whose f64 cube root

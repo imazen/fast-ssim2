@@ -7,6 +7,7 @@
 /// dependency lives within a lane while the 8 lanes proceed in parallel.
 use archmage::incant;
 use archmage::magetypes;
+use magetypes::simd::generic::f32x4 as GenericF32x4;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 mod consts {
@@ -181,227 +182,206 @@ impl SimdGaussian {
 }
 
 // ---------------------------------------------------------------------------
-// Horizontal pass — recursive Gaussian IIR, SIMD-vectorised across rows
-// (8 rows per lane group) with a scalar remainder for leftover rows.
+// Horizontal pass — jpegli's `FastGaussian1D`, four outputs per iteration
 // ---------------------------------------------------------------------------
 
+/// Horizontal recursive Gaussian, in the form the C++ SSIMULACRA2 evaluates.
+///
+/// The recurrence is serial along a row, so it has to be vectorised across
+/// *something*. Through 0.9.0 this crate vectorised across **rows** — eight
+/// rows per lane group, one row per lane — which works but makes every column
+/// access an eight-wide gather at stride `width * 4` bytes, and that stride is
+/// what produced the 4 KiB-aliasing cliff `SimdGaussian::temp_offset` now
+/// defends against.
+///
+/// jpegli vectorises across **columns** instead: four outputs per iteration,
+/// from the closed forms for two, three and four recurrence steps (`CPP_MUL_IN`
+/// lanes 1..3, generated in `build.rs`). Loads and stores stay contiguous. It
+/// is both faster — 12.3–13.7% on NEON, 4–7% on AVX2, measured in
+/// `benchmarks/blur_stride_2026-09-09.md` — and bit-identical to the reference,
+/// which the row-parallel form was not.
+///
+/// `HWY_CAPPED(float, 4)` in the C++ pins this to four lanes on every non-scalar
+/// target, so widening it past `f32x4` would *break* the parity it buys.
 fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
     assert_eq!(input.len(), output.len());
-    let height = input.len() / width;
-    // SIMD path processes 8 rows in parallel (one row per lane). The horizontal
-    // IIR is a serial recurrence *within* a row, so it can't vectorise across a
-    // row — but it's fully independent *across* rows, so we run 8 rows at once
-    // with the IIR state held in 8-lane vectors. This is the across-the-other-
-    // axis trick the vertical pass already uses for columns. On Neoverse-N1 the
-    // scalar horizontal IIR was ~50% of the whole blur (and blur was ~40% of the
-    // SSIMULACRA2 pipeline) because each row's recurrence serialised; lane-per-
-    // row recovers the parallelism the vertical pass already had.
-    let groups = height / VERT_STATE_LANES;
-    if groups > 0 {
-        horizontal_pass_simd(input, output, width, groups * VERT_STATE_LANES);
-    }
-    // Scalar remainder rows (height not a multiple of 8).
-    horizontal_pass_rows(input, output, width, groups * VERT_STATE_LANES);
-}
 
-/// SIMD horizontal pass dispatcher — processes 8 rows per lane group.
-fn horizontal_pass_simd(input: &[f32], output: &mut [f32], width: usize, row_limit: usize) {
+    #[cfg(feature = "rayon")]
+    {
+        // Rows are independent, so this parallelises cleanly — and unlike the
+        // row-vectorised predecessor, every lane of every chunk still walks
+        // contiguous memory.
+        use rayon::prelude::*;
+        input
+            .par_chunks_exact(width)
+            .zip(output.par_chunks_exact_mut(width))
+            .for_each(|(inp, out)| {
+                incant!(
+                    horizontal_pass_inner(inp, out, width),
+                    [v3, neon, wasm128, scalar]
+                );
+            });
+        return;
+    }
+
+    #[cfg(not(feature = "rayon"))]
     incant!(
-        horizontal_pass_simd_inner(input, output, width, row_limit),
+        horizontal_pass_inner(input, output, width),
         [v3, neon, wasm128, scalar]
     )
 }
 
-/// Generic row-parallel horizontal pass — 8 rows at a time, one row per lane.
-///
-/// Each column position `n` is loaded from 8 consecutive rows into a vector
-/// (a manual 8-wide gather: 8 scalar loads at stride `width`), the recursive
-/// Gaussian IIR is advanced with vector state, and the result column is stored
-/// back across the 8 rows. The bounds branches on `left`/`right`/`n` are the
-/// same for every lane in a group (they depend only on the column index), so
-/// the inner loop stays branch-light.
+/// One or more whole rows of the horizontal pass. `input` and `output` are
+/// `width`-sized row slices (or a whole plane, whose rows are then walked in
+/// order).
 #[magetypes(v3, neon, wasm128, scalar)]
-fn horizontal_pass_simd_inner(
-    token: Token,
-    input: &[f32],
-    output: &mut [f32],
-    width: usize,
-    row_limit: usize,
-) {
+fn horizontal_pass_inner(token: Token, input: &[f32], output: &mut [f32], width: usize) {
     #[allow(non_camel_case_types)]
-    type f32x8 = GenericF32x8<Token>;
-    const LANES: usize = 8;
+    type f32x4 = GenericF32x4<Token>;
+    const LANES: isize = 4;
 
     let big_n = consts::RADIUS as isize;
-    let mul_in_1 = f32x8::splat(token, consts::MUL_IN_1);
-    let mul_in_3 = f32x8::splat(token, consts::MUL_IN_3);
-    let mul_in_5 = f32x8::splat(token, consts::MUL_IN_5);
-    let mul_prev_1 = f32x8::splat(token, consts::MUL_PREV_1);
-    let mul_prev_3 = f32x8::splat(token, consts::MUL_PREV_3);
-    let mul_prev_5 = f32x8::splat(token, consts::MUL_PREV_5);
-    let zero = f32x8::zero(token);
 
-    let mut row_base = 0usize;
-    while row_base < row_limit {
-        // Manual gather/scatter helpers for the LANES rows starting at row_base.
-        let gather = |col: usize| -> f32x8 {
-            let mut a = [0.0f32; LANES];
-            for (lane, slot) in a.iter_mut().enumerate() {
-                *slot = input[(row_base + lane) * width + col];
+    // `ShiftLeftLanes<i>(mul_in_k)` for i in 0..4. In the C++ these are produced
+    // per iteration by a lane shift; here they are loop-invariant constants, so
+    // the shift costs nothing and `magetypes` needs no lane-shift primitive.
+    // (`magetypes` 0.9.29 has neither `Broadcast<N>` nor `ShiftLeftLanes<N>` —
+    // imazen/archmage#115. Raw `core::arch` lane ops are reachable through
+    // `archmage::intrinsics` without `unsafe`, but measured 0.5–1.5% *slower*
+    // than this, so the portable form is what ships.)
+    let shifted = |base: usize, i: usize| -> f32x4 {
+        let mut a = [0.0f32; 4];
+        for (j, slot) in a.iter_mut().enumerate() {
+            if j >= i {
+                *slot = consts::CPP_MUL_IN[base + (j - i)];
             }
-            f32x8::from_array(token, a)
+        }
+        f32x4::from_array(token, a)
+    };
+    let mul_in: [[f32x4; 4]; 3] =
+        core::array::from_fn(|band| core::array::from_fn(|i| shifted(band * 4, i)));
+    let mul_prev: [f32x4; 3] = core::array::from_fn(|band| {
+        f32x4::from_array(
+            token,
+            core::array::from_fn(|j| consts::CPP_MUL_PREV[band * 4 + j]),
+        )
+    });
+    let mul_prev2: [f32x4; 3] = core::array::from_fn(|band| {
+        f32x4::from_array(
+            token,
+            core::array::from_fn(|j| consts::CPP_MUL_PREV2[band * 4 + j]),
+        )
+    });
+
+    for (inp, out) in input
+        .chunks_exact(width)
+        .zip(output.chunks_exact_mut(width))
+    {
+        let at = |i: isize| -> f32 {
+            if i >= 0 && (i as usize) < width {
+                inp[i as usize]
+            } else {
+                0.0
+            }
         };
 
-        let mut prev_1 = zero;
-        let mut prev_3 = zero;
-        let mut prev_5 = zero;
-        let mut prev2_1 = zero;
-        let mut prev2_3 = zero;
-        let mut prev2_5 = zero;
+        // Scalar prologue and epilogue, exactly as the C++ runs them: scalar
+        // until `RoundUpTo(N + 1, 4)`, unrolled through
+        // `width - N + 1 - 3`, scalar to the end.
+        let (mut p1, mut p3, mut p5) = (0f32, 0f32, 0f32);
+        let (mut q1, mut q3, mut q5) = (0f32, 0f32, 0f32);
+        let scalar_step = |sum: f32, p: &mut (f32, f32, f32), q: &mut (f32, f32, f32)| -> f32 {
+            let mut o1 = sum * consts::MUL_IN_1;
+            let mut o3 = sum * consts::MUL_IN_3;
+            let mut o5 = sum * consts::MUL_IN_5;
+            o1 = consts::MUL_PREV2_1.mul_add(q.0, o1);
+            o3 = consts::MUL_PREV2_3.mul_add(q.1, o3);
+            o5 = consts::MUL_PREV2_5.mul_add(q.2, o5);
+            *q = *p;
+            o1 = consts::MUL_PREV_1.mul_add(p.0, o1);
+            o3 = consts::MUL_PREV_3.mul_add(p.1, o3);
+            o5 = consts::MUL_PREV_5.mul_add(p.2, o5);
+            *p = (o1, o3, o5);
+            o1 + o3 + o5
+        };
 
-        let mut n = (-big_n) + 1;
-        while n < width as isize {
-            let left = n - big_n - 1;
-            let right = n + big_n - 1;
-            let left_val = if left >= 0 && (left as usize) < width {
-                gather(left as usize)
-            } else {
-                zero
-            };
-            let right_val = if right >= 0 && (right as usize) < width {
-                gather(right as usize)
-            } else {
-                zero
-            };
-            let sum = left_val + right_val;
-
-            // Mirror the scalar `horizontal_row` op order EXACTLY so the SIMD
-            // path's f32 rounding matches it bit-for-bit (MUL_PREV2_k == -1):
-            //   out_k  = sum * MUL_IN_k                 (rounded product)
-            //   out_k  = -prev2_k + out_k               (the MUL_PREV2 step)
-            //   out_k  = MUL_PREV_k * prev_k + out_k    (the MUL_PREV step)
-            // Merging the first two into one mul_add would change rounding.
-            //
-            // The MUL_PREV step stays a **fused** multiply-add because the C++
-            // reference fuses it (`FastGaussian1D` -> highway `MulAdd`), and
-            // matching the reference here is worth more than the one place
-            // fast-ssim2 cannot currently be bit-identical across targets:
-            // `magetypes` lowers `mul_add` to a real FMA on NEON/AVX2/AVX-512
-            // but to `a * b + c` on wasm128 (no FMA in the wasm SIMD MVP) and
-            // on its scalar polyfill. Unfusing this recurrence was measured and
-            // rejected — it makes every target agree with every other, at the
-            // cost of agreeing with the reference 2.8x less well (mean |delta|
-            // vs the C++ binary over 576 real photographic pairs: 0.024 fused,
-            // 0.067 unfused, and the unfused form acquires a systematic -0.058
-            // bias). See `benchmarks/cpp_parity_2026-08-31.md`; the fix belongs
-            // in magetypes, whose own `f32x1::mul_add` already uses `fmaf`.
-            let p1 = sum * mul_in_1;
-            let p3 = sum * mul_in_3;
-            let p5 = sum * mul_in_5;
-            let out_1 = mul_prev_1.mul_add(prev_1, p1 - prev2_1);
-            let out_3 = mul_prev_3.mul_add(prev_3, p3 - prev2_3);
-            let out_5 = mul_prev_5.mul_add(prev_5, p5 - prev2_5);
-
-            prev2_1 = prev_1;
-            prev2_3 = prev_3;
-            prev2_5 = prev_5;
-            prev_1 = out_1;
-            prev_3 = out_3;
-            prev_5 = out_5;
-
-            if n >= 0 && (n as usize) < width {
-                let result = (out_1 + out_3 + out_5).to_array();
-                let col = n as usize;
-                for (lane, &v) in result.iter().enumerate() {
-                    output[(row_base + lane) * width + col] = v;
-                }
+        let mut n = -big_n + 1;
+        let first_aligned = ((big_n + 1) + LANES - 1) / LANES * LANES;
+        while n < first_aligned.min(width as isize) {
+            let sum = at(n - big_n - 1) + at(n + big_n - 1);
+            let (mut pv, mut qv) = ((p1, p3, p5), (q1, q3, q5));
+            let o = scalar_step(sum, &mut pv, &mut qv);
+            (p1, p3, p5) = pv;
+            (q1, q3, q5) = qv;
+            if n >= 0 {
+                out[n as usize] = o;
             }
-
             n += 1;
         }
 
-        row_base += LANES;
-    }
-}
+        let mut prev = [
+            f32x4::splat(token, p1),
+            f32x4::splat(token, p3),
+            f32x4::splat(token, p5),
+        ];
+        let mut prev2 = [
+            f32x4::splat(token, q1),
+            f32x4::splat(token, q3),
+            f32x4::splat(token, q5),
+        ];
 
-/// Scalar horizontal pass over rows `[start_row, height)`.
-#[inline(always)]
-fn horizontal_pass_rows(input: &[f32], output: &mut [f32], width: usize, start_row: usize) {
-    let start = start_row * width;
-    if start >= input.len() {
-        return;
-    }
-    #[cfg(feature = "rayon")]
-    {
-        use rayon::prelude::*;
-        input[start..]
-            .par_chunks_exact(width)
-            .zip(output[start..].par_chunks_exact_mut(width))
-            .for_each(|(inp, out)| horizontal_row(inp, out, width));
-    }
+        while n < width as isize - big_n + 1 - (LANES - 1) {
+            let base_l = (n - big_n - 1) as usize;
+            let base_r = (n + big_n - 1) as usize;
+            // The C++ loads one vector of sums and broadcasts each lane; with
+            // no `Broadcast<N>` available, splat each sum from a scalar load —
+            // same values, and it measured no slower.
+            let s: [f32x4; 4] =
+                core::array::from_fn(|k| f32x4::splat(token, inp[base_l + k] + inp[base_r + k]));
 
-    #[cfg(not(feature = "rayon"))]
-    {
-        input[start..]
-            .chunks_exact(width)
-            .zip(output[start..].chunks_exact_mut(width))
-            .for_each(|(inp, out)| horizontal_row(inp, out, width));
-    }
-}
+            let mut o = [f32x4::zero(token); 3];
+            for band in 0..3 {
+                let mut acc = s[0] * mul_in[band][0];
+                acc = mul_in[band][1].mul_add(s[1], acc);
+                acc = mul_in[band][2].mul_add(s[2], acc);
+                acc = mul_in[band][3].mul_add(s[3], acc);
+                acc = mul_prev2[band].mul_add(prev2[band], acc);
+                acc = mul_prev[band].mul_add(prev[band], acc);
+                o[band] = acc;
+            }
 
-#[inline(always)]
-fn horizontal_row(input: &[f32], output: &mut [f32], width: usize) {
-    let big_n = consts::RADIUS as isize;
+            // `Broadcast<LANES-2>` / `<LANES-1>`: the recurrence state for the
+            // next iteration is the third and fourth output of this one.
+            for band in 0..3 {
+                let a = o[band].to_array();
+                prev2[band] = f32x4::splat(token, a[2]);
+                prev[band] = f32x4::splat(token, a[3]);
+            }
 
-    let mut prev_1 = 0f32;
-    let mut prev_3 = 0f32;
-    let mut prev_5 = 0f32;
-    let mut prev2_1 = 0f32;
-    let mut prev2_3 = 0f32;
-    let mut prev2_5 = 0f32;
-
-    let mut n = (-big_n) + 1;
-    while n < width as isize {
-        let left = n - big_n - 1;
-        let right = n + big_n - 1;
-        let left_val = if left >= 0 && (left as usize) < input.len() {
-            input[left as usize]
-        } else {
-            0f32
-        };
-        let right_val = if right >= 0 && (right as usize) < input.len() {
-            input[right as usize]
-        } else {
-            0f32
-        };
-        let sum = left_val + right_val;
-
-        let mut out_1 = sum * consts::MUL_IN_1;
-        let mut out_3 = sum * consts::MUL_IN_3;
-        let mut out_5 = sum * consts::MUL_IN_5;
-
-        // MUL_PREV2_k is exactly -1, so this product is exact and fusing it
-        // changes nothing; the MUL_PREV step below is unfused to match the
-        // vectorised body (see the note there on `magetypes` and wasm128).
-        out_1 = consts::MUL_PREV2_1.mul_add(prev2_1, out_1);
-        out_3 = consts::MUL_PREV2_3.mul_add(prev2_3, out_3);
-        out_5 = consts::MUL_PREV2_5.mul_add(prev2_5, out_5);
-        prev2_1 = prev_1;
-        prev2_3 = prev_3;
-        prev2_5 = prev_5;
-
-        out_1 = consts::MUL_PREV_1.mul_add(prev_1, out_1);
-        out_3 = consts::MUL_PREV_3.mul_add(prev_3, out_3);
-        out_5 = consts::MUL_PREV_5.mul_add(prev_5, out_5);
-        prev_1 = out_1;
-        prev_3 = out_3;
-        prev_5 = out_5;
-
-        if n >= 0 && (n as usize) < output.len() {
-            output[n as usize] = out_1 + out_3 + out_5;
+            let result = (o[0] + o[1] + o[2]).to_array();
+            out[n as usize..][..4].copy_from_slice(&result);
+            n += LANES;
         }
 
-        n += 1;
+        // Back to scalar state for the tail.
+        p1 = prev[0].to_array()[0];
+        p3 = prev[1].to_array()[0];
+        p5 = prev[2].to_array()[0];
+        q1 = prev2[0].to_array()[0];
+        q3 = prev2[1].to_array()[0];
+        q5 = prev2[2].to_array()[0];
+
+        while n < width as isize {
+            let sum = at(n - big_n - 1) + at(n + big_n - 1);
+            let (mut pv, mut qv) = ((p1, p3, p5), (q1, q3, q5));
+            let o = scalar_step(sum, &mut pv, &mut qv);
+            (p1, p3, p5) = pv;
+            (q1, q3, q5) = qv;
+            if n >= 0 {
+                out[n as usize] = o;
+            }
+            n += 1;
+        }
     }
 }
 

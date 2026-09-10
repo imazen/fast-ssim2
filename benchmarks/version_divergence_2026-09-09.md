@@ -39,6 +39,12 @@ disagreement with the C++ binary as unattributed.
    significant, 983/2016 cells favour 0.7.1. The 2026-08-31 "coin flip" verdict
    survives 4× the cells. Unifying the workspace on 0.8.2+ remains right, on
    recency, not accuracy.
+> **Landed 2026-09-09.** Point 3 below is no longer a proposal: jpegli's cube
+> root and horizontal Gaussian now ship, the bias is gone (mean(ours − C++)
+> +0.00012), and the metric got *faster*. See
+> [`jpegli_kernels_2026-09-09.md`](jpegli_kernels_2026-09-09.md). Everything
+> above it — the attribution, and the 0.7.1-vs-0.8.2 verdict — is unaffected.
+
 3. **Both versions are wrong in the same direction, and it is fixable.** Every
    shipped configuration scores **+0.0067 ± 0.0016 above** the C++ binary on
    real content. Adopting jpegli's *own* two approximations — its
