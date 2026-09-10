@@ -398,6 +398,23 @@ fn horizontal_pass_inner(token: Token, input: &[f32], output: &mut [f32], width:
 // Vertical pass — SIMD IIR filter processing all columns per height traversal
 // ---------------------------------------------------------------------------
 
+/// Vertical recursive Gaussian, split into independent column bands.
+///
+/// The IIR runs *down* columns and its state is per column, so a band of
+/// columns is genuinely independent of its neighbours — no halo, no sliding
+/// window, nothing to stitch. The only obstacle to handing bands to different
+/// threads is that a band is a *strided* region of a row-major plane, which
+/// cannot be expressed as one `&mut [f32]`.
+///
+/// It can be expressed as *many*: split each row with `split_at_mut` and group
+/// the pieces by band. That is a safe, allocation-cheap pre-slice — `height`
+/// pointer pairs per band, ~26k for a 4K plane — and it needs neither `unsafe`
+/// nor a runtime-tracked wrapper like `rav1d-disjoint-mut`, which is the other
+/// way to solve this. The input plane needs no such treatment; it is shared
+/// immutably.
+///
+/// One band is the serial path, so `SimdImpl::Simd` runs the same code
+/// single- and multi-threaded and cannot drift between them.
 fn vertical_pass(
     input: &[f32],
     output: &mut [f32],
@@ -406,10 +423,181 @@ fn vertical_pass(
     height: usize,
 ) {
     assert_eq!(input.len(), output.len());
-    incant!(
-        vertical_pass_inner(input, output, state, width, height),
-        [v3, neon, wasm128, scalar]
-    )
+    const LANES: usize = 8;
+    let groups = width / LANES;
+    let covered = groups * LANES;
+
+    if groups == 0 {
+        vertical_pass_scalar_columns(input, output, width, height, 0);
+        return;
+    }
+
+    // How many bands, and how many LANES-groups each gets. Bands are whole
+    // groups so the vector body is bit-identical to the unsplit one, and every
+    // band but the last carries an **even** number of groups.
+    //
+    // The evenness is not cosmetic. A group is 8 floats = 32 bytes, so bands
+    // cut on odd group boundaries put two bands in one 64-byte cache line, and
+    // the two threads owning them then write that line on *every row* — false
+    // sharing `height` times per band boundary. Measured on a Ryzen 9 5900XT
+    // (Zen 3): with 32-byte-aligned bands the rayon build was 63% SLOWER than
+    // main at 1920x1080 and slower than its own serial path; the same code on
+    // an M4 Pro was 23% faster, which is why this had to be measured on both.
+    let nbands = vertical_band_count(groups, height);
+    let mut band_groups: Vec<usize> = Vec::with_capacity(nbands);
+    if nbands <= 1 {
+        band_groups.push(groups);
+    } else {
+        // Hand out even group counts, then give the remainder to the last band.
+        let pairs = groups / 2;
+        let base_pairs = pairs / nbands;
+        let extra_pairs = pairs % nbands;
+        let mut assigned = 0usize;
+        for b in 0..nbands {
+            let g = 2 * (base_pairs + usize::from(b < extra_pairs));
+            if g == 0 {
+                continue;
+            }
+            band_groups.push(g);
+            assigned += g;
+        }
+        if assigned < groups {
+            // The odd group left over (groups was odd) joins the last band.
+            *band_groups.last_mut().expect("at least one band") += groups - assigned;
+        }
+    }
+    let nbands = band_groups.len();
+
+    {
+        // Pre-slice: for each band, the list of its row slices.
+        let mut band_rows: Vec<Vec<&mut [f32]>> =
+            band_groups.iter().map(|_| Vec::with_capacity(height)).collect();
+        for row in output.chunks_exact_mut(width) {
+            let (mut rest, _tail) = row.split_at_mut(covered);
+            for (b, g) in band_groups.iter().enumerate() {
+                let (head, tail) = rest.split_at_mut(g * LANES);
+                band_rows[b].push(head);
+                rest = tail;
+            }
+        }
+
+        // Each band owns a contiguous slice of the caller's state buffer.
+        let mut band_state: Vec<&mut [f32]> = Vec::with_capacity(nbands);
+        let mut state_rest = state;
+        for g in &band_groups {
+            let (head, tail) = state_rest.split_at_mut(6 * g * LANES);
+            band_state.push(head);
+            state_rest = tail;
+        }
+
+        let mut col_starts = Vec::with_capacity(nbands);
+        let mut c = 0usize;
+        for g in &band_groups {
+            col_starts.push(c);
+            c += g * LANES;
+        }
+
+        /// One band's inputs, bundled so the parallel and serial arms can share
+        /// a closure without a type clippy calls "very complex".
+        struct Band<'a> {
+            rows: &'a mut Vec<&'a mut [f32]>,
+            state: &'a mut &'a mut [f32],
+            col_start: usize,
+            groups: usize,
+        }
+        let run = |b: Band<'_>| {
+            incant!(
+                vertical_band_inner(
+                    input,
+                    b.rows,
+                    b.state,
+                    width,
+                    height,
+                    b.col_start,
+                    b.groups
+                ),
+                [v3, neon, wasm128, scalar]
+            );
+        };
+
+        let bands: Vec<Band<'_>> = band_rows
+            .iter_mut()
+            .zip(band_state.iter_mut())
+            .zip(col_starts.iter())
+            .zip(band_groups.iter())
+            .map(|(((rows, state), col_start), groups)| Band {
+                rows,
+                state,
+                col_start: *col_start,
+                groups: *groups,
+            })
+            .collect();
+
+        #[cfg(feature = "rayon")]
+        if nbands > 1 {
+            use rayon::prelude::*;
+            bands.into_par_iter().for_each(run);
+        } else {
+            bands.into_iter().for_each(run);
+        }
+
+        #[cfg(not(feature = "rayon"))]
+        bands.into_iter().for_each(run);
+    }
+
+    // Leftover `width % LANES` columns, untouched by the banding.
+    vertical_pass_scalar_columns(input, output, width, height, covered);
+}
+
+/// Minimum `LANES`-groups per band: 64 groups = 512 columns = **2 KiB of each
+/// row**.
+///
+/// Band count is governed by *width*, not by how many threads exist, and this
+/// constant is the whole reason. Each band walks the full height, so it reads a
+/// narrow vertical strip: `band_columns * 4` bytes out of every `width * 4`
+/// byte row. Make the strip too narrow and one sequential pass over the plane
+/// becomes N strided ones, which some prefetchers tolerate and others do not.
+///
+/// Measured on a Ryzen 9 5900XT (Zen 3, 32 threads), MT against `main`'s MT,
+/// with the band count forced:
+///
+/// | bands | 1920x1080 | 3840x2160 | bytes/row at 1080p |
+/// |---|--:|--:|--:|
+/// | 2 | +2% | −7% | 3840 |
+/// | 4 | **−7%** | −11% | 1920 |
+/// | 8 | −4% | **−12%** | 960 |
+/// | 32 | **+64%** | +23% | 240 |
+///
+/// One band per hardware thread — the obvious policy, and what this branch did
+/// first — lands on the 32 column and is catastrophic. An Apple M4 Pro shows
+/// none of this (47.5 ms at 2 bands, 48.3 at 32), so it cannot be found on
+/// aarch64 alone.
+#[cfg(feature = "rayon")]
+const MIN_GROUPS_PER_BAND: usize = 64;
+
+/// How many column bands to split the vertical pass into.
+///
+/// One band unless `rayon` is on and the plane is worth splitting: each band
+/// walks the full height, so a band is only worth a join when it carries real
+/// work. Bounded by [`MIN_GROUPS_PER_BAND`] first and the thread count second —
+/// more bands than threads only adds state, and more bands than the width
+/// supports actively hurts.
+fn vertical_band_count(groups: usize, height: usize) -> usize {
+    #[cfg(feature = "rayon")]
+    {
+        const LANES: usize = 8;
+        if groups * LANES * height < crate::simd_ops::PAR_MIN_SAMPLES {
+            return 1;
+        }
+        (groups / MIN_GROUPS_PER_BAND)
+            .min(rayon::current_num_threads())
+            .max(1)
+    }
+    #[cfg(not(feature = "rayon"))]
+    {
+        let _ = (groups, height);
+        1
+    }
 }
 
 /// Generic vertical pass — processes 8 columns at a time on all platforms.
@@ -422,20 +610,31 @@ fn vertical_pass(
 /// state vectors (prev_1, prev_3, prev_5, prev2_1, prev2_3, prev2_5) — owned
 /// by `SimdGaussian` so we don't reallocate them on every blur call.
 #[magetypes(v3, neon, wasm128, scalar)]
-fn vertical_pass_inner(
+/// One column band of the vertical pass.
+///
+/// `input` is the whole plane (shared immutably); `out_rows` is this band's
+/// slice of every row, pre-split by [`vertical_pass`]; `col_start` is where the
+/// band begins in the full-width plane, and `groups` is how many `LANES`-wide
+/// column groups it owns. The arithmetic is unchanged from the unsplit pass —
+/// bands are whole groups, and each column's recurrence was always independent,
+/// so the output is bit-identical however the columns are divided.
+#[allow(clippy::too_many_arguments)] // a band is 8 facts; bundling them into a
+// struct would have to cross the `#[magetypes]` tier boundary, which is worse.
+fn vertical_band_inner(
     token: Token,
     input: &[f32],
-    output: &mut [f32],
+    out_rows: &mut [&mut [f32]],
     state: &mut [f32],
     width: usize,
     height: usize,
+    col_start: usize,
+    groups: usize,
 ) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
     const LANES: usize = 8;
 
     let big_n = consts::RADIUS as isize;
-    let groups = width / LANES;
 
     // SIMD constants
     let mul_in_1 = f32x8::splat(token, consts::VERT_MUL_IN_1);
@@ -470,18 +669,27 @@ fn vertical_pass_inner(
             0
         };
 
+        // Hoisted out of the group loop: indexing `out_rows` per group cost a
+        // bounds check and a pointer load per 8 columns, which measured ~3% on
+        // the serial path.
+        let mut out_row = if n >= 0 {
+            Some(&mut *out_rows[n as usize])
+        } else {
+            None
+        };
+
         for g in 0..groups {
             let col = g * LANES;
 
             let top_vals = if top_valid {
-                let idx = top_row_start + col;
+                let idx = top_row_start + col_start + col;
                 f32x8::from_array(token, input[idx..][..LANES].try_into().unwrap())
             } else {
                 zeroes
             };
 
             let bottom_vals = if bottom_valid {
-                let idx = bottom_row_start + col;
+                let idx = bottom_row_start + col_start + col;
                 f32x8::from_array(token, input[idx..][..LANES].try_into().unwrap())
             } else {
                 zeroes
@@ -515,18 +723,14 @@ fn vertical_pass_inner(
             prev_3[col..col + LANES].copy_from_slice(&out3.to_array());
             prev_5[col..col + LANES].copy_from_slice(&out5.to_array());
 
-            if n >= 0 {
+            if let Some(row) = out_row.as_mut() {
                 let result = out1 + out3 + out5;
-                let out_start = n as usize * width + col;
-                output[out_start..out_start + LANES].copy_from_slice(&result.to_array());
+                row[col..col + LANES].copy_from_slice(&result.to_array());
             }
         }
 
         n += 1;
     }
-
-    // Scalar remainder for leftover columns
-    vertical_pass_scalar_columns(input, output, width, height, groups * LANES);
 }
 
 /// Process remaining columns one at a time (used by both SIMD remainder and scalar fallback).
