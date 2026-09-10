@@ -19,7 +19,7 @@ _(none — both previously queued items shipped in 0.9.0.)_
   | mean \|Δ\| | 0.02056 | **0.01658** |
   | max \|Δ\| | 0.5223 | **0.1726** |
 
-  The systematic positive bias every released version has carried is gone, and the worst case is a third of what it was. Speed, paired A/B over three interleaved rounds on an M4 Pro: `ssimulacra2_1920x1080` −5.3%, `3840x2160` −4.3%, the `blur` kernel −12.9%.
+  The systematic positive bias every released version has carried is gone, and the worst case is a third of what it was. Speed, paired A/B over interleaved rounds: on an M4 Pro (3 rounds) `ssimulacra2_1920x1080` −5.3%, `3840x2160` −4.3%, the `blur` kernel −12.9%; on a Ryzen 9 5900XT (Zen 3, 2 rounds, run-to-run spread 0.1–1.3%) −1.8%, −1.4% and −5.1%. Every case improves on both.
 
   **What moves:** scores shift by mean \|Δ\| 0.020 against 0.9.0 (max 0.45; 48% of cells move more than 0.01). Anything holding fast-ssim2 scores to a fixed value — pinned fixtures, cached quality decisions, RD curves — needs re-baselining. `tests/implementation_parity.rs` re-pinned its four real-image scores accordingly (verified identical on aarch64 and x86_64 before re-pinning).
 

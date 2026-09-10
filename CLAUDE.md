@@ -160,8 +160,11 @@ distortions = 2016 cells.
   | mean abs | 0.02056 | **0.01658** |
   | max abs | 0.5223 | **0.1726** |
 
-  It is also faster: `ssimulacra2_1920x1080` -5.3%, `3840x2160` -4.3%, the blur
-  kernel -12.9% (paired A/B, 3 interleaved rounds, M4 Pro). **Scores moved**:
+  It is also faster on both architectures (paired A/B, interleaved rounds):
+  M4 Pro `ssimulacra2_1920x1080` -5.3%, `3840x2160` -4.3%, blur kernel -12.9%;
+  Ryzen 9 5900XT (Zen 3) -1.8%, -1.4%, -5.1%. The x86 gain is genuinely smaller,
+  matching the kernel-level split (cbrt 6-8% on x86 vs 2.7-2.9% on NEON; blur
+  4-7% vs 12.3-13.7%). **Scores moved**:
   mean |delta| 0.020 vs 0.9.0, max 0.45, 48% of cells beyond 0.01 — anything
   pinning fast-ssim2 scores needs re-baselining.
 - **Keep the opsin matmul UNFUSED.** Measured indistinguishable from the fused
@@ -253,6 +256,23 @@ distortions = 2016 cells.
   rewrites it via `fix_unspecified_data`. Note MC=14 `ICtCp` and MC=8 `YCgCo`
   do *not* fail with BT.709/BT.2020 primaries, despite reading like they
   should; the first test written for this used ICtCp and passed.
+
+## Which box to benchmark on
+
+`r7900x` is **shared and frequently busy** — on 2026-09-09 a competing
+100%-CPU job made an end-to-end paired A/B swing +/-20% in both directions on
+cases with identical per-pixel work, and the run had to be discarded. Check
+`uptime` before trusting any timing from it.
+
+`r5900xt` (Ryzen 9 5900XT, Zen 3, 32 threads, 60 GiB) sat at load 0.06 and is
+the quiet x86 box. **It is reachable only from `dev`** — the Mac's key is not in
+its authorized_keys under either user — so drive it as
+`ssh dev 'ssh 192.168.50.250 "..."'`. Zen 3 has **no AVX-512**, which is fine
+because every kernel here dispatches at the `v3` (AVX2+FMA) tier anyway; it is
+the wrong host if a `v4`/`v4x` arm is ever added.
+
+The M4 Pro laptop is quiet and reproduces to <=0.1% between runs, so it remains
+the default for NEON numbers.
 
 ## `ssimulacra2_320x240` is too noisy to draw conclusions from
 

@@ -132,7 +132,20 @@ bit-identical: `implementation_parity` (four real-image SIMD scores pinned to
   an offset that collides with `out` too, on the theory that the vertical pass
   (which reads temp and writes `out`) could inherit the cliff. It measured no
   difference at any size on either host, so it was reverted rather than kept as
-  unjustified complexity.
+  unjustified complexity. **Re-tested 2026-09-09** after the horizontal pass was
+  replaced with jpegli's row-contiguous form — which removes the eight-row
+  gather entirely, so it was the natural second suspect — and it *still* made no
+  difference (33.02 vs 33.00 ns/px at width 1024; 35.14 vs 35.25 at 4096).
+  Reverted again.
+- **The residual survived the kernel swap.** With jpegli's horizontal pass in
+  place, width 1024 still costs +2.4% against 1032 and 4096 +7.5% against 4104
+  end-to-end. Since that pass no longer gathers across rows, whatever is left is
+  not the blur's access pattern: the remaining suspects are the ~24 plane buffers
+  the metric allocates in `lib.rs` (`mul`, `sigma1_sq`, `sigma2_sq`, `sigma12`,
+  `mu1`, `mu2`, two planar copies — three channels each), which are plain
+  `Vec<f32>` of exactly `width * height` and therefore mutually page-congruent at
+  those sizes. Chasing it further needs profiling to find *which* pair collides,
+  not another guess; both guesses so far measured zero.
 - **jpegli's cliff at width 1024 on aarch64.** It is in the study kernel, not in
   anything fast-ssim2 ships; recorded because it shows the effect is about
   placement rather than about which kernel is "better".

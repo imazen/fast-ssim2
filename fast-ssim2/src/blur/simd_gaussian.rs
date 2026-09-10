@@ -119,8 +119,13 @@ impl SimdGaussian {
         let temp_addr = temp as usize;
         let plane_addr = plane as usize;
         // Target position within the page: the source plane's, plus a step.
-        // Dodging the *destination* plane as well was tried and measured no
-        // difference on either host, so it is not done.
+        // Dodging the *destination* plane as well was tried twice — against the
+        // 8-rows-per-lane-group horizontal pass and again against jpegli's
+        // row-contiguous one — and measured no difference either time, so it is
+        // not done. The residual at power-of-two widths (measured 2026-09-09
+        // with the new kernels: +2.4% at 1024 vs 1032, +7.5% at 4096 vs 4104)
+        // lives somewhere else, most likely among the ~24 plane buffers the
+        // metric itself allocates in `lib.rs`.
         let want = (plane_addr + TEMP_DEALIAS_BYTES) % PAGE;
         let have = temp_addr % PAGE;
         // Distance forward from `temp` to the next address with that position.

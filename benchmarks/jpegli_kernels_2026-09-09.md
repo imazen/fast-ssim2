@@ -47,6 +47,23 @@ the version-divergence record:
 The systematic bias every released version carried is gone — the residual mean
 is 5 000× smaller than 0.9.0's — and the worst case is a third of what it was.
 
+Independently, the crate's *own* harness (`examples/photo_parity.rs`, 24
+references × 4 sizes × 6 distortions = 576 pairs, a different grid: it includes
+32×32 and a chroma-shift family the driver above does not) agrees on the
+direction and size of the win:
+
+| `photo_parity`, ALL 576 | 0.9.0 (recorded 2026-08-31) | now |
+|---|--:|--:|
+| mean(simd − C++) | +0.00219 | −0.00297 |
+| mean \|Δ\| | 0.02386 | **0.01866** (−22%) |
+| max \|Δ\| | 0.5233 | **0.2362** (−55%) |
+| max \|simd − scalar\| | 2.6e-7 | 1.8e-7 |
+
+Note the bias sign flips rather than vanishing on this grid. The two harnesses
+weight content differently — this one gives a quarter of its cells to 32×32,
+where the pyramid has one or two usable scales — so the residual mean is not
+comparable between them; the mean-absolute and worst-case columns are.
+
 ## Speed
 
 Paired A/B: both bench binaries built, then run interleaved, three rounds,
@@ -64,26 +81,48 @@ medians, `nice -n 19`, no `target-cpu=native`.
 | `ssimulacra2_rgb_1920x1080` | 74.75 ms | 70.19 ms | −6.1% |
 | `ssimulacra2_rgb_3840x2160` | 296.25 ms | 282.27 ms | −4.7% |
 
-### x86_64 (Ryzen 9 7900X) — **not measured**
+### x86_64 (Ryzen 9 5900XT, Zen 3 — no AVX-512, `v3` tier)
 
-The paired run was attempted and is being discarded rather than reported: that
-box is shared, and a competing 100%-CPU job (`drv_r48`) ran throughout, with
-load average 2.2–5.5 and seven logged-in sessions. Under `nice -n 19` the bench
-was descheduled unpredictably, and the resulting deltas swung ±20% in *both*
-directions on cases whose per-pixel work is identical — `3840x2160` +20.1% while
-`rgb_3840x2160` −0.3%, `rgb_1920x1080` +16.0% while `1920x1080` −1.7%. That is
-the box's other work, not this change.
+**Two** interleaved rounds, not three (see below). Per-case run-to-run spread in
+the last column:
 
-The kernel-level x86 measurements it rests on were taken earlier on the same
-host and *are* reproducible (three runs each, ≤1% spread): the cube root 6–8%
-faster at ≥64K px ([`cbrt_perf`](cbrt_perf_2026-09-09.md)) and the horizontal
-blur 4–7% faster ([`blur_stride`](blur_stride_2026-09-09.md)). An end-to-end x86
-figure needs a quiet box; until then, treat the aarch64 table as the measured
-one and x86 end-to-end as unquantified.
+| case | before | after | | spread |
+|---|--:|--:|--:|--:|
+| `blur` | 7.40 ms | 7.03 ms | **−5.1%** | 1.3% / 2.8% |
+| `ssimulacra2_320x240` | 9.20 ms | 9.04 ms | −1.7% | 0.2% / 0.3% |
+| `ssimulacra2_1920x1080` | 302.88 ms | 297.53 ms | −1.8% | 0.3% / 0.5% |
+| `ssimulacra2_3840x2160` | 1266.19 ms | 1248.19 ms | −1.4% | 0.4% / 0.1% |
+| `ssimulacra2_rgb_320x240` | 9.98 ms | 9.83 ms | −1.5% | 1.2% / 0.7% |
+| `ssimulacra2_rgb_1920x1080` | 390.08 ms | 385.69 ms | −1.1% | 0.1% / 0.4% |
+| `ssimulacra2_rgb_3840x2160` | 1638.56 ms | 1612.36 ms | −1.6% | 0.6% / 0.2% |
 
-**Correctness on x86 is measured**, and separately from timing: the re-pinned
-`implementation_parity` fixtures pass there, `simd_consistency` passes there,
-and all 28 `arch_scores` values are bit-identical to the aarch64 run.
+Every case improves, and the two rounds' medians agree within 0.7 percentage
+points. The gain is real but **smaller than aarch64's** (−1.1…−1.8% end to end
+against −3.2…−6.1%; blur −5.1% against −12.9%), which tracks the kernel-level
+measurements: on x86 the cube root gained 6–8% and the blur 4–7%, against
+2.7–2.9% and 12.3–13.7% on NEON.
+
+Two procedural notes, because they explain the missing third round and are worth
+not repeating:
+
+- **`r7900x` was the wrong box.** The first attempt ran there and had to be
+  discarded: it is shared, a competing 100%-CPU job ran throughout, and the
+  deltas swung ±20% in *both* directions on cases with identical per-pixel work
+  (`3840x2160` +20.1% while `rgb_3840x2160` −0.3%). Check `uptime` before
+  trusting a timing from it. `r5900xt` sat at load 1.00 — exactly this
+  single-threaded benchmark — for the whole run.
+- **The third round was lost to plumbing, not to measurement.** `r5900xt` is
+  reachable only *from* `dev`, so the run is driven over two ssh hops; the first
+  attempt's pipe closed after round two, and a re-launch through nested
+  quoting produced a malformed `awk`. Two rounds at 0.1–1.3% spread is a firmer
+  basis than the three-run rule was written for anyway — that rule exists
+  because `ssimulacra2_320x240` once spanned 9.3% across runs of one unchanged
+  binary, and here it spans 0.2%.
+
+**Correctness on x86 is measured separately from timing**, on `r7900x` where
+load does not matter: the re-pinned `implementation_parity` fixtures pass,
+`simd_consistency` passes, and all 28 `arch_scores` values are bit-identical to
+the aarch64 run.
 
 ## What moves, and what it costs downstream
 

@@ -1,5 +1,16 @@
 # C++ SSIMULACRA2 parity and cross-tier consistency — 2026-08-31
 
+> **Superseded in part, 2026-09-09.** Every measurement here describes the
+> kernels as they were in 0.8.3–0.9.0. The opsin cube root and the horizontal
+> Gaussian have since been replaced with jpegli's own, which moved `photo_parity`
+> ALL from mean |Δ| 0.02386 / max 0.5233 to **0.01866 / 0.2362**. The *analysis*
+> below — why `uniform_shift` is degenerate, why the blur classes exist, what the
+> FMA gap is — still holds and is what made the replacement possible. See
+> [`jpegli_kernels_2026-09-09.md`](jpegli_kernels_2026-09-09.md). One correction:
+> §2's claim that bit-exactness needs matching the reference's vector width is
+> wrong — its horizontal Gaussian is capped at four lanes on every target
+> ([`cbrt_perf_2026-09-09.md`](cbrt_perf_2026-09-09.md)).
+
 ## Provenance
 
 | | |
