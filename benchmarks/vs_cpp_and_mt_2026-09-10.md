@@ -57,6 +57,16 @@ buys, measured on the library benchmarks (12 cores):
 
 1.6–1.8× on twelve cores is still poor. The reason is not the cache.
 
+> **Correction, 2026-09-10.** This section's Amdahl analysis stands, but a
+> later note in it called the metric "memory-bandwidth bound" on the strength of
+> an eight-concurrent-instance test. That is wrong for a *single* run — one 4K
+> run moves ~3 GiB in 1.06 s, ~2.8 GiB/s, a few percent of the machine's
+> streaming capacity. The eight-instance result is an L3 *capacity* effect that
+> governs batch throughput. See
+> [`fleet_4k_2026-09-10.md`](fleet_4k_2026-09-10.md), and
+> [`fused_blur_negative_2026-09-10.md`](fused_blur_negative_2026-09-10.md) for
+> the experiment that refuted the traffic model outright.
+
 ## Why MT scales badly: Amdahl, not locality
 
 Stage shares, measured at 1024×1024 (`examples/profile_simd`, `benchmark_simd`):
@@ -100,18 +110,24 @@ And two overhead fixes, which turned out to matter more than the third stage:
   small-image regression entirely: 320×240 went 5.93 ms → 2.99 ms, exactly
   matching the single-threaded time instead of doubling it.
 
-**Still serial: the vertical blur pass**, ~26% of runtime and now the largest
-remaining block. Its columns are fully independent — the IIR state is per-column
-— so it is parallel in principle, but each worker would write a *column band*,
-i.e. a strided region of the output plane, which safe Rust cannot hand out as
-disjoint `&mut` slices. The options are a per-band staging buffer (one extra
-plane of memory, plus a scatter) or restructuring the pass. That is a real
-memory-versus-parallelism decision, not a mechanical change, so it is written
-down rather than guessed at.
+**Still serial: the vertical blur pass**, ~26% of runtime and the largest
+remaining block. Its columns are fully independent — the IIR state is per-column.
 
-If it were parallelised, p would reach ~0.58 and the 12-core ceiling would move
-from ~1.9× to ~2.3×; getting past that needs the reduction kernels to split by
-rows too, which requires a deterministic tree reduction to stay bit-identical.
+An earlier version of this paragraph claimed a worker would have to write a
+strided column band, "which safe Rust cannot hand out as disjoint `&mut`
+slices", and that a staging buffer was therefore required. **Both claims are
+false.** Splitting each *row* with `split_at_mut` and grouping the pieces by
+band produces exactly those disjoint slices, with no staging buffer and no
+`unsafe`; `rav1d-disjoint-mut` is an alternative for cases where the
+disjointness is only known at runtime. That was implemented and measured on
+branch `vertical-band-blur`: bit-identical, serial path unaffected, and 1.95×
+MT at 4K on an M4 Pro — but it *regresses* four of six machines, so it was not
+merged. See
+[`vertical_band_parallel_2026-09-10.md`](vertical_band_parallel_2026-09-10.md).
+
+Parallelising it moves p to ~0.58 and the 12-core ceiling from ~1.9× to ~2.3×;
+past that the reduction kernels need a deterministic tree reduction to split by
+rows and stay bit-identical.
 
 ## Reproduce
 

@@ -100,6 +100,20 @@ not estimates.
   own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
   bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
   [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
+- [`fleet_4k_2026-09-10.md`](fleet_4k_2026-09-10.md) — **4K single- and
+  multi-threaded on six machines** (M4 Pro, Zen 5, Zen 4 ×2, Zen 3, Arrow Lake),
+  all returning an identical score. The M4 Pro is 2–4× faster single-threaded
+  than every x86 box; MT gain is 1.15–1.86× everywhere. Explains what actually
+  limits it, corrects an earlier "memory-bandwidth bound" claim, and lists the
+  two optimisation ideas that were measured and rejected.
+- [`vertical_band_parallel_2026-09-10.md`](vertical_band_parallel_2026-09-10.md)
+  — parallelising the vertical blur over pre-sliced disjoint column bands (safe
+  Rust, no staging buffer). Bit-identical and sound, but helps two machines and
+  hurts four. **Not merged**; branch `vertical-band-blur`.
+- [`fused_blur_negative_2026-09-10.md`](fused_blur_negative_2026-09-10.md) —
+  replacing the blur's intermediate plane with a 16-row ring buffer. Removes
+  ~995 MiB per 4K scale and buys ~0%, because that traffic is sequential and
+  prefetchable; costs 45% in MT. **Not merged**; branch `fused-blur`.
 - [`vs_cpp_and_mt_2026-09-10.md`](vs_cpp_and_mt_2026-09-10.md) — speed against
   the C++ binary, CLI to CLI: **1.9× per pixel** (54.8 vs 104.5 ms/MP) and
   **3–5× on small images** (fixed cost ~1.4 ms against ~7 ms). The C++ tool has

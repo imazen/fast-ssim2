@@ -291,6 +291,65 @@ Full record: `benchmarks/vs_cpp_and_mt_2026-09-10.md`.
   from ~1.9x to ~2.3x; beyond that the reduction kernels need a deterministic
   tree reduction to split by rows and stay bit-identical.
 
+## 4K across the fleet, and what limits it (2026-09-10)
+
+Full record: `benchmarks/fleet_4k_2026-09-10.md`. Tool: `examples/bench4k.rs`
+(one line per run, so the same command pastes at every machine).
+
+| machine | CPU | thr | ST | MT | MT gain |
+|---|---|--:|--:|--:|--:|
+| mac | Apple M4 Pro | 12 | **264.7 ms** | **142.3 ms** | 1.86x |
+| dev | Ryzen 9 9950X3D (Zen 5) | 32 | 536.8 | 344.0 | 1.56x |
+| i265 | Core Ultra 7 265K | 20 | 648.4 | 451.3 | 1.44x |
+| r7900x | Ryzen 9 7900X (Zen 4) | 24 | 852.0 | 508.2 | 1.68x |
+| wsl | Ryzen 9 7950X (Zen 4, WSL2) | 32 | 931.7 | 810.7 | 1.15x |
+| r5900xt | Ryzen 9 5900XT (Zen 3) | 32 | 1063.1 | 703.0 | 1.51x |
+
+All six return an identical score (91.258599). The M4 Pro is **2-4x faster
+single-threaded than every x86 box**, including Zen 5. `wsl` barely benefits
+from threads and is the same silicon as `r7900x`, so that gap is WSL2, not the
+CPU.
+
+- **A single run is NOT memory-bandwidth bound.** One 4K run moves ~3 GiB in
+  1.06 s = ~2.8 GiB/s, a few percent of streaming capacity. An earlier note
+  claimed otherwise from an 8-concurrent-instance test; that test measures an L3
+  *capacity* effect (8 x ~800 MiB working sets evicting each other) which governs
+  **batch throughput**, not single-image latency. The two want different work.
+- **Bytes moved is the wrong cost model.** Removing ~995 MiB per 4K scale of
+  sequential, prefetchable traffic bought ~1% (see below). Access *pattern* and
+  latency are what cost.
+
+### Measured and REJECTED — do not re-attempt without refuting these
+
+- **Vertical blur over pre-sliced column bands** (branch `vertical-band-blur`).
+  Technique is sound: per-row `split_at_mut` grouped by band gives disjoint
+  `&mut` slices in safe Rust, no staging buffer, no `unsafe`, bands do not slide
+  (the IIR state is per column), and one band is the serial path. Bit-identical.
+  But: helps M4 Pro (-21%) and wsl (-13%), **hurts r7900x +25%, r5900xt +16%,
+  i265 +14%, dev +11%**. The band-count optimum differs per machine AND per
+  workload, so there is no portable policy. Also note the earlier claim in
+  `vs_cpp_and_mt` that safe Rust *cannot* express this was simply wrong.
+- **Streaming the blur through a ring buffer** (branch `fused-blur`). Replaces
+  the 33 MiB intermediate plane with 245 KiB of L2-resident ring. Bit-identical.
+  4K ST +/-0%, 8K ST -1% (and 8K is where a 133 MiB plane cannot be L3-resident,
+  so that is the decisive number), **MT +45% worse** because it serialises the
+  otherwise row-parallel horizontal pass.
+- **The strip walker as a speed fix.** Slower than the full-image path at 4K
+  (0.41 s at 512-row strips vs 0.32 s), because each strip re-runs the pyramid
+  with halo rows.
+
+### Still worth trying
+
+1. `edge_diff_map` per-channel parallel — the last big serial stage under
+   `rayon`, same shape as the `ssim_map` change already on main.
+2. **AVX-512 (`v4`/`v4x`) arms.** Every kernel is `v3`-only, so Zen 5 runs
+   256-bit code. Single-image latency is compute-bound, so this is where wider
+   vectors should actually pay — and `dev` can disprove it cheaply.
+3. Tiled fusion ACROSS stages (multiply -> blur -> map on a resident tile) for
+   batch throughput. The only locality idea not yet refuted.
+4. The power-of-two width residual (+7.5% at 4096 vs 4104). Two guesses measured
+   zero; this needs profiling, not a third guess.
+
 ## Which box to benchmark on
 
 `r7900x` is **shared and frequently busy** — on 2026-09-09 a competing
