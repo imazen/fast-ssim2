@@ -113,8 +113,16 @@ different repo, read-only.**
   `#[magetypes(v3, neon, wasm128, scalar)]`; archmage's `v3` IS AVX2+FMA, so x86
   is not stuck on SSE, but `v4`/`v4x` are absent. Adding them alone would mostly
   re-encode the same 8-lane code — a real win needs `f32x16` bodies. Untested.
-- **x86_64 SCORE parity is still NOT MEASURED** — the perf run above was x86, but
-  every parity/agreement number in this file is aarch64. wasm128 likewise.
+- **x86_64 and aarch64 compute the SAME score, bit for bit** (2026-09-09,
+  `benchmarks/arch_consistency_2026-09-09.md`). 28 pairs, four sizes x seven
+  distortions, `examples/arch_scores.rs` on an M4 Pro (`neon`) and a 7900X
+  (`v3`/AVX2): zero differences at full f64 precision. So the aarch64-measured
+  C++ agreement transfers to x86, and the NEON/AVX2 arms of every
+  `#[magetypes]` kernel agree. **Still not measured:** fast-ssim2 vs the C++
+  binary *on* x86 (r7900x has no `ssimulacra2` binary and no corpus — its
+  codec-corpus checkout is 3 MB, LFS not pulled), and i686/wasm128, which take
+  the non-FMA polyfill and are *expected* to differ. Do NOT pin those 28 scores
+  as a CI fixture before measuring i686/wasm — it would fail by design there.
 - The 3 "ignored" tests are 3 ```ignore doctest fences (`src/lib.rs` lines 10 and
   367, `src/strip.rs` line 72), not `#[ignore]` attributes. They are pseudo-code
   snippets (`load_image(...)`, `/* ... */`) and two of them need the `imgref`

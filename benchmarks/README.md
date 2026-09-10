@@ -100,6 +100,12 @@ not estimates.
   own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
   bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
   [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
+- [`arch_consistency_2026-09-09.md`](arch_consistency_2026-09-09.md) — 28
+  score pairs computed on an M4 Pro (NEON) and a Ryzen 9 7900X (AVX2) agree
+  **bit for bit**, so the aarch64-measured C++ parity transfers to x86.
+  Reproduce with `cargo run --release --example arch_scores` on two hosts and
+  `diff`. i686/wasm128 are expected to differ (non-FMA polyfill) and are not
+  covered.
 - [`blur_stride_2026-09-09.md`](blur_stride_2026-09-09.md) — the horizontal
   blur fell off a 7.6× cliff at power-of-two widths (4 KiB congruence between
   the source and destination planes, since it gathers eight rows at
