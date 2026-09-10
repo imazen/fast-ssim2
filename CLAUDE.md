@@ -63,7 +63,42 @@ different repo, read-only.**
   2026-09-09 at 2016 cells (`benchmarks/version_divergence_2026-09-09.md`):
   0.7.1 − 0.8.2 in agreement with C++ is +0.00036, 95% CI [−0.00050, +0.00124]
   — still a coin flip, now with a paired CI behind it.
-- **x86_64 and wasm128 are NOT MEASURED** — this was an aarch64 host. Deferred.
+- **Perf answer (2026-09-09, `benchmarks/cbrt_perf_2026-09-09.md`): jpegli's
+  cube root is FASTER than ours, on both arches.** 2.7-2.9% on NEON (M4 Pro),
+  6-8% on AVX2 (7900X, >=64K px), medians of 3 runs/host, memcpy floor
+  subtracted. It iterates the *reciprocal* cube root (`r*r*x` at the end), so it
+  has **zero divides** where ours has two, and its seed is pure integer
+  shift/multiply so it vectorises instead of round-tripping through
+  `to_array`/`from_array`. Fidelity and speed point the same way here — there is
+  no trade-off to weigh.
+- **`magetypes::f32x8::cbrt_midp` (0.9.29) is NOT an upgrade.** It is the same
+  algorithm we hand-roll (Kahan seed pulled into a scalar array, 2 Halley steps,
+  2 divides) plus sign/zero handling we do not need, with a different magic
+  constant. Measured 12% slower on NEON, 1-2% slower on AVX2. Don't "just use
+  the library one" without re-measuring.
+- **All three C++ implementations are the same code.**
+  `cloudinary/ssimulacra2` (the official standalone), `libjxl` and `jpegli` carry
+  byte-identical `CubeRootAndAdd` and `FastGaussian1D` — only include paths,
+  macro spellings and signatures differ, and `kC2`/the 108 weights/`SSIMMap`/
+  `EdgeDiffMap`/`Downsample` match too. There is no separate "official approach"
+  to chase.
+- **Correction to the arch caveat above:** the C++ horizontal Gaussian is capped
+  at four lanes on every target (`JPEGLI_GAUSS_MAX_LANES 4`,
+  `HWY_CAPPED(float, 4)`), so its result does not depend on the build's vector
+  width; only `HWY_SCALAR` differs. "Matching the vector width it was built for"
+  is not a prerequisite for bit-exactness — matching *scalar vs vector* is.
+- **The blur half is still unmeasured, and blocked on magetypes.** A faithful
+  port of jpegli's 4-unrolled horizontal pass wants `Broadcast<N>` and
+  `ShiftLeftLanes<N>`; `magetypes` 0.9.29 `f32x4` has neither (only
+  `interleave_lo/hi`, `transpose_4x4`, `blend`). The dodge — precompute the four
+  shifted coefficient vectors as constants, splat each input sum from a scalar
+  load — is possible with today's API.
+- **Tier coverage: no AVX-512 arm anywhere.** Every kernel is
+  `#[magetypes(v3, neon, wasm128, scalar)]`; archmage's `v3` IS AVX2+FMA, so x86
+  is not stuck on SSE, but `v4`/`v4x` are absent. Adding them alone would mostly
+  re-encode the same 8-lane code — a real win needs `f32x16` bodies. Untested.
+- **x86_64 SCORE parity is still NOT MEASURED** — the perf run above was x86, but
+  every parity/agreement number in this file is aarch64. wasm128 likewise.
 - The 3 "ignored" tests are 3 ```ignore doctest fences (`src/lib.rs` lines 10 and
   367, `src/strip.rs` line 72), not `#[ignore]` attributes. They are pseudo-code
   snippets (`load_image(...)`, `/* ... */`) and two of them need the `imgref`

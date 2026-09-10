@@ -100,6 +100,14 @@ not estimates.
   own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
   bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
   [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
+- [`cbrt_perf_2026-09-09.md`](cbrt_perf_2026-09-09.md) — the companion perf
+  answer: jpegli's `CubeRootAndAdd` is not just bit-exact with the C++ reference,
+  it is **faster** than the cube root fast-ssim2 ships (2.7-2.9% on NEON, 6-8% on
+  AVX2 at >=64K px, medians of three runs per host), because it iterates the
+  reciprocal cube root — no divides, and a seed that vectorises.
+  `magetypes::f32x8::cbrt_midp` is the same algorithm as ours and measures
+  slower. Also records that `cloudinary/ssimulacra2`, `libjxl` and `jpegli` carry
+  byte-identical `CubeRootAndAdd` and `FastGaussian1D`.
 - [`ssim2_perf/2026-08-31_x86_0.9.0.md`](ssim2_perf/2026-08-31_x86_0.9.0.md)
   — Ryzen 9 7900X check that the 0.9.0 API change costs nothing. Its real
   finding is about the harness, not the code: `ssimulacra2_320x240` spans

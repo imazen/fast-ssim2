@@ -195,6 +195,11 @@ before (that figure came from the mis-associated form).
   per-target difference again, or spending a correctly-fused software `fma` on
   the tiers that lack hardware FMA (Rust's `f32::mul_add` *is* correctly fused
   everywhere — it is only the `magetypes` SIMD polyfill that is not).
+- **The cube-root half is no longer unmeasured — and it is faster.** See
+  [`cbrt_perf_2026-09-09.md`](cbrt_perf_2026-09-09.md): jpegli's
+  `CubeRootAndAdd` beats the shipped cube root by 2.7-2.9% (NEON) and 6-8%
+  (AVX2, >=64K px) in the XYB kernel, because it iterates the *reciprocal* cube
+  root and needs no divides. The blur half is still unmeasured.
 - **`cppmax` is not a performance proposal.** Its horizontal blur is a scalar
   per-row transliteration run for every row, chosen so the *form* could be
   measured without also porting it to `magetypes`; its speed was not measured
