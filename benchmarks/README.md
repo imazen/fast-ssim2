@@ -100,6 +100,14 @@ not estimates.
   own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
   bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
   [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
+- [`vs_cpp_and_mt_2026-09-10.md`](vs_cpp_and_mt_2026-09-10.md) — speed against
+  the C++ binary, CLI to CLI: **1.9× per pixel** (54.8 vs 104.5 ms/MP) and
+  **3–5× on small images** (fixed cost ~1.4 ms against ~7 ms). The C++ tool has
+  no MT path at all (its `ThreadPool*` is null). Ours reaches 1.6–1.8× on 12
+  cores, up from 1.29×, after parallelising XYB / multiply / ssim_map and fixing
+  two overhead bugs — and the record shows why the limiter is Amdahl rather than
+  cache locality, including the measurement that the strip walker (this crate's
+  own locality tool) is *slower* than the full-image path at 4K.
 - [`jpegli_kernels_2026-09-09.md`](jpegli_kernels_2026-09-09.md) — landing
   jpegli's cube root and horizontal Gaussian, the two kernels the C++
   SSIMULACRA2 actually evaluates. Removes the +0.0067 bias every released

@@ -253,6 +253,29 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
 
 /// Converts linear RGB to XYB in place using SIMD with automatic runtime dispatch.
 #[inline]
+/// Pixels are independent here, so this splits cleanly. The chunk size is a
+/// multiple of the vector body's lane count, so every chunk but the last runs
+/// the same vector path it would have run inside one big call and the scalar
+/// remainder still only appears once, at the end of the plane — the result is
+/// bit-identical to the serial path, which `simd_consistency` and the pinned
+/// `implementation_parity` scores both check.
+#[cfg(feature = "rayon")]
+pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
+    use rayon::prelude::*;
+    // 8 lanes x 512 = one chunk per ~12 KB of pixels: big enough that the
+    // dispatch and join overhead disappears, small enough to keep every worker
+    // fed on a small image.
+    const CHUNK: usize = 8 * 512;
+    if input.len() < crate::simd_ops::PAR_MIN_SAMPLES {
+        incant!(linear_rgb_to_xyb_inner(input), [v3, neon, wasm128, scalar]);
+        return;
+    }
+    input.par_chunks_mut(CHUNK).for_each(|chunk| {
+        incant!(linear_rgb_to_xyb_inner(chunk), [v3, neon, wasm128, scalar]);
+    });
+}
+
+#[cfg(not(feature = "rayon"))]
 pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
     incant!(linear_rgb_to_xyb_inner(input), [v3, neon, wasm128, scalar])
 }

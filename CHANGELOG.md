@@ -7,6 +7,10 @@
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 _(none — both previously queued items shipped in 0.9.0.)_
 
+### Added
+
+- **Parallel paths for XYB conversion, `image_multiply` and `ssim_map` under the `rayon` feature**, all bit-identical to the serial path (pixels and channels are independent, so no reduction order changes; the pinned `implementation_parity` scores and `simd_consistency` pass with the feature on and off). With the overhead fixes below, multi-threaded throughput on 12 cores goes from 1.29× to **1.62×** at 4K and 1.35× to **1.81×** on the RGB path. The remaining serial block is the vertical blur pass (~26% of runtime); its columns are independent but each worker would write a strided region, which safe Rust cannot express as disjoint `&mut` slices without a staging buffer — see [`benchmarks/vs_cpp_and_mt_2026-09-10.md`](benchmarks/vs_cpp_and_mt_2026-09-10.md)
+
 ### Changed
 
 - **BEHAVIOUR: scores move. The opsin cube root and the horizontal Gaussian are now jpegli's own, which is what the C++ SSIMULACRA2 evaluates.** Both were adopted because they are simultaneously *faster* and *closer to the reference* — there was no trade-off to weigh.
@@ -29,6 +33,7 @@ _(none — both previously queued items shipped in 0.9.0.)_
 
 ### Fixed
 
+- **`rayon` made small images *slower*, and barely helped large ones.** The horizontal blur split work per *row* — about a microsecond each, so a 320-wide plane meant one `rayon` join per row — and no stage had a minimum size, while the pyramid shrinks 4× per scale. 320×240 measured **2× slower** with the feature on than off (5.29 ms vs 2.99 ms). Blur tasks are now groups of rows (`rows / (threads * 4)`), and every parallel path takes a `PAR_MIN_SAMPLES` (2¹⁸) floor. 320×240 with `rayon` now matches the single-threaded time exactly (2.99 ms) instead of doubling it
 - **Horizontal blur fell off a 4 KiB-aliasing cliff at power-of-two widths.** The pass runs the IIR over eight rows at once, one row per SIMD lane, so each column access is eight loads at stride `width * 4` bytes; at a power-of-two width those are congruent modulo 4096, and when the destination plane is page-aligned as well — deterministic for planes of a few MB — the loads, the stores and each other all collide in one cache set. Measured 5.34 ns/px at width 1024 against 0.70 at 1032 on a Ryzen 9 7900X (7.6×), and 3.89 against 0.72 at width 4096 on an Apple M4 Pro. `SimdGaussian` now keeps 1024 spare floats and places the temp plane 256 bytes past the source plane's own position within a page, computed from the actual pointers. **Scores are bit-identical** — this moves where the intermediate lives, not what it contains. End-to-end `compute_ssimulacra2`, paired A/B over three interleaved rounds: **−14.7% at 2048×1024** and −11.8% at 1024×1024 on x86, **−35.1% at 4096×512** on aarch64, every non-power-of-two width within ±1.2%. Regression guard: the new `blur_stride` bench. See [`benchmarks/blur_stride_2026-09-09.md`](benchmarks/blur_stride_2026-09-09.md)
 - **Test-only:** `cpp_parity_diag::cpp_cube_root_and_add` grouped its FMAs the wrong way round. Highway's `NegMulAdd(a, b, c)` is the fused `c - a*b`, so `NegMulAdd(xa_3, Mul(r2, r2), Mul(k4_3, r))` fuses `xa_3 * r4` and rounds `k4_3 * r` first; the old spelling fused the other product. The two agree on 89.7% of the opsin domain and are up to 3.6e-7 apart on the rest, so jpegli's cube root measures 2.62 ulp max error there, not the 3.34 ulp previously recorded. No shipped code path is affected — the module is `#[cfg(test)]`.
 

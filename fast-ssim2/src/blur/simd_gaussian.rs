@@ -211,15 +211,20 @@ impl SimdGaussian {
 fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
     assert_eq!(input.len(), output.len());
 
+    // Rows are independent, so this parallelises cleanly — and unlike the
+    // row-vectorised predecessor, every lane of every chunk still walks
+    // contiguous memory. Below `PAR_MIN_SAMPLES` the split costs more than it
+    // saves: one row of a 320-wide plane is ~1 us of work, and the pyramid
+    // reaches sizes like that even for a 4K input.
     #[cfg(feature = "rayon")]
-    {
-        // Rows are independent, so this parallelises cleanly — and unlike the
-        // row-vectorised predecessor, every lane of every chunk still walks
-        // contiguous memory.
+    if input.len() >= crate::simd_ops::PAR_MIN_SAMPLES {
         use rayon::prelude::*;
+        // Chunk by groups of rows rather than single rows, so each task is
+        // worth a join.
+        let rows_per_task = (input.len() / width).div_ceil(rayon::current_num_threads() * 4).max(1);
         input
-            .par_chunks_exact(width)
-            .zip(output.par_chunks_exact_mut(width))
+            .par_chunks(rows_per_task * width)
+            .zip(output.par_chunks_mut(rows_per_task * width))
             .for_each(|(inp, out)| {
                 incant!(
                     horizontal_pass_inner(inp, out, width),
@@ -229,7 +234,6 @@ fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
         return;
     }
 
-    #[cfg(not(feature = "rayon"))]
     incant!(
         horizontal_pass_inner(input, output, width),
         [v3, neon, wasm128, scalar]

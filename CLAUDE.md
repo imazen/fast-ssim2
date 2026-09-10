@@ -257,6 +257,40 @@ distortions = 2016 cells.
   do *not* fail with BT.709/BT.2020 primaries, despite reading like they
   should; the first test written for this used ICtCp and passed.
 
+## Speed vs the C++ binary, and why MT scales badly (2026-09-10)
+
+Full record: `benchmarks/vs_cpp_and_mt_2026-09-10.md`.
+
+- **Single-threaded, CLI to CLI: 1.9x per pixel** (ours 54.8 ms/MP vs C++
+  104.5), and **3-5x on small images** because our fixed cost is ~1.4 ms against
+  the C++ tool's ~7 ms. Quote those two regimes separately — a least-squares fit
+  across three orders of magnitude puts the intercept near zero for both, which
+  the 64x86 measurement flatly contradicts.
+- **The C++ tool is single-threaded, full stop.** `tools/ssimulacra2.cc` passes
+  `nullptr` for its `ThreadPool*`, so `RunOnPool` runs inline. There is no C++
+  MT number to compare against; don't go looking for a flag.
+- **MT is limited by Amdahl, NOT by cache locality.** Blur is ~58% of the metric
+  (5 blurs/scale x 6 scales), split ~56/44 horizontal/vertical. Before
+  2026-09-10 only the horizontal pass was parallel — 32% of runtime, Amdahl cap
+  1.42x on 12 cores, measured 1.29x. Model and measurement agree.
+- **The locality hypothesis was tested and is wrong for this workload.** The
+  strip walker — this crate's own locality/bounded-memory tool — is *slower*
+  than the full-image path at 4K (0.41 s at 512-row strips, 0.66 s at 128-row,
+  vs 0.32 s full). Each strip re-runs the pyramid with halo rows; the redundant
+  work costs more than the locality saves. Do not propose strips as a speed fix.
+- **Now at 1.62x (4K) / 1.81x (RGB 4K)** after parallelising XYB, image_multiply
+  and ssim_map (all bit-identical — pixels and channels are independent) and
+  fixing two overhead bugs: the blur was splitting *per row* (~1 us of work per
+  join) and nothing had a minimum size, so `rayon` made 320x240 **2x slower**
+  than serial. Both fixed; small images now match the serial time exactly.
+- **Next lever: the vertical blur pass (~26%, still serial).** Its columns are
+  independent, but a worker would write a strided column band, which safe Rust
+  cannot hand out as disjoint `&mut` slices — it needs a per-band staging buffer
+  (one extra plane) plus a scatter, or a restructure. Memory-vs-parallelism
+  decision, not a mechanical change. Parallelising it moves the 12-core ceiling
+  from ~1.9x to ~2.3x; beyond that the reduction kernels need a deterministic
+  tree reduction to split by rows and stay bit-identical.
+
 ## Which box to benchmark on
 
 `r7900x` is **shared and frequently busy** — on 2026-09-09 a competing
