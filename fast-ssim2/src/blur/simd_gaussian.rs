@@ -17,6 +17,10 @@ mod consts {
 
 pub struct SimdGaussian {
     temp_buffer: Vec<f32>,
+    /// Rows of horizontal-pass output, live only until the vertical recurrence
+    /// has passed them. `RING_ROWS * width` floats — 245 KiB at 4K, against the
+    /// 33 MiB full-plane intermediate it replaces.
+    ring: Vec<f32>,
     max_size: usize,
     /// IIR state for vertical pass: 6 stacked sub-slices of `groups * LANES`
     /// floats each (prev_1, prev_3, prev_5, prev2_1, prev2_3, prev2_5).
@@ -31,6 +35,21 @@ pub struct SimdGaussian {
 }
 
 const VERT_STATE_LANES: usize = 8;
+
+/// Rows of horizontal output kept live while the vertical pass consumes them.
+///
+/// The vertical recurrence at output row `n` reads horizontal rows `n-N-1` and
+/// `n+N-1`, so an 11-row window (`RADIUS` is 5) is all that is ever live. A
+/// power of two lets the ring index be a mask instead of a modulo.
+///
+/// This is the whole point of the fusion: at 4K the intermediate goes from a
+/// 33 MiB plane — written by the horizontal pass, then read back by the
+/// vertical one, both through DRAM — to 245 KiB that stays in L2. The metric is
+/// **memory-bound**, not compute-bound: eight concurrent single-threaded 4K
+/// runs on a 16-core Zen 3 box took 3.05x as long each as one run alone, i.e.
+/// 8 cores bought 2.6x throughput. Removing the round trip removes ~995 MiB of
+/// the ~2289 MiB a 4K scale moves.
+const RING_ROWS: usize = 16;
 
 /// Extra floats kept in `temp_buffer` so the horizontal pass can write at a
 /// deliberately chosen offset — see [`SimdGaussian::temp_offset`].
@@ -60,6 +79,7 @@ impl SimdGaussian {
         let initial_capacity = max_width.min(usize::MAX / 4);
         Self {
             temp_buffer: Vec::with_capacity(initial_capacity),
+            ring: Vec::new(),
             max_size: 0,
             vert_state: Vec::new(),
             vert_state_size: 0,
@@ -170,15 +190,17 @@ impl SimdGaussian {
         // IIR initialises state to zero on every call.
         self.vert_state[..vert_state_needed].fill(0.0);
 
-        // Horizontal pass: dispatched for FMA. `off` keeps the temp plane out
-        // of 4 KiB congruence with `plane` — see `temp_offset`.
-        let off = Self::temp_offset(self.temp_buffer.as_ptr(), plane.as_ptr());
-        horizontal_pass(plane, &mut self.temp_buffer[off..off + size], width);
-
-        // Vertical pass: SIMD-dispatched, processes all columns per height traversal
-        vertical_pass(
-            &self.temp_buffer[off..off + size],
+        // Fused: the horizontal result is streamed into the vertical pass
+        // through a ring of RING_ROWS rows instead of a full intermediate
+        // plane. See `blur_fused` for why that is worth doing.
+        let ring_needed = RING_ROWS * width;
+        if ring_needed > self.ring.len() {
+            self.ring.resize(ring_needed, 0.0);
+        }
+        blur_fused(
+            plane,
             out,
+            &mut self.ring[..ring_needed],
             &mut self.vert_state[..vert_state_needed],
             width,
             height,
@@ -398,16 +420,30 @@ fn horizontal_pass_inner(token: Token, input: &[f32], output: &mut [f32], width:
 // Vertical pass — SIMD IIR filter processing all columns per height traversal
 // ---------------------------------------------------------------------------
 
-fn vertical_pass(
+/// Horizontal and vertical blur in one traversal.
+///
+/// The two passes used to run to completion in turn, with a full plane of
+/// horizontal output between them — written once, read once, both through DRAM
+/// at any size that matters. But the vertical recurrence at output row `n` only
+/// ever reads horizontal rows `n-RADIUS-1` and `n+RADIUS-1`, so at most 11 rows
+/// are live. Producing horizontal rows just ahead of the vertical pass and
+/// keeping them in a [`RING_ROWS`]-row ring turns that 33 MiB round trip (at 4K)
+/// into 245 KiB that stays resident.
+///
+/// Every value is computed exactly as before — the same horizontal row function
+/// on the same input, the same vertical recurrence consuming the same rows in
+/// the same order — so results are bit-identical.
+fn blur_fused(
     input: &[f32],
     output: &mut [f32],
+    ring: &mut [f32],
     state: &mut [f32],
     width: usize,
     height: usize,
 ) {
     assert_eq!(input.len(), output.len());
     incant!(
-        vertical_pass_inner(input, output, state, width, height),
+        blur_fused_inner(input, output, ring, state, width, height),
         [v3, neon, wasm128, scalar]
     )
 }
@@ -422,10 +458,11 @@ fn vertical_pass(
 /// state vectors (prev_1, prev_3, prev_5, prev2_1, prev2_3, prev2_5) — owned
 /// by `SimdGaussian` so we don't reallocate them on every blur call.
 #[magetypes(v3, neon, wasm128, scalar)]
-fn vertical_pass_inner(
+fn blur_fused_inner(
     token: Token,
     input: &[f32],
     output: &mut [f32],
+    ring: &mut [f32],
     state: &mut [f32],
     width: usize,
     height: usize,
@@ -456,16 +493,43 @@ fn vertical_pass_inner(
     let (prev2_3, rest) = rest.split_at_mut(state_size);
     let (prev2_5, _) = rest.split_at_mut(state_size);
 
+    // Horizontal rows are produced just far enough ahead of the vertical
+    // recurrence to satisfy its `n + RADIUS - 1` lookahead, and land in the ring
+    // at `row % RING_ROWS`.
+    let mut produced: isize = 0;
+
+    // The `width % LANES` columns the vector body does not cover used to be a
+    // separate column-major pass over the intermediate plane. There is no such
+    // plane now — the ring holds 16 rows — so they ride along in this same row
+    // loop with their own scalar state. `rem` is at most `LANES - 1`.
+    let rem_start = groups * LANES;
+    let rem = width - rem_start;
+    // [prev_1, prev_3, prev_5, prev2_1, prev2_3, prev2_5][column]
+    let mut rem_state = [[0f32; LANES]; 6];
+
     let mut n = (-big_n) + 1;
     while n < height as isize {
         let top = n - big_n - 1;
         let bottom = n + big_n - 1;
 
+        // Produce every horizontal row the vertical step is about to read.
+        while produced <= bottom && produced < height as isize {
+            let src = &input[produced as usize * width..][..width];
+            let slot = (produced as usize % RING_ROWS) * width;
+            let dst = &mut ring[slot..slot + width];
+            incant!(horizontal_pass_inner(src, dst, width) with token);
+            produced += 1;
+        }
+
         let top_valid = top >= 0 && (top as usize) < height;
         let bottom_valid = bottom >= 0 && (bottom as usize) < height;
-        let top_row_start = if top_valid { top as usize * width } else { 0 };
+        let top_row_start = if top_valid {
+            (top as usize % RING_ROWS) * width
+        } else {
+            0
+        };
         let bottom_row_start = if bottom_valid {
-            bottom as usize * width
+            (bottom as usize % RING_ROWS) * width
         } else {
             0
         };
@@ -475,14 +539,14 @@ fn vertical_pass_inner(
 
             let top_vals = if top_valid {
                 let idx = top_row_start + col;
-                f32x8::from_array(token, input[idx..][..LANES].try_into().unwrap())
+                f32x8::from_array(token, ring[idx..][..LANES].try_into().unwrap())
             } else {
                 zeroes
             };
 
             let bottom_vals = if bottom_valid {
                 let idx = bottom_row_start + col;
-                f32x8::from_array(token, input[idx..][..LANES].try_into().unwrap())
+                f32x8::from_array(token, ring[idx..][..LANES].try_into().unwrap())
             } else {
                 zeroes
             };
@@ -522,11 +586,40 @@ fn vertical_pass_inner(
             }
         }
 
+        for i in 0..rem {
+            let x = rem_start + i;
+            let top_val = if top_valid { ring[top_row_start + x] } else { 0.0 };
+            let bottom_val = if bottom_valid {
+                ring[bottom_row_start + x]
+            } else {
+                0.0
+            };
+            let sum = top_val + bottom_val;
+
+            // Same operation order as the vectorised body above.
+            let out1 = rem_state[0][i].mul_add(consts::VERT_MUL_PREV_1, rem_state[3][i]);
+            let out3 = rem_state[1][i].mul_add(consts::VERT_MUL_PREV_3, rem_state[4][i]);
+            let out5 = rem_state[2][i].mul_add(consts::VERT_MUL_PREV_5, rem_state[5][i]);
+            let out1 = sum.mul_add(consts::VERT_MUL_IN_1, -out1);
+            let out3 = sum.mul_add(consts::VERT_MUL_IN_3, -out3);
+            let out5 = sum.mul_add(consts::VERT_MUL_IN_5, -out5);
+
+            rem_state[3][i] = rem_state[0][i];
+            rem_state[4][i] = rem_state[1][i];
+            rem_state[5][i] = rem_state[2][i];
+            rem_state[0][i] = out1;
+            rem_state[1][i] = out3;
+            rem_state[2][i] = out5;
+
+            if n >= 0 {
+                output[n as usize * width + x] = out1 + out3 + out5;
+            }
+        }
+
         n += 1;
     }
 
-    // Scalar remainder for leftover columns
-    vertical_pass_scalar_columns(input, output, width, height, groups * LANES);
+
 }
 
 /// Process remaining columns one at a time (used by both SIMD remainder and scalar fallback).
