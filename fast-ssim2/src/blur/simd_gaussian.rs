@@ -31,6 +31,15 @@ pub struct SimdGaussian {
 
 const VERT_STATE_LANES: usize = 8;
 
+/// Extra floats kept in `temp_buffer` so the horizontal pass can write at a
+/// deliberately chosen offset — see [`SimdGaussian::temp_offset`].
+const TEMP_DEALIAS_SLACK: usize = 1024;
+
+/// How far the temp plane is placed *past* the source plane's position within
+/// a 4 KiB page. One cache line would be enough to break the congruence; 256 B
+/// keeps 64-byte alignment for the SIMD stores and matches what was measured.
+const TEMP_DEALIAS_BYTES: usize = 256;
+
 impl SimdGaussian {
     /// Create a new SIMD Gaussian blur context.
     ///
@@ -68,7 +77,7 @@ impl SimdGaussian {
             return;
         };
         if needed > self.max_size {
-            self.temp_buffer.resize(needed, 0.0);
+            self.temp_buffer.resize(needed + TEMP_DEALIAS_SLACK, 0.0);
             self.max_size = needed;
         }
         // 6 IIR state arrays of `(width / 8) * 8` floats each.
@@ -80,6 +89,47 @@ impl SimdGaussian {
             self.vert_state.resize(n, 0.0);
             self.vert_state_size = n;
         }
+    }
+
+    /// Index into `temp_buffer` at which the horizontal pass should write, so
+    /// that the temp plane and the source plane are never congruent modulo
+    /// 4 KiB.
+    ///
+    /// Why this exists: the horizontal pass runs the IIR over eight rows at
+    /// once, one row per SIMD lane, so each column access is eight loads at
+    /// stride `width * 4` bytes. When `width` is a power of two those eight
+    /// addresses are congruent mod 4096, and when the destination plane is
+    /// congruent with the source as well — which it is whenever both are
+    /// page-aligned mappings, i.e. deterministically for planes of a few MB —
+    /// the loads, the stores and each other all collide in the same cache set.
+    ///
+    /// Measured on a Ryzen 9 7900X, horizontal pass alone: 0.70 ns/px at width
+    /// 1000, 1032, 2040 and 2056, but **5.34 ns/px at 1024 and 5.40 at 2048** —
+    /// a 7.6x cliff at exactly the widths real images use. End-to-end,
+    /// `compute_ssimulacra2` on 2048x1024 ran 22.7% slower than on 2040x1024.
+    /// Shifting the destination by one 256-byte step removed all of it
+    /// (5.34 -> 0.74). On an Apple M4 Pro the same cliff appears at width 4096
+    /// (3.89 vs 0.72 ns/px) and disappears the same way.
+    ///
+    /// This changes *where* the intermediate lives, never what it contains, so
+    /// scores are bit-identical. See `benchmarks/blur_stride_2026-09-09.md`.
+    fn temp_offset(temp: *const f32, plane: *const f32) -> usize {
+        const PAGE: usize = 4096;
+        let temp_addr = temp as usize;
+        let plane_addr = plane as usize;
+        // Target position within the page: the source plane's, plus a step.
+        // Dodging the *destination* plane as well was tried and measured no
+        // difference on either host, so it is not done.
+        let want = (plane_addr + TEMP_DEALIAS_BYTES) % PAGE;
+        let have = temp_addr % PAGE;
+        // Distance forward from `temp` to the next address with that position.
+        let delta = (want + PAGE - have) % PAGE;
+        // f32 granularity: the buffer is a `Vec<f32>`, so both addresses are
+        // 4-byte aligned and `delta` is a whole number of floats.
+        debug_assert_eq!(delta % size_of::<f32>(), 0);
+        let floats = delta / size_of::<f32>();
+        debug_assert!(floats <= TEMP_DEALIAS_SLACK);
+        floats.min(TEMP_DEALIAS_SLACK)
     }
 
     #[allow(dead_code)]
@@ -102,7 +152,7 @@ impl SimdGaussian {
             .checked_mul(height)
             .expect("SimdGaussian: width * height overflows usize");
         if size > self.max_size {
-            self.temp_buffer.resize(size, 0.0);
+            self.temp_buffer.resize(size + TEMP_DEALIAS_SLACK, 0.0);
             self.max_size = size;
         }
         let groups = width / VERT_STATE_LANES;
@@ -114,12 +164,14 @@ impl SimdGaussian {
         // IIR initialises state to zero on every call.
         self.vert_state[..vert_state_needed].fill(0.0);
 
-        // Horizontal pass: dispatched for FMA
-        horizontal_pass(plane, &mut self.temp_buffer[..size], width);
+        // Horizontal pass: dispatched for FMA. `off` keeps the temp plane out
+        // of 4 KiB congruence with `plane` — see `temp_offset`.
+        let off = Self::temp_offset(self.temp_buffer.as_ptr(), plane.as_ptr());
+        horizontal_pass(plane, &mut self.temp_buffer[off..off + size], width);
 
         // Vertical pass: SIMD-dispatched, processes all columns per height traversal
         vertical_pass(
-            &self.temp_buffer[..size],
+            &self.temp_buffer[off..off + size],
             out,
             &mut self.vert_state[..vert_state_needed],
             width,
@@ -585,7 +637,10 @@ mod tests {
         let mut g = SimdGaussian::new(0);
         g.shrink_to(64, 64);
         assert!(g.max_size >= 64 * 64);
-        assert_eq!(g.temp_buffer.len(), 64 * 64);
+        // The buffer carries `TEMP_DEALIAS_SLACK` floats beyond the plane so
+        // `temp_offset` can place the temp plane out of 4 KiB congruence with
+        // the source. Still an exact assertion, just of the new intended size.
+        assert_eq!(g.temp_buffer.len(), 64 * 64 + TEMP_DEALIAS_SLACK);
     }
 
     #[test]

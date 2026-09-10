@@ -80,6 +80,10 @@ name = "upiq_pu_score"
 required-features = ["hdr-pu"]
 
 [[bench]]
+name = "blur_stride"
+harness = false
+
+[[bench]]
 name = "benches"
 harness = false
 

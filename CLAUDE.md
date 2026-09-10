@@ -87,7 +87,23 @@ different repo, read-only.**
   `HWY_CAPPED(float, 4)`), so its result does not depend on the build's vector
   width; only `HWY_SCALAR` differs. "Matching the vector width it was built for"
   is not a prerequisite for bit-exactness — matching *scalar vs vector* is.
-- **The blur half is still unmeasured, and blocked on magetypes.** A faithful
+- **The blur half is measured too: jpegli's 4-unrolled horizontal pass is
+  faster, and finding that out uncovered a real perf bug in ours.** Port is
+  bit-exact with the scalar transliteration and 12.3-13.7% faster on NEON,
+  ~4-7% on x86. The bug: our horizontal pass gathers 8 rows at stride
+  `width * 4` bytes, so at a power-of-two width the 8 addresses are 4 KiB
+  congruent — and when the destination plane is page-aligned too (deterministic
+  for multi-MB planes) everything lands in one cache set. Measured **5.34 vs
+  0.70 ns/px at width 1024 on Zen 4** (7.6x), and 3.89 vs 0.72 at 4096 on M4
+  Pro. End-to-end that was `compute_ssimulacra2` at 2048x1024 costing 22.5% more
+  than 2040x1024. **Fixed** (`SimdGaussian::temp_offset`, scores bit-identical):
+  -14.7% at 2048x1024 and -11.8% at 1024x1024 on x86, **-35.1% at 4096x512 on
+  aarch64**, other widths within +/-1.2%. Guard: `benches/blur_stride.rs`.
+  Record: `benchmarks/blur_stride_2026-09-09.md`. **If you touch the blur's
+  buffers, keep the de-aliasing** — and note the same trick has NOT been applied
+  to the metric's own plane pairs in `lib.rs`, where a ~3% residual remains at
+  width 1024.
+- **A faithful port of jpegli's blur is still blocked on magetypes.** A faithful
   port of jpegli's 4-unrolled horizontal pass wants `Broadcast<N>` and
   `ShiftLeftLanes<N>`; `magetypes` 0.9.29 `f32x4` has neither (only
   `interleave_lo/hi`, `transpose_4x4`, `blend`). The dodge — precompute the four

@@ -100,6 +100,12 @@ not estimates.
   own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
   bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
   [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
+- [`blur_stride_2026-09-09.md`](blur_stride_2026-09-09.md) — the horizontal
+  blur fell off a 7.6× cliff at power-of-two widths (4 KiB congruence between
+  the source and destination planes, since it gathers eight rows at
+  `width * 4` bytes). Fixed by placing the temp plane 256 B off the source's
+  page position; scores bit-identical, −14.7% end-to-end at 2048×1024 on x86 and
+  −35.1% at 4096×512 on aarch64. `benches/blur_stride.rs` guards it.
 - [`cbrt_perf_2026-09-09.md`](cbrt_perf_2026-09-09.md) — the companion perf
   answer: jpegli's `CubeRootAndAdd` is not just bit-exact with the C++ reference,
   it is **faster** than the cube root fast-ssim2 ships (2.7-2.9% on NEON, 6-8% on
