@@ -283,13 +283,14 @@ Full record: `benchmarks/vs_cpp_and_mt_2026-09-10.md`.
   fixing two overhead bugs: the blur was splitting *per row* (~1 us of work per
   join) and nothing had a minimum size, so `rayon` made 320x240 **2x slower**
   than serial. Both fixed; small images now match the serial time exactly.
-- **Next lever: the vertical blur pass (~26%, still serial).** Its columns are
-  independent, but a worker would write a strided column band, which safe Rust
-  cannot hand out as disjoint `&mut` slices — it needs a per-band staging buffer
-  (one extra plane) plus a scatter, or a restructure. Memory-vs-parallelism
-  decision, not a mechanical change. Parallelising it moves the 12-core ceiling
-  from ~1.9x to ~2.3x; beyond that the reduction kernels need a deterministic
-  tree reduction to split by rows and stay bit-identical.
+- **The vertical blur pass (~26%) is still serial, and parallelising it was
+  tried and NOT merged.** An earlier version of this bullet said safe Rust
+  cannot hand out disjoint column bands without a staging buffer — false:
+  per-row `split_at_mut` grouped by band does it with no extra plane and no
+  `unsafe` (branch `vertical-band-blur`, bit-identical). It also predicted a
+  portable win; measured, it helps the M4 Pro and WSL2 but **regresses four x86
+  boxes by 11-25%**, because the best band count differs per machine. See the
+  fleet section below before re-attempting.
 
 ## 4K across the fleet, and what limits it (2026-09-10)
 
