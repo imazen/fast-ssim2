@@ -9,6 +9,8 @@ use archmage::magetypes;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 use magetypes::simd::generic::i32x8 as GenericI32x8;
 
+use crate::tuning::Tuning;
+
 // XYB color space constants from jpegli
 pub(crate) const K_M02: f32 = 0.078f32;
 pub(crate) const K_M00: f32 = 0.30f32;
@@ -260,13 +262,13 @@ fn linear_rgb_to_xyb_inner(token: Token, input: &mut [[f32; 3]]) {
 /// bit-identical to the serial path, which `simd_consistency` and the pinned
 /// `implementation_parity` scores both check.
 #[cfg(feature = "rayon")]
-pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
+pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]], tuning: Tuning) {
     use rayon::prelude::*;
     // 8 lanes x 512 = one chunk per ~12 KB of pixels: big enough that the
     // dispatch and join overhead disappears, small enough to keep every worker
     // fed on a small image.
     const CHUNK: usize = 8 * 512;
-    if input.len() < crate::simd_ops::PAR_MIN_SAMPLES {
+    if input.len() < tuning.par_min_samples {
         incant!(linear_rgb_to_xyb_inner(input), [v3, neon, wasm128, scalar]);
         return;
     }
@@ -276,7 +278,7 @@ pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
 }
 
 #[cfg(not(feature = "rayon"))]
-pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
+pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]], _tuning: Tuning) {
     incant!(linear_rgb_to_xyb_inner(input), [v3, neon, wasm128, scalar])
 }
 

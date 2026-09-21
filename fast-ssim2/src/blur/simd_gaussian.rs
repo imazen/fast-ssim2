@@ -10,6 +10,8 @@ use archmage::magetypes;
 use magetypes::simd::generic::f32x4 as GenericF32x4;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 
+use crate::tuning::Tuning;
+
 mod consts {
     #![allow(clippy::unreadable_literal)]
     include!(concat!(env!("OUT_DIR"), "/recursive_gaussian.rs"));
@@ -28,6 +30,7 @@ pub struct SimdGaussian {
     /// initializes to zero — we don't preserve state between calls.
     vert_state: Vec<f32>,
     vert_state_size: usize,
+    tuning: Tuning,
 }
 
 const VERT_STATE_LANES: usize = 8;
@@ -53,7 +56,14 @@ impl SimdGaussian {
     /// working buffer would allocate 256 MiB upfront for nothing) and would
     /// silently overflow `usize` on 32-bit targets when `max_width` exceeded
     /// `usize::MAX / 4096`.
+    #[allow(dead_code)] // callers go through `with_tuning`; tests use this.
     pub fn new(max_width: usize) -> Self {
+        Self::with_tuning(max_width, Tuning::detect())
+    }
+
+    /// Create a new SIMD Gaussian blur context with explicit scheduling
+    /// tuning. Affects speed only — never scores.
+    pub fn with_tuning(max_width: usize, tuning: Tuning) -> Self {
         // Cap the hint at a sane value so callers passing absurd widths
         // don't trigger an immediate gigabyte-scale allocation. The buffer
         // still grows on demand if the actual image needs more.
@@ -63,7 +73,18 @@ impl SimdGaussian {
             max_size: 0,
             vert_state: Vec::new(),
             vert_state_size: 0,
+            tuning,
         }
+    }
+
+    /// Update the scheduling tuning. Takes effect on the next blur call.
+    pub fn set_tuning(&mut self, tuning: Tuning) {
+        self.tuning = tuning;
+    }
+
+    /// The scheduling tuning currently in effect.
+    pub fn tuning(&self) -> Tuning {
+        self.tuning
     }
 
     /// Ensure the temporary buffer is large enough for `width * height`.
@@ -173,7 +194,12 @@ impl SimdGaussian {
         // Horizontal pass: dispatched for FMA. `off` keeps the temp plane out
         // of 4 KiB congruence with `plane` — see `temp_offset`.
         let off = Self::temp_offset(self.temp_buffer.as_ptr(), plane.as_ptr());
-        horizontal_pass(plane, &mut self.temp_buffer[off..off + size], width);
+        horizontal_pass(
+            plane,
+            &mut self.temp_buffer[off..off + size],
+            width,
+            self.tuning,
+        );
 
         // Vertical pass: SIMD-dispatched, processes all columns per height traversal
         vertical_pass(
@@ -182,6 +208,7 @@ impl SimdGaussian {
             &mut self.vert_state[..vert_state_needed],
             width,
             height,
+            self.tuning,
         );
     }
 }
@@ -208,20 +235,24 @@ impl SimdGaussian {
 ///
 /// `HWY_CAPPED(float, 4)` in the C++ pins this to four lanes on every non-scalar
 /// target, so widening it past `f32x4` would *break* the parity it buys.
-fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize) {
+fn horizontal_pass(input: &[f32], output: &mut [f32], width: usize, tuning: Tuning) {
     assert_eq!(input.len(), output.len());
+    #[cfg(not(feature = "rayon"))]
+    let _ = tuning;
 
     // Rows are independent, so this parallelises cleanly — and unlike the
     // row-vectorised predecessor, every lane of every chunk still walks
-    // contiguous memory. Below `PAR_MIN_SAMPLES` the split costs more than it
+    // contiguous memory. Below `par_min_samples` the split costs more than it
     // saves: one row of a 320-wide plane is ~1 us of work, and the pyramid
     // reaches sizes like that even for a 4K input.
     #[cfg(feature = "rayon")]
-    if input.len() >= crate::simd_ops::PAR_MIN_SAMPLES {
+    if input.len() >= tuning.par_min_samples {
         use rayon::prelude::*;
         // Chunk by groups of rows rather than single rows, so each task is
         // worth a join.
-        let rows_per_task = (input.len() / width).div_ceil(rayon::current_num_threads() * 4).max(1);
+        let rows_per_task = (input.len() / width)
+            .div_ceil(rayon::current_num_threads() * 4)
+            .max(1);
         input
             .par_chunks(rows_per_task * width)
             .zip(output.par_chunks_mut(rows_per_task * width))
@@ -421,6 +452,7 @@ fn vertical_pass(
     state: &mut [f32],
     width: usize,
     height: usize,
+    tuning: Tuning,
 ) {
     assert_eq!(input.len(), output.len());
     const LANES: usize = 8;
@@ -443,7 +475,7 @@ fn vertical_pass(
     // (Zen 3): with 32-byte-aligned bands the rayon build was 63% SLOWER than
     // main at 1920x1080 and slower than its own serial path; the same code on
     // an M4 Pro was 23% faster, which is why this had to be measured on both.
-    let nbands = vertical_band_count(groups, height);
+    let nbands = vertical_band_count(groups, height, tuning);
     let mut band_groups: Vec<usize> = Vec::with_capacity(nbands);
     if nbands <= 1 {
         band_groups.push(groups);
@@ -470,8 +502,10 @@ fn vertical_pass(
 
     {
         // Pre-slice: for each band, the list of its row slices.
-        let mut band_rows: Vec<Vec<&mut [f32]>> =
-            band_groups.iter().map(|_| Vec::with_capacity(height)).collect();
+        let mut band_rows: Vec<Vec<&mut [f32]>> = band_groups
+            .iter()
+            .map(|_| Vec::with_capacity(height))
+            .collect();
         for row in output.chunks_exact_mut(width) {
             let (mut rest, _tail) = row.split_at_mut(covered);
             for (b, g) in band_groups.iter().enumerate() {
@@ -507,15 +541,7 @@ fn vertical_pass(
         }
         let run = |b: Band<'_>| {
             incant!(
-                vertical_band_inner(
-                    input,
-                    b.rows,
-                    b.state,
-                    width,
-                    height,
-                    b.col_start,
-                    b.groups
-                ),
+                vertical_band_inner(input, b.rows, b.state, width, height, b.col_start, b.groups),
                 [v3, neon, wasm128, scalar]
             );
         };
@@ -549,14 +575,21 @@ fn vertical_pass(
     vertical_pass_scalar_columns(input, output, width, height, covered);
 }
 
-/// Minimum `LANES`-groups per band: 64 groups = 512 columns = **2 KiB of each
-/// row**.
+/// How many column bands to split the vertical pass into.
 ///
-/// Band count is governed by *width*, not by how many threads exist, and this
-/// constant is the whole reason. Each band walks the full height, so it reads a
-/// narrow vertical strip: `band_columns * 4` bytes out of every `width * 4`
-/// byte row. Make the strip too narrow and one sequential pass over the plane
-/// becomes N strided ones, which some prefetchers tolerate and others do not.
+/// One band unless `rayon` is on, banding is enabled
+/// (`tuning.min_groups_per_band > 0`), and the plane is worth splitting: each
+/// band walks the full height, so a band is only worth a join when it carries
+/// real work. Bounded by `min_groups_per_band` first and the thread count
+/// second — more bands than threads only adds state, and more bands than the
+/// width supports actively hurts.
+///
+/// Band count is governed by *width*, not by how many threads exist, and
+/// `min_groups_per_band` is the whole reason. Each band walks the full height,
+/// so it reads a narrow vertical strip: `band_columns * 4` bytes out of every
+/// `width * 4` byte row. Make the strip too narrow and one sequential pass
+/// over the plane becomes N strided ones, which some prefetchers tolerate and
+/// others do not.
 ///
 /// Measured on a Ryzen 9 5900XT (Zen 3, 32 threads), MT against `main`'s MT,
 /// with the band count forced:
@@ -571,31 +604,24 @@ fn vertical_pass(
 /// One band per hardware thread — the obvious policy, and what this branch did
 /// first — lands on the 32 column and is catastrophic. An Apple M4 Pro shows
 /// none of this (47.5 ms at 2 bands, 48.3 at 32), so it cannot be found on
-/// aarch64 alone.
-#[cfg(feature = "rayon")]
-const MIN_GROUPS_PER_BAND: usize = 64;
-
-/// How many column bands to split the vertical pass into.
-///
-/// One band unless `rayon` is on and the plane is worth splitting: each band
-/// walks the full height, so a band is only worth a join when it carries real
-/// work. Bounded by [`MIN_GROUPS_PER_BAND`] first and the thread count second —
-/// more bands than threads only adds state, and more bands than the width
-/// supports actively hurts.
-fn vertical_band_count(groups: usize, height: usize) -> usize {
+/// aarch64 alone. Which is why the default lives in [`Tuning`] — per-ISA, not
+/// per-codebase: aarch64 gets 64, everything else gets 0 (off) until a
+/// machine proves otherwise. See `crate::tuning`.
+fn vertical_band_count(groups: usize, height: usize, tuning: Tuning) -> usize {
     #[cfg(feature = "rayon")]
     {
         const LANES: usize = 8;
-        if groups * LANES * height < crate::simd_ops::PAR_MIN_SAMPLES {
+        let min_groups = tuning.min_groups_per_band;
+        if min_groups == 0 || groups * LANES * height < tuning.par_min_samples {
             return 1;
         }
-        (groups / MIN_GROUPS_PER_BAND)
+        (groups / min_groups)
             .min(rayon::current_num_threads())
             .max(1)
     }
     #[cfg(not(feature = "rayon"))]
     {
-        let _ = (groups, height);
+        let _ = (groups, height, tuning);
         1
     }
 }
@@ -856,5 +882,32 @@ mod tests {
         let plane = [0.0f32; 0];
         let mut out = [0.0f32; 0];
         g.blur_single_plane_into(&plane, &mut out, usize::MAX, 2);
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn band_count_is_width_governed_and_off_at_zero() {
+        let on = Tuning {
+            min_groups_per_band: 64,
+            par_min_samples: 0,
+        };
+        // 4K: 480 groups / 64 = 7 bands (or fewer than threads on small pools).
+        let n = vertical_band_count(480, 2160, on);
+        assert_eq!(n, 7.min(rayon::current_num_threads()).max(1));
+        // 1080p: 240 groups / 64 = 3 bands.
+        let n = vertical_band_count(240, 1080, on);
+        assert_eq!(n, 3.min(rayon::current_num_threads()).max(1));
+        // Disabled: min_groups_per_band = 0 always serial.
+        let off = Tuning {
+            min_groups_per_band: 0,
+            par_min_samples: 0,
+        };
+        assert_eq!(vertical_band_count(480, 2160, off), 1);
+        // Below the sample floor: serial even with banding on.
+        let floor = Tuning {
+            min_groups_per_band: 64,
+            par_min_samples: usize::MAX,
+        };
+        assert_eq!(vertical_band_count(480, 2160, floor), 1);
     }
 }

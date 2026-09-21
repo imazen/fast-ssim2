@@ -5,11 +5,37 @@
 ### QUEUED BREAKING CHANGES
 <!-- Breaking changes that will ship together in the next minor (0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
-_(none — both previously queued items shipped in 0.9.0.)_
+- `Ssimulacra2Config` gains a public `tuning: Tuning` field, so struct-literal
+  construction (`Ssimulacra2Config { impl_type }`) needs the field or
+  `..Default::default()`. Constructor callers (`::new`, `::simd`, `::scalar`,
+  `Default`) are unaffected; `with_tuning(t)` is the builder-style setter.
 
 ### Added
 
-- **Parallel paths for XYB conversion, `image_multiply` and `ssim_map` under the `rayon` feature**, all bit-identical to the serial path (pixels and channels are independent, so no reduction order changes; the pinned `implementation_parity` scores and `simd_consistency` pass with the feature on and off). With the overhead fixes below, multi-threaded throughput on 12 cores goes from 1.29× to **1.62×** at 4K and 1.35× to **1.81×** on the RGB path. The remaining serial block is the vertical blur pass (~26% of runtime); its columns are independent but each worker would write a strided region, which safe Rust cannot express as disjoint `&mut` slices without a staging buffer — see [`benchmarks/vs_cpp_and_mt_2026-09-10.md`](benchmarks/vs_cpp_and_mt_2026-09-10.md)
+- **`Tuning`: machine-adaptive scheduling constants.** A small struct of
+  knobs that decide *when* parallel execution is worth its overhead and how
+  work is divided — never *what* is computed, so scores cannot depend on
+  them. Resolved by `Tuning::detect()`: a fixed per-ISA table of measured
+  defaults, then `FAST_SSIM2_*` environment overrides (`FAST_SSIM2_VBAND_MIN_GROUPS`,
+  `FAST_SSIM2_PAR_MIN_SAMPLES`). Reachable through
+  `Ssimulacra2Config::with_tuning` / the `tuning` field, `Blur::with_tuning`
+  and `Blur::set_tuning`; `Tuning::serial()` is the deterministic all-off
+  value for benchmarking. Knobs: `min_groups_per_band` (vertical-blur
+  banding, `0` = off) and `par_min_samples` (the `rayon` engagement floor,
+  previously the fixed `PAR_MIN_SAMPLES` constant).
+- **The vertical blur pass is parallelised — over pre-sliced column bands, on
+  the machines where that measured a win.** Each band is whole `LANES`-wide
+  column groups of a per-column IIR, so the split is bit-identical however
+  the columns are divided. `Tuning::detect()` turns it **on for aarch64**
+  (`min_groups_per_band = 64`: M4 Pro −21% at 4K, flat across band counts)
+  and **off everywhere else** — the fleet measurement showed the optimal
+  band count is machine-dependent, not portable (helps WSL2 −13%, hurts four
+  other x86 boxes +11–25%). x86 users on a machine where it pays can opt in
+  per-process via `FAST_SSIM2_VBAND_MIN_GROUPS` or `Ssimulacra2Config::with_tuning`;
+  4–8 bands measured −7 to −12% on Zen 3, so `64`–`120` is the range to
+  sweep. Full record: [`benchmarks/vertical_band_parallel_2026-09-10.md`](benchmarks/vertical_band_parallel_2026-09-10.md)
+
+- **Parallel paths for XYB conversion, `image_multiply` and `ssim_map` under the `rayon` feature**, all bit-identical to the serial path (pixels and channels are independent, so no reduction order changes; the pinned `implementation_parity` scores and `simd_consistency` pass with the feature on and off). With the overhead fixes below, multi-threaded throughput on 12 cores goes from 1.29× to **1.62×** at 4K and 1.35× to **1.81×** on the RGB path. The remaining serial block is the vertical blur pass (~26% of runtime); its columns are independent but each worker would write a strided region, which safe Rust cannot express as disjoint `&mut` slices without a staging buffer — see [`benchmarks/vs_cpp_and_mt_2026-09-10.md`](benchmarks/vs_cpp_and_mt_2026-09-10.md). (That claim proved wrong — per-row `split_at_mut` grouped by band does it with no staging buffer; the pass is now parallelised behind `Tuning`, above.)
 
 ### Changed
 

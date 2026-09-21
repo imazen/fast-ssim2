@@ -1,9 +1,13 @@
 # Parallelising the vertical blur with pre-sliced column bands
 
-> **Not merged.** The technique is sound and bit-identical, but the fleet
-> measurement is split: it helps an M4 Pro (−21%) and WSL2 (−13%) and hurts
-> four other x86 machines (r7900x +25%, r5900xt +16%, i265 +14%, dev +11%).
-> Kept on branch `vertical-band-blur` with all numbers. See
+> **Merged, behind per-ISA defaults.** The technique is sound and
+> bit-identical, but the fleet measurement is split: it helps an M4 Pro
+> (−21%) and WSL2 (−13%) and hurts four other x86 machines (r7900x +25%,
+> r5900xt +16%, i265 +14%, dev +11%). So `MIN_GROUPS_PER_BAND` did not ship
+> as a constant: it became `Tuning::min_groups_per_band`, resolved by
+> `Tuning::detect()` to **64 on aarch64 and 0 (off) elsewhere**, overridable
+> per-process via `Ssimulacra2Config::with_tuning` or
+> `FAST_SSIM2_VBAND_MIN_GROUPS`. See
 > [`fleet_4k_2026-09-10.md`](fleet_4k_2026-09-10.md).
 
 **Branch:** `vertical-band-blur` · **Base:** `520005f` (main) · **Date:** 2026-09-10 ·

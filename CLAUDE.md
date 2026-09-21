@@ -283,14 +283,26 @@ Full record: `benchmarks/vs_cpp_and_mt_2026-09-10.md`.
   fixing two overhead bugs: the blur was splitting *per row* (~1 us of work per
   join) and nothing had a minimum size, so `rayon` made 320x240 **2x slower**
   than serial. Both fixed; small images now match the serial time exactly.
-- **The vertical blur pass (~26%) is still serial, and parallelising it was
-  tried and NOT merged.** An earlier version of this bullet said safe Rust
-  cannot hand out disjoint column bands without a staging buffer — false:
-  per-row `split_at_mut` grouped by band does it with no extra plane and no
-  `unsafe` (branch `vertical-band-blur`, bit-identical). It also predicted a
-  portable win; measured, it helps the M4 Pro and WSL2 but **regresses four x86
-  boxes by 11-25%**, because the best band count differs per machine. See the
-  fleet section below before re-attempting.
+- **The vertical blur pass (~26%) is now parallelised — behind `Tuning`, on
+  aarch64 only.** Per-row `split_at_mut` grouped into column bands gives
+  disjoint `&mut` slices with no staging buffer and no `unsafe` (the earlier
+  claim that safe Rust cannot express it was wrong). The fleet measurement
+  showed the optimal band count is machine-dependent, so it is governed by
+  `Tuning::min_groups_per_band` — **64 on aarch64, 0 (off) elsewhere** —
+  resolved by `Tuning::detect()` plus `FAST_SSIM2_*` env overrides. See the
+  `Tuning` note below and `benchmarks/vertical_band_parallel_2026-09-10.md`.
+  Beyond this, the reduction kernels need a deterministic tree reduction to
+  split by rows and stay bit-identical.
+- **`Tuning` (`src/tuning.rs`) is where scheduling constants live — speed
+  only, never scores.** `min_groups_per_band` (vertical-blur banding, 0=off)
+  and `par_min_samples` (rayon floor, was the fixed `PAR_MIN_SAMPLES`).
+  `detect()` = per-ISA default table + `FAST_SSIM2_VBAND_MIN_GROUPS` /
+  `FAST_SSIM2_PAR_MIN_SAMPLES` env; threaded through `Ssimulacra2Config.tuning`,
+  `Blur::with_tuning`/`set_tuning`, and the `pub(crate)` kernels. New
+  scheduling knobs belong here, NOT as new `const`s — and anything that
+  changes *scores* does not belong here at all (metric constants stay fixed:
+  WEIGHT, C2, opsin matrix, cbrt magics). `Ssimulacra2Reference`/`CompareContext`
+  take no config, so they run `Tuning::detect()` captured at construction.
 
 ## 4K across the fleet, and what limits it (2026-09-10)
 
@@ -322,14 +334,18 @@ CPU.
 
 ### Measured and REJECTED — do not re-attempt without refuting these
 
-- **Vertical blur over pre-sliced column bands** (branch `vertical-band-blur`).
+- **Vertical blur over pre-sliced column bands — landed, gated by `Tuning`.**
   Technique is sound: per-row `split_at_mut` grouped by band gives disjoint
   `&mut` slices in safe Rust, no staging buffer, no `unsafe`, bands do not slide
   (the IIR state is per column), and one band is the serial path. Bit-identical.
-  But: helps M4 Pro (-21%) and wsl (-13%), **hurts r7900x +25%, r5900xt +16%,
-  i265 +14%, dev +11%**. The band-count optimum differs per machine AND per
-  workload, so there is no portable policy. Also note the earlier claim in
-  `vs_cpp_and_mt` that safe Rust *cannot* express this was simply wrong.
+  But the band-count optimum differs per machine: helps M4 Pro (-21%) and wsl
+  (-13%), **hurts r7900x +25%, r5900xt +16%, i265 +14%, dev +11%**. So it is on
+  by default on aarch64 only (`min_groups_per_band = 64`); elsewhere 0, with
+  per-machine opt-in via env/config — do NOT widen the default without fleet
+  numbers for that arch.
+- **A fixed `MIN_GROUPS_PER_BAND` constant — rejected as a design.** A single
+  compile-time value cannot satisfy opposite per-machine optima; the
+  `Tuning` per-ISA-default-plus-override pattern is the resolution.
 - **Streaming the blur through a ring buffer** (branch `fused-blur`). Replaces
   the 33 MiB intermediate plane with 245 KiB of L2-resident ring. Bit-identical.
   4K ST +/-0%, 8K ST -1% (and 8K is where a 133 MiB plane cannot be L3-resident,

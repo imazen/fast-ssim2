@@ -7,6 +7,7 @@ use archmage::incant;
 use archmage::magetypes;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 
+use crate::tuning::Tuning;
 use crate::weights::{EDGE_HAS_WEIGHT, NUM_SCALES, SSIM_HAS_WEIGHT};
 
 const C2: f32 = 0.0009f32;
@@ -14,17 +15,6 @@ const C2: f32 = 0.0009f32;
 // =============================================================================
 // SSIM map
 // =============================================================================
-
-/// Generic SSIM map computation — processes 8 pixels at a time on all platforms.
-/// Below this many samples a plane is handed to one worker rather than split.
-///
-/// `rayon`'s join/steal overhead is a fixed few microseconds; at 320x240 the
-/// whole metric takes ~3 ms single-threaded, and splitting every stage of every
-/// pyramid level across workers measured **2x slower** than not bothering
-/// (2.99 ms -> 6.24 ms). The pyramid also shrinks by 4x per scale, so even a
-/// large image reaches sizes where this matters after a few levels.
-#[cfg(feature = "rayon")]
-pub(crate) const PAR_MIN_SAMPLES: usize = 1 << 18;
 
 #[magetypes(v3, neon, wasm128, scalar)]
 fn ssim_map_inner(
@@ -137,7 +127,6 @@ fn ssim_map_channel_inner(
         sum_d4 += f64::from(d4);
     }
 
-
     [
         one_per_pixels * sum_d,
         (one_per_pixels * sum_d4).sqrt().sqrt(),
@@ -145,6 +134,7 @@ fn ssim_map_channel_inner(
 }
 
 /// SIMD-optimized SSIM map computation with automatic runtime dispatch.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ssim_map_simd(
     scales_n: usize,
     scale_idx: usize,
@@ -155,12 +145,15 @@ pub(crate) fn ssim_map_simd(
     s11: &[Vec<f32>; 3],
     s22: &[Vec<f32>; 3],
     s12: &[Vec<f32>; 3],
+    tuning: Tuning,
 ) -> [f64; 3 * 2] {
+    #[cfg(not(feature = "rayon"))]
+    let _ = tuning;
     // Each channel owns its own accumulators and its own two output slots, so
     // running the three concurrently changes no summation order — the pinned
     // `implementation_parity` scores pass identically with and without `rayon`.
     #[cfg(feature = "rayon")]
-    if width * height >= PAR_MIN_SAMPLES {
+    if width * height >= tuning.par_min_samples {
         use rayon::prelude::*;
         let skip_table = SSIM_HAS_WEIGHT[scales_n.min(NUM_SCALES)];
         let mut plane_averages = [0f64; 3 * 2];
@@ -342,7 +335,12 @@ fn image_multiply_inner(
 /// hand each channel to a different worker; the arithmetic is elementwise, so
 /// doing that is bit-identical to running the three in sequence.
 #[magetypes(v3, neon, wasm128, scalar)]
-fn image_multiply_channel_inner(token: Token, plane1: &[f32], plane2: &[f32], out_plane: &mut [f32]) {
+fn image_multiply_channel_inner(
+    token: Token,
+    plane1: &[f32],
+    plane2: &[f32],
+    out_plane: &mut [f32],
+) {
     #[allow(non_camel_case_types)]
     type f32x8 = GenericF32x8<Token>;
     const LANES: usize = 8;
@@ -365,11 +363,14 @@ pub(crate) fn image_multiply_simd(
     img1: &[Vec<f32>; 3],
     img2: &[Vec<f32>; 3],
     out: &mut [Vec<f32>; 3],
+    tuning: Tuning,
 ) {
+    #[cfg(not(feature = "rayon"))]
+    let _ = tuning;
     // Elementwise and per-channel, so splitting by channel is bit-identical to
     // the serial path — no reduction order changes.
     #[cfg(feature = "rayon")]
-    if img1[0].len() >= PAR_MIN_SAMPLES {
+    if img1[0].len() >= tuning.par_min_samples {
         use rayon::prelude::*;
         out.par_iter_mut().enumerate().for_each(|(c, o)| {
             incant!(

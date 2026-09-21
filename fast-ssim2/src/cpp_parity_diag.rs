@@ -453,19 +453,46 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
                 }
             };
 
-        image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type);
+        image_multiply(
+            &img1_planar,
+            &img1_planar,
+            &mut mul,
+            impl_type,
+            blur.tuning(),
+        );
         do_blur(&mul, &mut sigma1_sq, &mut blur);
-        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type);
+        image_multiply(
+            &img2_planar,
+            &img2_planar,
+            &mut mul,
+            impl_type,
+            blur.tuning(),
+        );
         do_blur(&mul, &mut sigma2_sq, &mut blur);
-        image_multiply(&img1_planar, &img2_planar, &mut mul, impl_type);
+        image_multiply(
+            &img1_planar,
+            &img2_planar,
+            &mut mul,
+            impl_type,
+            blur.tuning(),
+        );
         do_blur(&mul, &mut sigma12, &mut blur);
         do_blur(&img1_planar, &mut mu1, &mut blur);
         do_blur(&img2_planar, &mut mu2, &mut blur);
 
         scales.push(MsssimScale {
             avg_ssim: ssim_map(
-                scales_n, scale, width, height, &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12,
+                scales_n,
+                scale,
+                width,
+                height,
+                &mu1,
+                &mu2,
+                &sigma1_sq,
+                &sigma2_sq,
+                &sigma12,
                 impl_type,
+                blur.tuning(),
             ),
             avg_edgediff: edge_diff_map(
                 scales_n,
@@ -667,11 +694,11 @@ fn diag_flat_field_conditioning() {
         let mut s12 = mul.clone();
         let mut mu1 = mul.clone();
         let mut mu2 = mul.clone();
-        image_multiply(&p1, &p1, &mut mul, SimdImpl::Simd);
+        image_multiply(&p1, &p1, &mut mul, SimdImpl::Simd, blur.tuning());
         blur.blur_into(&mul, &mut s11);
-        image_multiply(&p2, &p2, &mut mul, SimdImpl::Simd);
+        image_multiply(&p2, &p2, &mut mul, SimdImpl::Simd, blur.tuning());
         blur.blur_into(&mul, &mut s22);
-        image_multiply(&p1, &p2, &mut mul, SimdImpl::Simd);
+        image_multiply(&p1, &p2, &mut mul, SimdImpl::Simd, blur.tuning());
         blur.blur_into(&mul, &mut s12);
         blur.blur_into(&p1, &mut mu1);
         blur.blur_into(&p2, &mut mu2);
@@ -886,11 +913,22 @@ fn diag_kernel_tier_divergence() {
 
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let mut data = mk(0.0);
-        crate::xyb_simd::linear_rgb_to_xyb_simd(&mut data);
+        crate::xyb_simd::linear_rgb_to_xyb_simd(&mut data, crate::Tuning::detect());
         xyb_results.push((perm.label.to_string(), data));
         ssim_results.push((
             perm.label.to_string(),
-            crate::simd_ops::ssim_map_simd(6, 0, n, 1, &a, &b, &aa, &bb, &ab),
+            crate::simd_ops::ssim_map_simd(
+                6,
+                0,
+                n,
+                1,
+                &a,
+                &b,
+                &aa,
+                &bb,
+                &ab,
+                crate::Tuning::detect(),
+            ),
         ));
         edge_results.push((
             perm.label.to_string(),

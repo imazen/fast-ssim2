@@ -50,12 +50,7 @@ fn make_pair(w: usize, h: usize) -> (LinearRgbImage, LinearRgbImage) {
 fn bench(c: &mut Criterion) {
     // Pairs: (power-of-two width, neighbour). Same height, so a per-pixel
     // comparison is a direct one.
-    for (w, h) in [
-        (1024usize, 512usize),
-        (1032, 512),
-        (4096, 256),
-        (4104, 256),
-    ] {
+    for (w, h) in [(1024usize, 512usize), (1032, 512), (4096, 256), (4104, 256)] {
         let (a, b) = make_pair(w, h);
         let mut group = c.benchmark_group(format!("stride_{w}x{h}"));
         group.bench_function("compute_ssimulacra2", |bencher| {

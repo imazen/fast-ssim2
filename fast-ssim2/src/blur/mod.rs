@@ -1,7 +1,7 @@
 mod gaussian;
 mod simd_gaussian;
 
-use crate::SimdImpl;
+use crate::{SimdImpl, Tuning};
 use gaussian::RecursiveGaussian;
 use simd_gaussian::SimdGaussian;
 
@@ -37,16 +37,36 @@ impl Blur {
     }
 
     /// Create a new [Blur] with a specific implementation.
+    ///
+    /// Scheduling tuning defaults to [`Tuning::detect`]; use
+    /// [`Self::with_tuning`] or [`Self::set_tuning`] to override.
     #[must_use]
     pub fn with_simd_impl(width: usize, height: usize, impl_type: SimdImpl) -> Self {
+        Self::with_tuning(width, height, impl_type, Tuning::detect())
+    }
+
+    /// Create a new [Blur] with a specific implementation and scheduling
+    /// tuning. Tuning affects speed only, never the blurred output.
+    #[must_use]
+    pub fn with_tuning(width: usize, height: usize, impl_type: SimdImpl, tuning: Tuning) -> Self {
         Blur {
             width,
             height,
             impl_type,
             scalar_kernel: RecursiveGaussian,
             scalar_temp: vec![0.0f32; width * height],
-            simd: SimdGaussian::new(width),
+            simd: SimdGaussian::with_tuning(width, tuning),
         }
+    }
+
+    /// Update the scheduling tuning. Takes effect on the next blur call.
+    pub fn set_tuning(&mut self, tuning: Tuning) {
+        self.simd.set_tuning(tuning);
+    }
+
+    /// The scheduling tuning currently in effect.
+    pub fn tuning(&self) -> Tuning {
+        self.simd.tuning()
     }
 
     /// Get the current implementation type.

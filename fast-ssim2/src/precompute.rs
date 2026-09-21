@@ -277,7 +277,7 @@ impl Ssimulacra2Reference {
             }
             blur.shrink_to(width, height);
 
-            let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone());
+            let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone(), blur.tuning());
             make_positive_xyb(&mut img1_xyb);
 
             let img1_planar = xyb_to_planar(&img1_xyb);
@@ -286,7 +286,13 @@ impl Ssimulacra2Reference {
             let mu1 = blur.blur(&img1_planar);
 
             // Precompute sigma1_sq = blur(img1 * img1)
-            image_multiply(&img1_planar, &img1_planar, &mut mul, SimdImpl::default());
+            image_multiply(
+                &img1_planar,
+                &img1_planar,
+                &mut mul,
+                SimdImpl::default(),
+                blur.tuning(),
+            );
             let sigma1_sq = blur.blur(&mul);
 
             scales.push(ScaleData {
@@ -421,7 +427,7 @@ impl Ssimulacra2Reference {
 
             ctx.shrink_to(width, height);
 
-            let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone());
+            let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), ctx.blur.tuning());
             make_positive_xyb(&mut img2_xyb);
 
             // Reuse ctx.img2_planar instead of allocating a fresh [Vec; 3].
@@ -436,6 +442,7 @@ impl Ssimulacra2Reference {
                 &ctx.img2_planar,
                 &mut ctx.mul,
                 SimdImpl::default(),
+                ctx.blur.tuning(),
             );
             ctx.blur.blur_into(&ctx.mul, &mut ctx.sigma2_sq);
 
@@ -445,6 +452,7 @@ impl Ssimulacra2Reference {
                 &ctx.img2_planar,
                 &mut ctx.mul,
                 SimdImpl::default(),
+                ctx.blur.tuning(),
             );
             ctx.blur.blur_into(&ctx.mul, &mut ctx.sigma12);
 
@@ -460,6 +468,7 @@ impl Ssimulacra2Reference {
                 &ctx.sigma2_sq,
                 &ctx.sigma12,
                 SimdImpl::default(),
+                ctx.blur.tuning(),
             );
 
             let avg_edgediff = edge_diff_map(

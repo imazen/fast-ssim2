@@ -451,6 +451,7 @@ fn process_strip(
     config: Ssimulacra2Config,
 ) {
     let impl_type = config.impl_type;
+    let tuning = config.tuning;
     let mut img1 = img1_strip;
     let mut img2 = img2_strip;
 
@@ -473,7 +474,7 @@ fn process_strip(
     let mut mu2 = alloc_3planes(width, height);
     let mut img1_planar = alloc_3planes(width, height);
     let mut img2_planar = alloc_3planes(width, height);
-    let mut blur = Blur::with_simd_impl(width, height, impl_type);
+    let mut blur = Blur::with_tuning(width, height, impl_type, tuning);
 
     // Scale-0 strip-local interior bounds; updated per scale via
     // halve-with-snap-down semantics matching the downscale.
@@ -539,19 +540,19 @@ fn process_strip(
         blur.shrink_to(width, height);
 
         // XYB conversion + positive shift (per pixel — strip safe).
-        let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone());
-        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone());
+        let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone(), tuning);
+        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), tuning);
         make_positive_xyb(&mut img1_xyb);
         make_positive_xyb(&mut img2_xyb);
         xyb_to_planar_into(&img1_xyb, &mut img1_planar);
         xyb_to_planar_into(&img2_xyb, &mut img2_planar);
 
         // Variance / cross-term tensors (per pixel multiply).
-        image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type);
+        image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma1_sq);
-        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type);
+        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma2_sq);
-        image_multiply(&img1_planar, &img2_planar, &mut mul, impl_type);
+        image_multiply(&img1_planar, &img2_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma12);
 
         // Means (separate blur calls — IIR has finite halo per row).
@@ -952,6 +953,7 @@ fn process_dist_strip_with_cached_ref(
     config: Ssimulacra2Config,
 ) {
     let impl_type = config.impl_type;
+    let tuning = config.tuning;
     let mut img2 = img2_strip;
     let mut width = img2.width().get();
     let mut height = img2.height().get();
@@ -971,7 +973,7 @@ fn process_dist_strip_with_cached_ref(
     // Per-strip slice of the reference's planar XYB image.
     let mut img1_planar_strip = alloc_3planes(width, height);
 
-    let mut blur = Blur::with_simd_impl(width, height, impl_type);
+    let mut blur = Blur::with_tuning(width, height, impl_type, tuning);
 
     let mut interior_start_in_strip = interior_start - strip_y0;
     let mut interior_end_in_strip = interior_end - strip_y0;
@@ -1056,7 +1058,7 @@ fn process_dist_strip_with_cached_ref(
             }
         }
 
-        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone());
+        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), tuning);
         make_positive_xyb(&mut img2_xyb);
         xyb_to_planar_into(&img2_xyb, &mut img2_planar);
 
@@ -1064,13 +1066,25 @@ fn process_dist_strip_with_cached_ref(
         // shares the same IIR boundary handling as mu2.
         blur.blur_into(&img1_planar_strip, &mut mu1_strip);
         // sigma1_sq: same — recompute on the strip from cached planar.
-        image_multiply(&img1_planar_strip, &img1_planar_strip, &mut mul, impl_type);
+        image_multiply(
+            &img1_planar_strip,
+            &img1_planar_strip,
+            &mut mul,
+            impl_type,
+            tuning,
+        );
         blur.blur_into(&mul, &mut sigma1_sq_strip);
         // sigma2_sq = blur(img2^2)
-        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type);
+        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma2_sq);
         // sigma12 = blur(img1 * img2)
-        image_multiply(&img1_planar_strip, &img2_planar, &mut mul, impl_type);
+        image_multiply(
+            &img1_planar_strip,
+            &img2_planar,
+            &mut mul,
+            impl_type,
+            tuning,
+        );
         blur.blur_into(&mul, &mut sigma12);
         // mu2 = blur(img2)
         blur.blur_into(&img2_planar, &mut mu2);

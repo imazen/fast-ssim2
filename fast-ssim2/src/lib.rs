@@ -177,6 +177,7 @@ mod blur;
 mod cpp_parity_diag;
 mod input;
 mod precompute;
+mod tuning;
 // Reference data for parity testing (hidden from docs but accessible for tests)
 #[cfg(feature = "hdr-pu")]
 mod pu_xyb;
@@ -195,6 +196,7 @@ pub use strip::{
     HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, Ssimulacra2StripConfig, compute_ssimulacra2_strip,
     compute_ssimulacra2_strip_with_config, compute_ssimulacra2_strip_with_stop,
 };
+pub use tuning::Tuning;
 
 // Re-export sRGB conversion functions for users implementing custom input types
 pub use input::{srgb_to_linear, srgb_u8_to_linear, srgb_u16_to_linear};
@@ -232,12 +234,26 @@ impl SimdImpl {
 pub struct Ssimulacra2Config {
     /// Implementation backend for all operations
     pub impl_type: SimdImpl,
+    /// Scheduling tuning (parallelism thresholds, vertical-blur banding).
+    /// Defaults to [`Tuning::detect`]: a per-ISA table plus `FAST_SSIM2_*`
+    /// environment overrides. Affects speed only, never scores.
+    pub tuning: Tuning,
 }
 
 impl Ssimulacra2Config {
     /// Create configuration with specified implementation
     pub fn new(impl_type: SimdImpl) -> Self {
-        Self { impl_type }
+        Self {
+            impl_type,
+            tuning: Tuning::detect(),
+        }
+    }
+
+    /// Set the scheduling tuning.
+    #[must_use]
+    pub fn with_tuning(mut self, tuning: Tuning) -> Self {
+        self.tuning = tuning;
+        self
     }
 
     /// Default configuration using SIMD for all operations
@@ -529,6 +545,7 @@ fn compute_frame_flavored(
     let mut width = img1.width().get();
     let mut height = img1.height().get();
     let impl_type = config.impl_type;
+    let tuning = config.tuning;
 
     // Count how many scales will actually run so the skip-map can address
     // `WEIGHT[]` using the same linear walk `score()` performs.
@@ -547,7 +564,7 @@ fn compute_frame_flavored(
     let mut img1_planar = alloc_3planes();
     let mut img2_planar = alloc_3planes();
 
-    let mut blur = Blur::with_simd_impl(width, height, impl_type);
+    let mut blur = Blur::with_tuning(width, height, impl_type, tuning);
     let mut msssim = Msssim::default();
 
     for scale in 0..NUM_SCALES {
@@ -588,8 +605,8 @@ fn compute_frame_flavored(
 
         let (img1_xyb, img2_xyb) = match flavor {
             XybFlavor::CubeRoot => {
-                let mut a = linear_rgb_to_xyb(img1.clone(), impl_type);
-                let mut b = linear_rgb_to_xyb(img2.clone(), impl_type);
+                let mut a = linear_rgb_to_xyb(img1.clone(), impl_type, tuning);
+                let mut b = linear_rgb_to_xyb(img2.clone(), impl_type, tuning);
                 make_positive_xyb(&mut a);
                 make_positive_xyb(&mut b);
                 (a, b)
@@ -605,20 +622,21 @@ fn compute_frame_flavored(
         xyb_to_planar_into(&img1_xyb, &mut img1_planar);
         xyb_to_planar_into(&img2_xyb, &mut img2_planar);
 
-        image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type);
+        image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma1_sq);
 
-        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type);
+        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma2_sq);
 
-        image_multiply(&img1_planar, &img2_planar, &mut mul, impl_type);
+        image_multiply(&img1_planar, &img2_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma12);
 
         blur.blur_into(&img1_planar, &mut mu1);
         blur.blur_into(&img2_planar, &mut mu2);
 
         let avg_ssim = ssim_map(
-            scales_n, scale, width, height, &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, impl_type,
+            scales_n, scale, width, height, &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12,
+            impl_type, tuning,
         );
         let avg_edgediff = edge_diff_map(
             scales_n,
@@ -686,21 +704,21 @@ pub fn compute_ssimulacra2_pu_nits(
 /// blur residual of ~5e-7 by `kC2 = 9e-4`, so that 1.5e-7 difference in the
 /// opsin nonlinearity was amplified into score differences of up to 0.88
 /// between the two backends on real photographs.
-fn linear_rgb_to_xyb(linear_rgb: LinearRgb, impl_type: SimdImpl) -> Xyb {
+fn linear_rgb_to_xyb(linear_rgb: LinearRgb, impl_type: SimdImpl, tuning: Tuning) -> Xyb {
     let width = linear_rgb.width(); // NonZeroUsize
     let height = linear_rgb.height(); // NonZeroUsize
     let mut data = linear_rgb.into_data();
     match impl_type {
         SimdImpl::Scalar => xyb_simd::linear_rgb_to_xyb_scalar(&mut data),
-        SimdImpl::Simd => xyb_simd::linear_rgb_to_xyb_simd(&mut data),
+        SimdImpl::Simd => xyb_simd::linear_rgb_to_xyb_simd(&mut data, tuning),
     }
     Xyb::new(data, width, height).expect("XYB construction should not fail")
 }
 
 /// Convenience wrapper hardcoding the SIMD backend; used by the
 /// precompute and strip paths, which always run the SIMD XYB conversion.
-pub(crate) fn linear_rgb_to_xyb_simd(linear_rgb: LinearRgb) -> Xyb {
-    linear_rgb_to_xyb(linear_rgb, SimdImpl::Simd)
+pub(crate) fn linear_rgb_to_xyb_simd(linear_rgb: LinearRgb, tuning: Tuning) -> Xyb {
+    linear_rgb_to_xyb(linear_rgb, SimdImpl::Simd, tuning)
 }
 
 pub(crate) fn make_positive_xyb(xyb: &mut Xyb) {
@@ -740,10 +758,11 @@ pub(crate) fn image_multiply(
     img2: &[Vec<f32>; 3],
     out: &mut [Vec<f32>; 3],
     impl_type: SimdImpl,
+    tuning: Tuning,
 ) {
     match impl_type {
         SimdImpl::Scalar => image_multiply_scalar(img1, img2, out),
-        SimdImpl::Simd => simd_ops::image_multiply_simd(img1, img2, out),
+        SimdImpl::Simd => simd_ops::image_multiply_simd(img1, img2, out, tuning),
     }
 }
 
@@ -759,7 +778,7 @@ pub mod __bench_kernels {
     // Thin forwarders: the kernels are pub(crate) and re-exporting them
     // directly would widen their visibility.
     pub fn image_multiply_simd(a: &[Vec<f32>; 3], b: &[Vec<f32>; 3], o: &mut [Vec<f32>; 3]) {
-        crate::simd_ops::image_multiply_simd(a, b, o)
+        crate::simd_ops::image_multiply_simd(a, b, o, crate::Tuning::detect())
     }
     pub fn image_multiply_scalar(a: &[Vec<f32>; 3], b: &[Vec<f32>; 3], o: &mut [Vec<f32>; 3]) {
         crate::image_multiply_scalar(a, b, o)
@@ -777,7 +796,18 @@ pub mod __bench_kernels {
         s22: &[Vec<f32>; 3],
         s12: &[Vec<f32>; 3],
     ) -> [f64; 6] {
-        crate::simd_ops::ssim_map_simd(scales_n, scale_idx, w, h, m1, m2, s11, s22, s12)
+        crate::simd_ops::ssim_map_simd(
+            scales_n,
+            scale_idx,
+            w,
+            h,
+            m1,
+            m2,
+            s11,
+            s22,
+            s12,
+            crate::Tuning::detect(),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -795,7 +825,7 @@ pub mod __bench_kernels {
     }
 
     pub fn linear_rgb_to_xyb_simd(input: &mut [[f32; 3]]) {
-        crate::xyb_simd::linear_rgb_to_xyb_simd(input)
+        crate::xyb_simd::linear_rgb_to_xyb_simd(input, crate::Tuning::detect())
     }
 }
 
@@ -893,14 +923,15 @@ pub(crate) fn ssim_map(
     s22: &[Vec<f32>; 3],
     s12: &[Vec<f32>; 3],
     impl_type: SimdImpl,
+    tuning: Tuning,
 ) -> [f64; 3 * 2] {
     match impl_type {
         SimdImpl::Scalar => {
             ssim_map_scalar(scales_n, scale_idx, width, height, m1, m2, s11, s22, s12)
         }
-        SimdImpl::Simd => {
-            simd_ops::ssim_map_simd(scales_n, scale_idx, width, height, m1, m2, s11, s22, s12)
-        }
+        SimdImpl::Simd => simd_ops::ssim_map_simd(
+            scales_n, scale_idx, width, height, m1, m2, s11, s22, s12, tuning,
+        ),
     }
 }
 
@@ -1196,7 +1227,7 @@ mod tests {
         )
         .unwrap();
         let lrgb_for_simd = LinearRgb::try_from(rgb_for_simd).unwrap();
-        let xyb_simd = linear_rgb_to_xyb_simd(lrgb_for_simd);
+        let xyb_simd = linear_rgb_to_xyb_simd(lrgb_for_simd, Tuning::detect());
 
         let mut max_diff = [0.0f32; 3];
         for (yuvxyb_pix, simd_pix) in xyb_yuvxyb.data().iter().zip(xyb_simd.data().iter()) {
