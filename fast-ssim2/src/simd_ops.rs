@@ -5,6 +5,7 @@
 /// `GenericF32x8<Token>` — the polyfill emulates 8-lane on 128-bit targets.
 use archmage::incant;
 use archmage::magetypes;
+use half::f16;
 use magetypes::simd::generic::f32x8 as GenericF32x8;
 
 use crate::tuning::Tuning;
@@ -187,6 +188,9 @@ pub(crate) fn ssim_map_simd(
 // =============================================================================
 
 /// Generic edge difference map — processes 8 pixels at a time on all platforms.
+///
+/// `img1`/`img2` are the f16 XYB planes; widening to f32 on load is exact, so
+/// the arithmetic below is unchanged from the f32-input form.
 #[magetypes(v3, neon, wasm128, scalar)]
 fn edge_diff_map_inner(
     token: Token,
@@ -194,9 +198,9 @@ fn edge_diff_map_inner(
     scale_idx: usize,
     width: usize,
     height: usize,
-    img1: &[Vec<f32>; 3],
+    img1: &[Vec<f16>; 3],
     mu1: &[Vec<f32>; 3],
-    img2: &[Vec<f32>; 3],
+    img2: &[Vec<f16>; 3],
     mu2: &[Vec<f32>; 3],
 ) -> [f64; 3 * 4] {
     #[allow(non_camel_case_types)]
@@ -233,9 +237,15 @@ fn edge_diff_map_inner(
         for chunk in 0..chunks {
             let base = chunk * LANES;
 
-            let r1 = f32x8::from_array(token, img1c[base..][..LANES].try_into().unwrap());
+            let r1 = f32x8::from_array(
+                token,
+                core::array::from_fn(|i| f32::from(img1c[base + i])),
+            );
             let rm1 = f32x8::from_array(token, mu1c[base..][..LANES].try_into().unwrap());
-            let r2 = f32x8::from_array(token, img2c[base..][..LANES].try_into().unwrap());
+            let r2 = f32x8::from_array(
+                token,
+                core::array::from_fn(|i| f32::from(img2c[base + i])),
+            );
             let rm2 = f32x8::from_array(token, mu2c[base..][..LANES].try_into().unwrap());
 
             let d1_temp = r1 - rm1;
@@ -273,8 +283,8 @@ fn edge_diff_map_inner(
         // Scalar remainder — same expression as the vectorised body above, so
         // a pixel's treatment does not depend on its index modulo LANES.
         for x in (chunks * LANES)..total {
-            let diff1 = (img1c[x] - mu1c[x]).abs();
-            let diff2 = (img2c[x] - mu2c[x]).abs();
+            let diff1 = (f32::from(img1c[x]) - mu1c[x]).abs();
+            let diff2 = (f32::from(img2c[x]) - mu2c[x]).abs();
             let d1 = (diff2 - diff1) / (1.0f32 + diff1);
             let artifact = d1.max(0.0);
             let detail_lost = (-d1).max(0.0);
@@ -301,9 +311,9 @@ pub(crate) fn edge_diff_map_simd(
     scale_idx: usize,
     width: usize,
     height: usize,
-    img1: &[Vec<f32>; 3],
+    img1: &[Vec<f16>; 3],
     mu1: &[Vec<f32>; 3],
-    img2: &[Vec<f32>; 3],
+    img2: &[Vec<f16>; 3],
     mu2: &[Vec<f32>; 3],
 ) -> [f64; 3 * 4] {
     incant!(
@@ -317,11 +327,15 @@ pub(crate) fn edge_diff_map_simd(
 // =============================================================================
 
 /// Generic image multiplication — processes 8 pixels at a time on all platforms.
+///
+/// Inputs are the f16 XYB planes; the f16→f32 widen on load is exact, so the
+/// product is identical to multiplying pre-quantisation f32 inputs would be
+/// modulo the single store-time rounding in `xyb_to_planar_into`.
 #[magetypes(v3, neon, wasm128, scalar)]
 fn image_multiply_inner(
     token: Token,
-    img1: &[Vec<f32>; 3],
-    img2: &[Vec<f32>; 3],
+    img1: &[Vec<f16>; 3],
+    img2: &[Vec<f16>; 3],
     out: &mut [Vec<f32>; 3],
 ) {
     for c in 0..3 {
@@ -337,8 +351,8 @@ fn image_multiply_inner(
 #[magetypes(v3, neon, wasm128, scalar)]
 fn image_multiply_channel_inner(
     token: Token,
-    plane1: &[f32],
-    plane2: &[f32],
+    plane1: &[f16],
+    plane2: &[f16],
     out_plane: &mut [f32],
 ) {
     #[allow(non_camel_case_types)]
@@ -348,20 +362,26 @@ fn image_multiply_channel_inner(
     let chunks = plane1.len() / LANES;
     for chunk in 0..chunks {
         let base = chunk * LANES;
-        let p1 = f32x8::from_array(token, plane1[base..][..LANES].try_into().unwrap());
-        let p2 = f32x8::from_array(token, plane2[base..][..LANES].try_into().unwrap());
+        let p1 = f32x8::from_array(
+            token,
+            core::array::from_fn(|i| f32::from(plane1[base + i])),
+        );
+        let p2 = f32x8::from_array(
+            token,
+            core::array::from_fn(|i| f32::from(plane2[base + i])),
+        );
         let result = p1 * p2;
         out_plane[base..base + LANES].copy_from_slice(&result.to_array());
     }
     for i in (chunks * LANES)..plane1.len() {
-        out_plane[i] = plane1[i] * plane2[i];
+        out_plane[i] = f32::from(plane1[i]) * f32::from(plane2[i]);
     }
 }
 
 /// SIMD-optimized image multiplication with automatic runtime dispatch.
 pub(crate) fn image_multiply_simd(
-    img1: &[Vec<f32>; 3],
-    img2: &[Vec<f32>; 3],
+    img1: &[Vec<f16>; 3],
+    img2: &[Vec<f16>; 3],
     out: &mut [Vec<f32>; 3],
     tuning: Tuning,
 ) {

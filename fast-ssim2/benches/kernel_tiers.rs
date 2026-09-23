@@ -46,6 +46,11 @@ fn planes(n: usize, seed: u32) -> [Vec<f32>; 3] {
     ]
 }
 
+fn planes_f16(n: usize, seed: u32) -> [Vec<half::f16>; 3] {
+    let p = planes(n, seed);
+    core::array::from_fn(|c| p[c].iter().map(|&v| half::f16::from_f32(v)).collect())
+}
+
 fn bench_kernels(c: &mut Criterion) {
     if !set_simd(true) || !set_simd(false) {
         eprintln!("[kernel_tiers] SIMD tier not toggleable here. Skipping.");
@@ -55,8 +60,8 @@ fn bench_kernels(c: &mut Criterion) {
     eprintln!("[kernel_tiers] comparing {TIER_NAME} vs forced scalar");
 
     let n = 1920 * 1080;
-    let a = planes(n, 1);
-    let b = planes(n, 7);
+    let a = planes_f16(n, 1);
+    let b = planes_f16(n, 7);
 
     let mut group = c.benchmark_group("image_multiply");
     for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
@@ -76,6 +81,8 @@ fn bench_kernels(c: &mut Criterion) {
     let sn = w * h;
     let (m1, m2) = (planes(sn, 11), planes(sn, 13));
     let (s11, s22, s12) = (planes(sn, 17), planes(sn, 19), planes(sn, 23));
+    // edge_diff_map's image-plane args are f16 (the XYB planes); mu stays f32.
+    let (m1h, s11h) = (planes_f16(sn, 11), planes_f16(sn, 17));
 
     let mut group = c.benchmark_group("ssim_map/512x512");
     for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
@@ -91,7 +98,7 @@ fn bench_kernels(c: &mut Criterion) {
     for (arm, simd) in [(TIER_NAME, true), ("scalar", false)] {
         group.bench_function(arm, |bch| {
             set_simd(simd);
-            bch.iter(|| k::edge_diff_map_simd(1, 0, w, h, &m1, &m2, &s11, &s22));
+            bch.iter(|| k::edge_diff_map_simd(1, 0, w, h, &m1h, &m2, &s11h, &s22));
         });
     }
     set_simd(true);

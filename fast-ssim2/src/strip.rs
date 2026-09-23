@@ -83,6 +83,7 @@
 
 use std::num::NonZeroUsize;
 
+use half::f16;
 use yuvxyb::LinearRgb;
 
 use crate::blur::Blur;
@@ -90,8 +91,9 @@ use crate::input::ToLinearRgb;
 use crate::precompute::Ssimulacra2Reference;
 use crate::weights::{EDGE_HAS_WEIGHT, NUM_SCALES, SSIM_HAS_WEIGHT};
 use crate::{
-    LinearRgbImage, Msssim, MsssimScale, Ssimulacra2Config, Ssimulacra2Error, downscale_by_2,
-    image_multiply, linear_rgb_to_xyb_simd, make_positive_xyb, xyb_to_planar_into,
+    LinearRgbF16, LinearRgbImage, Msssim, MsssimScale, SimdImpl, Ssimulacra2Config,
+    Ssimulacra2Error, XybPlanes, downscale_by_2_f16, image_multiply,
+    linear_rgb_to_xyb_planar_into,
 };
 
 /// Default number of halo rows above and below each strip.
@@ -413,9 +415,9 @@ impl StripAccumulator {
     }
 }
 
-/// Construct a `LinearRgb` covering one input strip (rows
+/// Construct a `LinearRgbF16` covering one input strip (rows
 /// `[row_start, row_end)`) of `src`.
-fn linear_rgb_strip(src: &LinearRgb, row_start: usize, row_end: usize) -> LinearRgb {
+fn linear_rgb_strip(src: &LinearRgbF16, row_start: usize, row_end: usize) -> LinearRgbF16 {
     let width = src.width().get();
     let height = src.height().get();
     debug_assert!(row_start <= row_end);
@@ -423,13 +425,12 @@ fn linear_rgb_strip(src: &LinearRgb, row_start: usize, row_end: usize) -> Linear
     let strip_rows = row_end - row_start;
     let start = row_start * width;
     let end = row_end * width;
-    let data: Vec<[f32; 3]> = src.data()[start..end].to_vec();
-    LinearRgb::new(
+    let data: Vec<[f16; 3]> = src.data()[start..end].to_vec();
+    LinearRgbF16::new(
         data,
         NonZeroUsize::new(width).expect("width must be non-zero"),
         NonZeroUsize::new(strip_rows).expect("strip rows non-zero"),
     )
-    .expect("strip dimensions are valid")
 }
 
 /// Run the multi-scale SSIM2 pipeline on a single strip's pair of
@@ -442,8 +443,8 @@ fn linear_rgb_strip(src: &LinearRgb, row_start: usize, row_end: usize) -> Linear
 /// row offset passed in. Interior rows are accumulated; halo rows are
 /// processed but discarded.
 fn process_strip(
-    img1_strip: LinearRgb,
-    img2_strip: LinearRgb,
+    img1_strip: LinearRgbF16,
+    img2_strip: LinearRgbF16,
     strip_y0: usize,       // scale-0 row index of the first row in img*_strip
     interior_start: usize, // scale-0 row index of first interior row (inclusive)
     interior_end: usize,   // scale-0 row index of last interior row (exclusive)
@@ -465,6 +466,8 @@ fn process_strip(
     let alloc_plane = |w: usize, h: usize| vec![0.0f32; w * h];
     let alloc_3planes =
         |w: usize, h: usize| [alloc_plane(w, h), alloc_plane(w, h), alloc_plane(w, h)];
+    let alloc_3planes_f16 =
+        |w: usize, h: usize| -> XybPlanes { [vec![f16::ZERO; w * h], vec![f16::ZERO; w * h], vec![f16::ZERO; w * h]] };
 
     let mut mul = alloc_3planes(width, height);
     let mut sigma1_sq = alloc_3planes(width, height);
@@ -472,8 +475,8 @@ fn process_strip(
     let mut sigma12 = alloc_3planes(width, height);
     let mut mu1 = alloc_3planes(width, height);
     let mut mu2 = alloc_3planes(width, height);
-    let mut img1_planar = alloc_3planes(width, height);
-    let mut img2_planar = alloc_3planes(width, height);
+    let mut img1_planar = alloc_3planes_f16(width, height);
+    let mut img2_planar = alloc_3planes_f16(width, height);
     let mut blur = Blur::with_tuning(width, height, impl_type, tuning);
 
     // Scale-0 strip-local interior bounds; updated per scale via
@@ -492,8 +495,8 @@ fn process_strip(
         }
 
         if scale > 0 {
-            img1 = downscale_by_2(&img1);
-            img2 = downscale_by_2(&img2);
+            img1 = downscale_by_2_f16(&img1);
+            img2 = downscale_by_2_f16(&img2);
             width = img1.width().get();
             height = img2.height().get();
 
@@ -529,23 +532,22 @@ fn process_strip(
             &mut sigma12,
             &mut mu1,
             &mut mu2,
-            &mut img1_planar,
-            &mut img2_planar,
         ] {
             for c in buf.iter_mut() {
                 c.resize(size, 0.0);
                 c.truncate(size);
             }
         }
+        for c in img1_planar.iter_mut().chain(img2_planar.iter_mut()) {
+            c.resize(size, f16::ZERO);
+            c.truncate(size);
+        }
         blur.shrink_to(width, height);
 
-        // XYB conversion + positive shift (per pixel — strip safe).
-        let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone(), tuning);
-        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), tuning);
-        make_positive_xyb(&mut img1_xyb);
-        make_positive_xyb(&mut img2_xyb);
-        xyb_to_planar_into(&img1_xyb, &mut img1_planar);
-        xyb_to_planar_into(&img2_xyb, &mut img2_planar);
+        // XYB conversion + positive shift (per pixel — strip safe), fused
+        // into the planar f16 store so no interleaved XYB buffer exists.
+        linear_rgb_to_xyb_planar_into(&img1, SimdImpl::Simd, tuning, &mut img1_planar);
+        linear_rgb_to_xyb_planar_into(&img2, SimdImpl::Simd, tuning, &mut img2_planar);
 
         // Variance / cross-term tensors (per pixel multiply).
         image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type, tuning);
@@ -556,8 +558,8 @@ fn process_strip(
         blur.blur_into(&mul, &mut sigma12);
 
         // Means (separate blur calls — IIR has finite halo per row).
-        blur.blur_into(&img1_planar, &mut mu1);
-        blur.blur_into(&img2_planar, &mut mu2);
+        blur.blur_f16_into(&img1_planar, &mut mu1);
+        blur.blur_f16_into(&img2_planar, &mut mu2);
 
         // Accumulate the interior rows' contribution to the
         // per-scale SSIM and edge-diff sums.
@@ -665,9 +667,9 @@ fn edge_diff_map_strip(
     width: usize,
     interior_start: usize,
     interior_end: usize,
-    img1: &[Vec<f32>; 3],
+    img1: &XybPlanes,
     mu1: &[Vec<f32>; 3],
-    img2: &[Vec<f32>; 3],
+    img2: &XybPlanes,
     mu2: &[Vec<f32>; 3],
     total_scales: usize,
 ) -> [f64; 12] {
@@ -691,8 +693,8 @@ fn edge_diff_map_strip(
             let rowm1 = &m1c[row_start..row_end];
             let rowm2 = &m2c[row_start..row_end];
             for x in 0..width {
-                let d1: f64 = (1.0 + f64::from((row2[x] - rowm2[x]).abs()))
-                    / (1.0 + f64::from((row1[x] - rowm1[x]).abs()))
+                let d1: f64 = (1.0 + f64::from((f32::from(row2[x]) - rowm2[x]).abs()))
+                    / (1.0 + f64::from((f32::from(row1[x]) - rowm1[x]).abs()))
                     - 1.0;
                 let artifact = d1.max(0.0);
                 sums[0] += artifact;
@@ -712,18 +714,26 @@ fn edge_diff_map_strip(
 }
 
 fn compute_strip_impl(
-    img1: LinearRgb,
-    img2: LinearRgb,
+    img1_lin: LinearRgb,
+    img2_lin: LinearRgb,
     strip_height: usize,
     config: Ssimulacra2StripConfig,
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {
-    if img1.width() != img2.width() || img1.height() != img2.height() {
+    if img1_lin.width() != img2_lin.width() || img1_lin.height() != img2_lin.height() {
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
     }
-    let width = img1.width().get();
-    let height = img1.height().get();
+    let width = img1_lin.width().get();
+    let height = img1_lin.height().get();
     validate_strip_dims(width, height, strip_height)?;
+
+    // The full-resolution inputs stay resident for the whole strip walk
+    // (each strip slices rows out of them), so half precision halves that
+    // resident footprint.
+    let img1 = LinearRgbF16::from_linear_rgb(&img1_lin);
+    drop(img1_lin);
+    let img2 = LinearRgbF16::from_linear_rgb(&img2_lin);
+    drop(img2_lin);
     let halo = config.halo_rows;
     let mut acc = StripAccumulator::new(width, height);
 
@@ -857,13 +867,17 @@ impl Ssimulacra2Reference {
         // share the strip's IIR boundary handling — see
         // `process_dist_strip_with_cached_ref`), while the dist side
         // streams strip-by-strip.
-        let img2: LinearRgb = distorted.try_into_linear_rgb()?.into();
-        let width = img2.width().get();
-        let height = img2.height().get();
+        let img2_lin: LinearRgb = distorted.try_into_linear_rgb()?.into();
+        let width = img2_lin.width().get();
+        let height = img2_lin.height().get();
         if width != self.width() || height != self.height() {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
         validate_strip_dims(width, height, strip_height as usize)?;
+        // The dist-side source stays resident while strips slice it —
+        // half precision halves that footprint.
+        let img2 = LinearRgbF16::from_linear_rgb(&img2_lin);
+        drop(img2_lin);
         compare_strip_with_cached_ref(self, img2, strip_height as usize, config, stop)
     }
 }
@@ -880,7 +894,7 @@ impl Ssimulacra2Reference {
 /// absolute lowest peak heap.
 fn compare_strip_with_cached_ref(
     reference: &Ssimulacra2Reference,
-    img2_full: LinearRgb,
+    img2_full: LinearRgbF16,
     strip_height: usize,
     config: Ssimulacra2StripConfig,
     stop: &dyn enough::Stop,
@@ -945,7 +959,7 @@ fn compare_strip_with_cached_ref(
 /// parity.
 fn process_dist_strip_with_cached_ref(
     reference: &Ssimulacra2Reference,
-    img2_strip: LinearRgb,
+    img2_strip: LinearRgbF16,
     strip_y0: usize,
     interior_start: usize,
     interior_end: usize,
@@ -962,6 +976,8 @@ fn process_dist_strip_with_cached_ref(
     let alloc_plane = |w: usize, h: usize| vec![0.0f32; w * h];
     let alloc_3planes =
         |w: usize, h: usize| [alloc_plane(w, h), alloc_plane(w, h), alloc_plane(w, h)];
+    let alloc_3planes_f16 =
+        |w: usize, h: usize| -> XybPlanes { [vec![f16::ZERO; w * h], vec![f16::ZERO; w * h], vec![f16::ZERO; w * h]] };
 
     let mut mul = alloc_3planes(width, height);
     let mut sigma1_sq_strip = alloc_3planes(width, height);
@@ -969,9 +985,9 @@ fn process_dist_strip_with_cached_ref(
     let mut sigma12 = alloc_3planes(width, height);
     let mut mu1_strip = alloc_3planes(width, height);
     let mut mu2 = alloc_3planes(width, height);
-    let mut img2_planar = alloc_3planes(width, height);
+    let mut img2_planar = alloc_3planes_f16(width, height);
     // Per-strip slice of the reference's planar XYB image.
-    let mut img1_planar_strip = alloc_3planes(width, height);
+    let mut img1_planar_strip = alloc_3planes_f16(width, height);
 
     let mut blur = Blur::with_tuning(width, height, impl_type, tuning);
 
@@ -985,7 +1001,7 @@ fn process_dist_strip_with_cached_ref(
         }
 
         if scale > 0 {
-            img2 = downscale_by_2(&img2);
+            img2 = downscale_by_2_f16(&img2);
             width = img2.width().get();
             height = img2.height().get();
             interior_start_in_strip = interior_start_in_strip.div_ceil(2);
@@ -1035,13 +1051,15 @@ fn process_dist_strip_with_cached_ref(
             &mut sigma12,
             &mut mu1_strip,
             &mut mu2,
-            &mut img2_planar,
-            &mut img1_planar_strip,
         ] {
             for c in buf.iter_mut() {
                 c.resize(size, 0.0);
                 c.truncate(size);
             }
+        }
+        for c in img2_planar.iter_mut().chain(img1_planar_strip.iter_mut()) {
+            c.resize(size, f16::ZERO);
+            c.truncate(size);
         }
         blur.shrink_to(width, actual_strip_h);
 
@@ -1058,13 +1076,11 @@ fn process_dist_strip_with_cached_ref(
             }
         }
 
-        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), tuning);
-        make_positive_xyb(&mut img2_xyb);
-        xyb_to_planar_into(&img2_xyb, &mut img2_planar);
+        linear_rgb_to_xyb_planar_into(&img2, SimdImpl::Simd, tuning, &mut img2_planar);
 
         // mu1, mu2: recompute the ref-side blur per strip so it
         // shares the same IIR boundary handling as mu2.
-        blur.blur_into(&img1_planar_strip, &mut mu1_strip);
+        blur.blur_f16_into(&img1_planar_strip, &mut mu1_strip);
         // sigma1_sq: same — recompute on the strip from cached planar.
         image_multiply(
             &img1_planar_strip,
@@ -1087,7 +1103,7 @@ fn process_dist_strip_with_cached_ref(
         );
         blur.blur_into(&mul, &mut sigma12);
         // mu2 = blur(img2)
-        blur.blur_into(&img2_planar, &mut mu2);
+        blur.blur_f16_into(&img2_planar, &mut mu2);
 
         let ssim_sums = ssim_map_strip(
             scale,

@@ -2,6 +2,7 @@ mod gaussian;
 mod simd_gaussian;
 
 use crate::{SimdImpl, Tuning};
+use half::f16;
 use gaussian::RecursiveGaussian;
 use simd_gaussian::SimdGaussian;
 
@@ -103,6 +104,28 @@ impl Blur {
         self.blur_plane_into(&img[2], &mut out[2]);
     }
 
+    /// Blur f16 XYB planes into pre-allocated f32 output buffers.
+    ///
+    /// Each plane is widened into `out` first (f16→f32 is exact), then the
+    /// ordinary f32 passes run with `out` as the horizontal-pass input — the
+    /// result lands back in `out`. No extra full-plane scratch is needed.
+    pub fn blur_f16_into(&mut self, img: &[Vec<f16>; 3], out: &mut [Vec<f32>; 3]) {
+        self.blur_plane_f16_into(&img[0], &mut out[0]);
+        self.blur_plane_f16_into(&img[1], &mut out[1]);
+        self.blur_plane_f16_into(&img[2], &mut out[2]);
+    }
+
+    /// Allocating variant of [`Self::blur_f16_into`].
+    pub fn blur_f16(&mut self, img: &[Vec<f16>; 3]) -> [Vec<f32>; 3] {
+        let mut out = [
+            vec![0f32; self.width * self.height],
+            vec![0f32; self.width * self.height],
+            vec![0f32; self.width * self.height],
+        ];
+        self.blur_f16_into(img, &mut out);
+        out
+    }
+
     fn blur_plane(&mut self, plane: &[f32]) -> Vec<f32> {
         let mut out = vec![0f32; self.width * self.height];
         self.blur_plane_into(plane, &mut out);
@@ -113,6 +136,32 @@ impl Blur {
         match self.impl_type {
             SimdImpl::Scalar => self.blur_plane_scalar_into(plane, out),
             SimdImpl::Simd => self.blur_plane_simd_into(plane, out),
+        }
+    }
+
+    fn blur_plane_f16_into(&mut self, plane: &[f16], out: &mut [f32]) {
+        debug_assert_eq!(plane.len(), out.len());
+        // Widen into `out`; the f32 passes then read it as their input and
+        // overwrite it with the blurred result. Sequential borrows, so `out`
+        // can serve as both without an aliasing violation or a scratch plane.
+        for (o, &p) in out.iter_mut().zip(plane.iter()) {
+            *o = f32::from(p);
+        }
+        match self.impl_type {
+            SimdImpl::Scalar => {
+                self.scalar_kernel
+                    .horizontal_pass(&out[..], &mut self.scalar_temp, self.width);
+                self.scalar_kernel.vertical_pass_chunked::<128, 32>(
+                    &self.scalar_temp,
+                    out,
+                    self.width,
+                    self.height,
+                );
+            }
+            SimdImpl::Simd => {
+                self.simd
+                    .blur_single_plane_inplace(out, self.width, self.height);
+            }
         }
     }
 

@@ -344,6 +344,12 @@ fn dispatched_kernels_are_bit_identical_across_tiers() {
         o
     };
     let (aa, bb, ab) = (scaled(&a, &a), scaled(&b, &b), scaled(&a, &b));
+    // edge_diff_map / image_multiply take the f16 XYB planes; ssim_map stays
+    // f32 (mu/sigma are not quantised).
+    let to_f16 = |p: &[Vec<f32>; 3]| -> [Vec<half::f16>; 3] {
+        core::array::from_fn(|c| p[c].iter().map(|&v| half::f16::from_f32(v)).collect())
+    };
+    let (a16, b16) = (to_f16(&a), to_f16(&b));
 
     /// XYB pixels, SSIM' plane averages, edge-diff plane averages, product planes.
     type KernelOutputs = (Vec<[f32; 3]>, [f64; 6], [f64; 12], [Vec<f32>; 3]);
@@ -355,9 +361,9 @@ fn dispatched_kernels_are_bit_identical_across_tiers() {
         let mut xyb = rgb.clone();
         k::linear_rgb_to_xyb_simd(&mut xyb);
         let ssim = k::ssim_map_simd(6, 0, N, 1, &a, &b, &aa, &bb, &ab);
-        let edge = k::edge_diff_map_simd(6, 0, N, 1, &a, &aa, &b, &bb);
+        let edge = k::edge_diff_map_simd(6, 0, N, 1, &a16, &aa, &b16, &bb);
         let mut mulout = [vec![0f32; N], vec![0f32; N], vec![0f32; N]];
-        k::image_multiply_simd(&a, &b, &mut mulout);
+        k::image_multiply_simd(&a16, &b16, &mut mulout);
 
         match &baseline {
             None => baseline = Some((xyb, ssim, edge, mulout)),

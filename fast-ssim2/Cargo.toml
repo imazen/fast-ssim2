@@ -40,6 +40,7 @@ rust-version = "1.89.0"
 [dependencies]
 archmage = { version = "0.9.17", features = ["macros"] }
 enough = "0.4.4"
+half = "2.6.0"
 imgref = { version = "1.12.3", optional = true }
 magetypes = { version = "0.9.17" }
 num-traits = "0.2.19"

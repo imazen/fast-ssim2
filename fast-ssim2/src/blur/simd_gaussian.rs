@@ -166,13 +166,9 @@ impl SimdGaussian {
         out
     }
 
-    pub fn blur_single_plane_into(
-        &mut self,
-        plane: &[f32],
-        out: &mut [f32],
-        width: usize,
-        height: usize,
-    ) {
+    /// Ensure `temp_buffer` and `vert_state` cover `width * height` and reset
+    /// the IIR state. Returns `(size, vert_state_needed)`.
+    fn prepare(&mut self, width: usize, height: usize) -> (usize, usize) {
         // checked_mul guards against silent wraparound on 32-bit targets where
         // a malicious caller could otherwise pass dims whose product overflows.
         let size = width
@@ -190,6 +186,17 @@ impl SimdGaussian {
         }
         // IIR initialises state to zero on every call.
         self.vert_state[..vert_state_needed].fill(0.0);
+        (size, vert_state_needed)
+    }
+
+    pub fn blur_single_plane_into(
+        &mut self,
+        plane: &[f32],
+        out: &mut [f32],
+        width: usize,
+        height: usize,
+    ) {
+        let (size, vert_state_needed) = self.prepare(width, height);
 
         // Horizontal pass: dispatched for FMA. `off` keeps the temp plane out
         // of 4 KiB congruence with `plane` — see `temp_offset`.
@@ -202,6 +209,39 @@ impl SimdGaussian {
         );
 
         // Vertical pass: SIMD-dispatched, processes all columns per height traversal
+        vertical_pass(
+            &self.temp_buffer[off..off + size],
+            out,
+            &mut self.vert_state[..vert_state_needed],
+            width,
+            height,
+            self.tuning,
+        );
+    }
+
+    /// Blur a plane whose (already widened) f32 input lives in `out`: the
+    /// horizontal pass reads `out` into `temp_buffer`, the vertical pass writes
+    /// the result back over `out`. Used by the f16-input path, which widens
+    /// into `out` first — sequential borrows let one buffer serve as both the
+    /// widened source and the destination, so no extra scratch plane exists.
+    pub fn blur_single_plane_inplace(
+        &mut self,
+        out: &mut [f32],
+        width: usize,
+        height: usize,
+    ) {
+        let (size, vert_state_needed) = self.prepare(width, height);
+
+        // `out` currently holds the widened input; de-alias the temp plane
+        // against it exactly as `blur_single_plane_into` does for `plane`.
+        let off = Self::temp_offset(self.temp_buffer.as_ptr(), out.as_ptr());
+        horizontal_pass(
+            &out[..],
+            &mut self.temp_buffer[off..off + size],
+            width,
+            self.tuning,
+        );
+
         vertical_pass(
             &self.temp_buffer[off..off + size],
             out,

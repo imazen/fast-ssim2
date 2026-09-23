@@ -11,11 +11,12 @@
 
 #![cfg(test)]
 
+use half::f16;
 use yuvxyb::{ColorPrimaries, LinearRgb, Rgb, TransferCharacteristic, Xyb};
 
 use crate::{
-    Blur, MsssimScale, SimdImpl, downscale_by_2, edge_diff_map, image_multiply, make_positive_xyb,
-    ssim_map, weights, xyb_to_planar_into,
+    Blur, LinearRgbF16, MsssimScale, SimdImpl, downscale_by_2_f16, edge_diff_map, image_multiply,
+    make_positive_xyb, ssim_map, weights, xyb_to_planar_into,
 };
 
 /// Which cube-root approximation feeds the opsin nonlinearity.
@@ -116,7 +117,7 @@ fn ours_scalar_cbrt(x: f32) -> f32 {
 
 /// Linear RGB -> positive XYB with a selectable cube root, otherwise following
 /// `xyb_simd::convert_pixel_scalar` + `make_positive_xyb` exactly.
-fn to_positive_xyb(linear: &LinearRgb, kind: CbrtKind) -> Xyb {
+fn to_positive_xyb(linear: &LinearRgbF16, kind: CbrtKind) -> Xyb {
     use crate::xyb_simd::{K_B0, K_M00, K_M01, K_M02, K_M10, K_M11, K_M12, K_M20, K_M21, K_M22};
     let m = [
         K_M00, K_M01, K_M02, K_M10, K_M11, K_M12, K_M20, K_M21, K_M22,
@@ -133,7 +134,7 @@ fn to_positive_xyb(linear: &LinearRgb, kind: CbrtKind) -> Xyb {
         _ => -ours_scalar_cbrt(K_B0),
     };
 
-    let mut data: Vec<[f32; 3]> = linear.data().to_vec();
+    let mut data: Vec<[f32; 3]> = linear.data().iter().map(|p| p.map(f32::from)).collect();
     for pix in data.iter_mut() {
         let (r, g, b) = (pix[0], pix[1], pix[2]);
         let mut mixed = [
@@ -389,9 +390,13 @@ pub struct DiagConfig {
 /// Re-implementation of `compute_frame_flavored` that also hands back the
 /// per-scale sub-scores. Kept deliberately close to the original so a
 /// divergence here means the original changed.
-pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<MsssimScale>) {
-    let mut img1 = img1;
-    let mut img2 = img2;
+pub fn run(img1_lin: LinearRgb, img2_lin: LinearRgb, cfg: DiagConfig) -> (f64, Vec<MsssimScale>) {
+    // Match production: the pyramid inputs are quantised to f16 once,
+    // then downscaled and consumed through the f16 pipeline.
+    let mut img1 = LinearRgbF16::from_linear_rgb(&img1_lin);
+    drop(img1_lin);
+    let mut img2 = LinearRgbF16::from_linear_rgb(&img2_lin);
+    drop(img2_lin);
     let mut width = img1.width().get();
     let mut height = img1.height().get();
     let impl_type = cfg.kernels;
@@ -399,14 +404,16 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
 
     let alloc_plane = || vec![0.0f32; width * height];
     let alloc_3planes = || [alloc_plane(), alloc_plane(), alloc_plane()];
+    let alloc_3planes_f16 =
+        || -> crate::XybPlanes { [vec![f16::ZERO; width * height], vec![f16::ZERO; width * height], vec![f16::ZERO; width * height]] };
     let mut mul = alloc_3planes();
     let mut sigma1_sq = alloc_3planes();
     let mut sigma2_sq = alloc_3planes();
     let mut sigma12 = alloc_3planes();
     let mut mu1 = alloc_3planes();
     let mut mu2 = alloc_3planes();
-    let mut img1_planar = alloc_3planes();
-    let mut img2_planar = alloc_3planes();
+    let mut img1_planar = alloc_3planes_f16();
+    let mut img2_planar = alloc_3planes_f16();
 
     let mut blur = Blur::with_simd_impl(width, height, impl_type);
     let mut scales = Vec::new();
@@ -416,8 +423,8 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
             break;
         }
         if scale > 0 {
-            img1 = downscale_by_2(&img1);
-            img2 = downscale_by_2(&img2);
+            img1 = downscale_by_2_f16(&img1);
+            img2 = downscale_by_2_f16(&img2);
             width = img1.width().get();
             height = img1.height().get();
         }
@@ -429,12 +436,13 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
             &mut sigma12,
             &mut mu1,
             &mut mu2,
-            &mut img1_planar,
-            &mut img2_planar,
         ] {
             for c in buf.iter_mut() {
                 c.truncate(size);
             }
+        }
+        for c in img1_planar.iter_mut().chain(img2_planar.iter_mut()) {
+            c.truncate(size);
         }
         blur.shrink_to(width, height);
 
@@ -452,6 +460,19 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
                     }
                 }
             };
+        // f16 XYB planes: the `Some(kind)` transliterations take f32, so widen
+        // into a scratch copy first (diag-only path, allocation is fine).
+        let do_blur_f16 = |src: &[Vec<f16>; 3],
+                           dst: &mut [Vec<f32>; 3],
+                           blur: &mut Blur| match cfg.horiz {
+            None => blur.blur_f16_into(src, dst),
+            Some(kind) => {
+                for c in 0..3 {
+                    let wide: Vec<f32> = src[c].iter().map(|&v| f32::from(v)).collect();
+                    dst[c].copy_from_slice(&blur_plane(&wide, width, height, kind));
+                }
+            }
+        };
 
         image_multiply(
             &img1_planar,
@@ -477,8 +498,8 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
             blur.tuning(),
         );
         do_blur(&mul, &mut sigma12, &mut blur);
-        do_blur(&img1_planar, &mut mu1, &mut blur);
-        do_blur(&img2_planar, &mut mu2, &mut blur);
+        do_blur_f16(&img1_planar, &mut mu1, &mut blur);
+        do_blur_f16(&img2_planar, &mut mu2, &mut blur);
 
         scales.push(MsssimScale {
             avg_ssim: ssim_map(
@@ -678,6 +699,8 @@ fn diag_flat_field_conditioning() {
 
     for (size, shift) in [(32usize, 1u8), (32, 50), (256, 1)] {
         let (l1, l2) = uniform_pair(size, shift);
+        let l1 = LinearRgbF16::from_linear_rgb(&l1);
+        let l2 = LinearRgbF16::from_linear_rgb(&l2);
         let a = to_positive_xyb(&l1, CbrtKind::OursSimd);
         let b = to_positive_xyb(&l2, CbrtKind::OursSimd);
         let p1 = xyb_to_planar(&a);
@@ -700,8 +723,8 @@ fn diag_flat_field_conditioning() {
         blur.blur_into(&mul, &mut s22);
         image_multiply(&p1, &p2, &mut mul, SimdImpl::Simd, blur.tuning());
         blur.blur_into(&mul, &mut s12);
-        blur.blur_into(&p1, &mut mu1);
-        blur.blur_into(&p2, &mut mu2);
+        blur.blur_f16_into(&p1, &mut mu1);
+        blur.blur_f16_into(&p2, &mut mu2);
 
         // Channel 1 (Y) carries almost all the weight for grey shifts.
         let c = 1usize;
@@ -710,9 +733,9 @@ fn diag_flat_field_conditioning() {
         let var1 = s11[c][centre] - m1 * m1;
         let var2 = s22[c][centre] - m2 * m2;
         let cov = s12[c][centre] - m1 * m2;
-        let signal = (p1[c][centre] - p2[c][centre]) as f64;
+        let signal = f64::from(f32::from(p1[c][centre]) - f32::from(p2[c][centre]));
         println!("\nuniform_shift_{shift}_{size}x{size}, Y plane, image centre:");
-        println!("  XYB value             a = {:.9}", p1[c][centre]);
+        println!("  XYB value             a = {:.9}", f32::from(p1[c][centre]));
         println!(
             "  XYB shift signal    a-b = {signal:.3e}   (d_exact = (a-b)^2 = {:.3e})",
             signal * signal
@@ -911,6 +934,12 @@ fn diag_kernel_tier_divergence() {
         }
     }
 
+    // edge_diff_map's image-plane args are the f16 XYB planes.
+    let to_f16 = |p: &[Vec<f32>; 3]| -> [Vec<f16>; 3] {
+        core::array::from_fn(|c| p[c].iter().map(|&v| f16::from_f32(v)).collect())
+    };
+    let (a16, b16) = (to_f16(&a), to_f16(&b));
+
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let mut data = mk(0.0);
         crate::xyb_simd::linear_rgb_to_xyb_simd(&mut data, crate::Tuning::detect());
@@ -932,7 +961,7 @@ fn diag_kernel_tier_divergence() {
         ));
         edge_results.push((
             perm.label.to_string(),
-            crate::simd_ops::edge_diff_map_simd(6, 0, n, 1, &a, &aa, &b, &bb),
+            crate::simd_ops::edge_diff_map_simd(6, 0, n, 1, &a16, &aa, &b16, &bb),
         ));
     });
 

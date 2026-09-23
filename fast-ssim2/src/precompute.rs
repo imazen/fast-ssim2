@@ -36,12 +36,14 @@
 //! println!("SSIMULACRA2 score: {}", score);
 //! ```
 
+use half::f16;
+
 use crate::blur::Blur;
 use crate::input::ToLinearRgb;
 use crate::{
-    LinearRgb, Msssim, MsssimScale, NUM_SCALES, SimdImpl, Ssimulacra2Error, downscale_by_2,
-    edge_diff_map, image_multiply, linear_rgb_to_xyb_simd, make_positive_xyb, ssim_map,
-    xyb_to_planar, xyb_to_planar_into,
+    LinearRgb, LinearRgbF16, Msssim, MsssimScale, NUM_SCALES, SimdImpl, Ssimulacra2Error,
+    XybPlanes, downscale_by_2_f16, edge_diff_map, image_multiply,
+    linear_rgb_to_xyb_planar_into, ssim_map,
 };
 
 /// Reusable scratch buffers for [`Ssimulacra2Reference::compare_with`].
@@ -68,7 +70,7 @@ pub struct CompareContext {
     mu2: [Vec<f32>; 3],
     sigma2_sq: [Vec<f32>; 3],
     sigma12: [Vec<f32>; 3],
-    img2_planar: [Vec<f32>; 3],
+    img2_planar: XybPlanes,
 }
 
 impl CompareContext {
@@ -83,7 +85,11 @@ impl CompareContext {
             mu2: alloc_3planes(),
             sigma2_sq: alloc_3planes(),
             sigma12: alloc_3planes(),
-            img2_planar: alloc_3planes(),
+            img2_planar: [
+                vec![f16::ZERO; width * height],
+                vec![f16::ZERO; width * height],
+                vec![f16::ZERO; width * height],
+            ],
         }
     }
 
@@ -100,11 +106,13 @@ impl CompareContext {
             &mut self.mu2,
             &mut self.sigma2_sq,
             &mut self.sigma12,
-            &mut self.img2_planar,
         ] {
             for c in buf.iter_mut() {
                 c.resize(size, 0.0);
             }
+        }
+        for c in self.img2_planar.iter_mut() {
+            c.resize(size, f16::ZERO);
         }
         self.blur.shrink_to(self.width, self.height);
     }
@@ -119,11 +127,13 @@ impl CompareContext {
             &mut self.mu2,
             &mut self.sigma2_sq,
             &mut self.sigma12,
-            &mut self.img2_planar,
         ] {
             for c in buf.iter_mut() {
                 c.truncate(size);
             }
+        }
+        for c in self.img2_planar.iter_mut() {
+            c.truncate(size);
         }
         self.blur.shrink_to(width, height);
     }
@@ -132,8 +142,9 @@ impl CompareContext {
 /// Precomputed reference data for a single scale.
 #[derive(Clone, Debug)]
 struct ScaleData {
-    /// Planar XYB representation of reference image
-    img1_planar: [Vec<f32>; 3],
+    /// Planar XYB representation of reference image (half precision —
+    /// see [`crate::XybPlanes`])
+    img1_planar: XybPlanes,
     /// blur(img1) - mean of reference
     mu1: [Vec<f32>; 3],
     /// blur(img1 * img1) - variance component of reference
@@ -169,8 +180,8 @@ pub struct Ssimulacra2Reference {
 /// data directly without re-running the ref-side conversion.
 #[doc(hidden)]
 pub struct ScalePlanesView<'a> {
-    /// Reference XYB-planar image at this scale.
-    pub img1_planar: &'a [Vec<f32>; 3],
+    /// Reference XYB-planar image at this scale (half precision).
+    pub img1_planar: &'a XybPlanes,
     /// Reference `blur(img1)` at this scale.
     pub mu1: &'a [Vec<f32>; 3],
     /// Reference `blur(img1 * img1)` at this scale.
@@ -233,23 +244,27 @@ impl Ssimulacra2Reference {
         let original_height = source_img.height();
         // Reflect-pad sub-8px sources up to the pyramid floor, exactly as
         // the one-shot `compute_ssimulacra2` path does. NO-OP at >= 8px.
-        let mut img1: LinearRgb = crate::reflect_pad_linear(source_img, 8).into();
-        if img1.width().get() < 8 || img1.height().get() < 8 {
+        let img1_lin: LinearRgb = crate::reflect_pad_linear(source_img, 8).into();
+        if img1_lin.width().get() < 8 || img1_lin.height().get() < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
 
         // Cap pixel count to prevent unbounded working-buffer allocation.
-        let pixels = img1
+        let pixels = img1_lin
             .width()
             .get()
-            .checked_mul(img1.height().get())
+            .checked_mul(img1_lin.height().get())
             .ok_or(Ssimulacra2Error::ImageTooLarge { actual: usize::MAX })?;
         if pixels > crate::MAX_IMAGE_PIXELS {
             return Err(Ssimulacra2Error::ImageTooLarge { actual: pixels });
         }
 
-        let padded_width = img1.width().get();
-        let padded_height = img1.height().get();
+        let padded_width = img1_lin.width().get();
+        let padded_height = img1_lin.height().get();
+        // The pyramid input persists for the whole scale loop — half
+        // precision halves its resident footprint (see `XybPlanes`).
+        let mut img1 = LinearRgbF16::from_linear_rgb(&img1_lin);
+        drop(img1_lin);
         let mut width = padded_width;
         let mut height = padded_height;
 
@@ -267,7 +282,7 @@ impl Ssimulacra2Reference {
             }
 
             if scale > 0 {
-                img1 = downscale_by_2(&img1);
+                img1 = downscale_by_2_f16(&img1);
                 width = img1.width().get();
                 height = img1.height().get();
             }
@@ -277,13 +292,15 @@ impl Ssimulacra2Reference {
             }
             blur.shrink_to(width, height);
 
-            let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone(), blur.tuning());
-            make_positive_xyb(&mut img1_xyb);
-
-            let img1_planar = xyb_to_planar(&img1_xyb);
+            let mut img1_planar: XybPlanes = [
+                vec![f16::ZERO; width * height],
+                vec![f16::ZERO; width * height],
+                vec![f16::ZERO; width * height],
+            ];
+            linear_rgb_to_xyb_planar_into(&img1, SimdImpl::Simd, blur.tuning(), &mut img1_planar);
 
             // Precompute mu1 = blur(img1)
-            let mu1 = blur.blur(&img1_planar);
+            let mu1 = blur.blur_f16(&img1_planar);
 
             // Precompute sigma1_sq = blur(img1 * img1)
             image_multiply(
@@ -392,10 +409,12 @@ impl Ssimulacra2Reference {
         {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
-        let mut img2: LinearRgb = crate::reflect_pad_linear(distorted_img, 8).into();
+        let img2_lin: LinearRgb = crate::reflect_pad_linear(distorted_img, 8).into();
         if ctx.width != self.padded_width || ctx.height != self.padded_height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
+        let mut img2 = LinearRgbF16::from_linear_rgb(&img2_lin);
+        drop(img2_lin);
 
         let mut width = img2.width().get();
         let mut height = img2.height().get();
@@ -420,21 +439,22 @@ impl Ssimulacra2Reference {
             }
 
             if scale_idx > 0 {
-                img2 = downscale_by_2(&img2);
+                img2 = downscale_by_2_f16(&img2);
                 width = img2.width().get();
                 height = img2.height().get();
             }
 
             ctx.shrink_to(width, height);
 
-            let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), ctx.blur.tuning());
-            make_positive_xyb(&mut img2_xyb);
-
-            // Reuse ctx.img2_planar instead of allocating a fresh [Vec; 3].
-            xyb_to_planar_into(&img2_xyb, &mut ctx.img2_planar);
+            linear_rgb_to_xyb_planar_into(
+                &img2,
+                SimdImpl::Simd,
+                ctx.blur.tuning(),
+                &mut ctx.img2_planar,
+            );
 
             // mu2 = blur(img2)
-            ctx.blur.blur_into(&ctx.img2_planar, &mut ctx.mu2);
+            ctx.blur.blur_f16_into(&ctx.img2_planar, &mut ctx.mu2);
 
             // sigma2_sq = blur(img2 * img2)
             image_multiply(
