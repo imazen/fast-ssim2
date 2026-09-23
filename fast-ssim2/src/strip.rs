@@ -90,8 +90,8 @@ use crate::input::ToLinearRgb;
 use crate::precompute::Ssimulacra2Reference;
 use crate::weights::{EDGE_HAS_WEIGHT, NUM_SCALES, SSIM_HAS_WEIGHT};
 use crate::{
-    LinearRgbImage, Msssim, MsssimScale, Ssimulacra2Config, Ssimulacra2Error, downscale_by_2,
-    image_multiply, linear_rgb_to_xyb_simd, make_positive_xyb, xyb_to_planar_into,
+    LinearRgbImage, Msssim, MsssimScale, SimdImpl, Ssimulacra2Config, Ssimulacra2Error,
+    downscale_by_2, image_multiply, linear_rgb_to_xyb_planar_into,
 };
 
 /// Default number of halo rows above and below each strip.
@@ -539,13 +539,10 @@ fn process_strip(
         }
         blur.shrink_to(width, height);
 
-        // XYB conversion + positive shift (per pixel — strip safe).
-        let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone(), tuning);
-        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), tuning);
-        make_positive_xyb(&mut img1_xyb);
-        make_positive_xyb(&mut img2_xyb);
-        xyb_to_planar_into(&img1_xyb, &mut img1_planar);
-        xyb_to_planar_into(&img2_xyb, &mut img2_planar);
+        // XYB conversion + positive shift (per pixel — strip safe), fused
+        // into the planar store so no interleaved XYB buffer exists.
+        linear_rgb_to_xyb_planar_into(&img1, SimdImpl::Simd, tuning, &mut img1_planar);
+        linear_rgb_to_xyb_planar_into(&img2, SimdImpl::Simd, tuning, &mut img2_planar);
 
         // Variance / cross-term tensors (per pixel multiply).
         image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type, tuning);
@@ -1058,9 +1055,7 @@ fn process_dist_strip_with_cached_ref(
             }
         }
 
-        let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), tuning);
-        make_positive_xyb(&mut img2_xyb);
-        xyb_to_planar_into(&img2_xyb, &mut img2_planar);
+        linear_rgb_to_xyb_planar_into(&img2, SimdImpl::Simd, tuning, &mut img2_planar);
 
         // mu1, mu2: recompute the ref-side blur per strip so it
         // shares the same IIR boundary handling as mu2.

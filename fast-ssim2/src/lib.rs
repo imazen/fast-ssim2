@@ -203,6 +203,7 @@ pub use input::{srgb_to_linear, srgb_u8_to_linear, srgb_u16_to_linear};
 
 // Internal imports for yuvxyb types
 use yuvxyb::LinearRgb;
+#[cfg(test)]
 use yuvxyb::Xyb;
 
 // How often to downscale and score the input images.
@@ -603,24 +604,18 @@ fn compute_frame_flavored(
         }
         blur.shrink_to(width, height);
 
-        let (img1_xyb, img2_xyb) = match flavor {
+        match flavor {
             XybFlavor::CubeRoot => {
-                let mut a = linear_rgb_to_xyb(img1.clone(), impl_type, tuning);
-                let mut b = linear_rgb_to_xyb(img2.clone(), impl_type, tuning);
-                make_positive_xyb(&mut a);
-                make_positive_xyb(&mut b);
-                (a, b)
+                linear_rgb_to_xyb_planar_into(&img1, impl_type, tuning, &mut img1_planar);
+                linear_rgb_to_xyb_planar_into(&img2, impl_type, tuning, &mut img2_planar);
             }
             // PU21 emits positive-calibrated XYB directly — no make_positive.
             #[cfg(feature = "hdr-pu")]
-            XybFlavor::Pu21 => (
-                linear_nits_to_pu_xyb(img1.clone()),
-                linear_nits_to_pu_xyb(img2.clone()),
-            ),
-        };
-
-        xyb_to_planar_into(&img1_xyb, &mut img1_planar);
-        xyb_to_planar_into(&img2_xyb, &mut img2_planar);
+            XybFlavor::Pu21 => {
+                linear_nits_to_pu_planar_into(&img1, &mut img1_planar);
+                linear_nits_to_pu_planar_into(&img2, &mut img2_planar);
+            }
+        }
 
         image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type, tuning);
         blur.blur_into(&mul, &mut sigma1_sq);
@@ -658,16 +653,6 @@ fn compute_frame_flavored(
     Ok(msssim.score())
 }
 
-/// Absolute-luminance linear RGB (cd/m²) → positive PU-XYB (scalar; see `pu_xyb`).
-#[cfg(feature = "hdr-pu")]
-fn linear_nits_to_pu_xyb(linear_nits: LinearRgb) -> Xyb {
-    let width = linear_nits.width();
-    let height = linear_nits.height();
-    let mut data = linear_nits.into_data();
-    pu_xyb::linear_nits_to_pu_xyb(&mut data);
-    Xyb::new(data, width, height).expect("XYB construction should not fail")
-}
-
 /// **Experimental (`hdr-pu`)**: SSIMULACRA2 with the cube-root opsin
 /// nonlinearity replaced by PU21 (banding_glare), for HDR input.
 ///
@@ -696,31 +681,13 @@ pub fn compute_ssimulacra2_pu_nits(
     )
 }
 
-/// Convert LinearRgb to Xyb using the specified implementation.
-///
-/// Both arms run the same arithmetic; `Scalar` just refuses to vectorise it.
-/// Before 0.8.3 the `Scalar` arm delegated to `yuvxyb`, whose cube root is
-/// carried in f64 while ours is two f32 Halley steps. SSIMULACRA2 divides a
-/// blur residual of ~5e-7 by `kC2 = 9e-4`, so that 1.5e-7 difference in the
-/// opsin nonlinearity was amplified into score differences of up to 0.88
-/// between the two backends on real photographs.
-fn linear_rgb_to_xyb(linear_rgb: LinearRgb, impl_type: SimdImpl, tuning: Tuning) -> Xyb {
-    let width = linear_rgb.width(); // NonZeroUsize
-    let height = linear_rgb.height(); // NonZeroUsize
-    let mut data = linear_rgb.into_data();
-    match impl_type {
-        SimdImpl::Scalar => xyb_simd::linear_rgb_to_xyb_scalar(&mut data),
-        SimdImpl::Simd => xyb_simd::linear_rgb_to_xyb_simd(&mut data, tuning),
-    }
-    Xyb::new(data, width, height).expect("XYB construction should not fail")
-}
-
-/// Convenience wrapper hardcoding the SIMD backend; used by the
-/// precompute and strip paths, which always run the SIMD XYB conversion.
-pub(crate) fn linear_rgb_to_xyb_simd(linear_rgb: LinearRgb, tuning: Tuning) -> Xyb {
-    linear_rgb_to_xyb(linear_rgb, SimdImpl::Simd, tuning)
-}
-
+/// `Scalar` runs the same arithmetic as the SIMD arm, just refusing to
+/// vectorise. Before 0.8.3 the scalar arm delegated to `yuvxyb`, whose
+/// cube root is carried in f64 while ours is two f32 Halley steps, and
+/// SSIMULACRA2's `kC2 = 9e-4` divisor amplified that 1.5e-7 difference
+/// into score differences of up to 0.88 between the two backends on real
+/// photographs.
+#[cfg(test)]
 pub(crate) fn make_positive_xyb(xyb: &mut Xyb) {
     for pix in xyb.data_mut().iter_mut() {
         pix[2] = (pix[2] - pix[1]) + 0.55;
@@ -729,6 +696,7 @@ pub(crate) fn make_positive_xyb(xyb: &mut Xyb) {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn xyb_to_planar(xyb: &Xyb) -> [Vec<f32>; 3] {
     let size = xyb.width().get() * xyb.height().get();
     let mut out = [vec![0.0f32; size], vec![0.0f32; size], vec![0.0f32; size]];
@@ -737,6 +705,7 @@ pub(crate) fn xyb_to_planar(xyb: &Xyb) -> [Vec<f32>; 3] {
 }
 
 /// Convert XYB to planar format into pre-allocated buffers (zero-allocation)
+#[cfg(test)]
 pub(crate) fn xyb_to_planar_into(xyb: &Xyb, out: &mut [Vec<f32>; 3]) {
     let [out0, out1, out2] = out;
     for (((i, o0), o1), o2) in xyb
@@ -750,6 +719,106 @@ pub(crate) fn xyb_to_planar_into(xyb: &Xyb, out: &mut [Vec<f32>; 3]) {
         *o0 = i[0];
         *o1 = i[1];
         *o2 = i[2];
+    }
+}
+
+/// Fused `LinearRgb` -> XYB -> `make_positive_xyb` -> planar, into
+/// pre-allocated plane buffers.
+///
+/// Works in 4096-pixel chunks — the same granularity the rayon XYB path
+/// splits at, and a multiple of the 8-lane kernel — so the per-pixel XYB
+/// output is bit-identical to `linear_rgb_to_xyb` + `make_positive_xyb` +
+/// `xyb_to_planar_into` on the whole image, while the interleaved XYB
+/// buffer is one chunk instead of a second full image. The positive
+/// offsets are folded into the planar scatter (`o2` reads the pre-offset
+/// `y`, matching `make_positive_xyb`'s ordering).
+pub(crate) fn linear_rgb_to_xyb_planar_into(
+    src: &LinearRgb,
+    impl_type: SimdImpl,
+    tuning: Tuning,
+    out: &mut [Vec<f32>; 3],
+) {
+    const CHUNK: usize = 8 * 512;
+    let src = src.data();
+    let [o0, o1, o2] = out;
+
+    fn convert_chunk(
+        buf: &mut [[f32; 3]],
+        impl_type: SimdImpl,
+        tuning: Tuning,
+        outs: [&mut [f32]; 3],
+    ) {
+        let [o0, o1, o2] = outs;
+        match impl_type {
+            SimdImpl::Scalar => xyb_simd::linear_rgb_to_xyb_scalar(buf),
+            SimdImpl::Simd => xyb_simd::linear_rgb_to_xyb_simd(buf, tuning),
+        }
+        for (i, &[x, y, b]) in buf.iter().enumerate() {
+            o0[i] = x.mul_add(14.0, 0.42);
+            o1[i] = y + 0.01;
+            o2[i] = (b - y) + 0.55;
+        }
+    }
+
+    #[cfg(feature = "rayon")]
+    if src.len() >= tuning.par_min_samples {
+        use rayon::prelude::*;
+        o0.par_chunks_mut(CHUNK)
+            .zip_eq(o1.par_chunks_mut(CHUNK))
+            .zip_eq(o2.par_chunks_mut(CHUNK))
+            .zip_eq(src.par_chunks(CHUNK))
+            .for_each_init(
+                || vec![[0.0f32; 3]; CHUNK],
+                |buf, (((o0c, o1c), o2c), srcc)| {
+                    let buf = &mut buf[..srcc.len()];
+                    buf.copy_from_slice(srcc);
+                    convert_chunk(buf, impl_type, tuning, [o0c, o1c, o2c])
+                },
+            );
+        return;
+    }
+
+    let mut buf = vec![[0.0f32; 3]; CHUNK.min(src.len())];
+    for (i, srcc) in src.chunks(CHUNK).enumerate() {
+        let base = i * CHUNK;
+        let n = srcc.len();
+        let buf = &mut buf[..n];
+        buf.copy_from_slice(srcc);
+        convert_chunk(
+            buf,
+            impl_type,
+            tuning,
+            [
+                &mut o0[base..base + n],
+                &mut o1[base..base + n],
+                &mut o2[base..base + n],
+            ],
+        );
+    }
+}
+
+/// Fused `LinearRgb` -> positive PU-XYB -> planar (`hdr-pu`).
+///
+/// Same chunking rationale as [`linear_rgb_to_xyb_planar_into`]:
+/// `pu_xyb::linear_nits_to_pu_xyb` is per-pixel, so chunk boundaries are
+/// bit-identical, and it already folds the positive offsets into the
+/// encode — nothing extra to apply at the scatter.
+#[cfg(feature = "hdr-pu")]
+pub(crate) fn linear_nits_to_pu_planar_into(src: &LinearRgb, out: &mut [Vec<f32>; 3]) {
+    const CHUNK: usize = 8 * 512;
+    let src = src.data();
+    let [o0, o1, o2] = out;
+    let mut buf = vec![[0.0f32; 3]; CHUNK.min(src.len())];
+    for (i, srcc) in src.chunks(CHUNK).enumerate() {
+        let base = i * CHUNK;
+        let buf = &mut buf[..srcc.len()];
+        buf.copy_from_slice(srcc);
+        pu_xyb::linear_nits_to_pu_xyb(buf);
+        for (j, &p) in buf.iter().enumerate() {
+            o0[base + j] = p[0];
+            o1[base + j] = p[1];
+            o2[base + j] = p[2];
+        }
     }
 }
 
@@ -1227,7 +1296,13 @@ mod tests {
         )
         .unwrap();
         let lrgb_for_simd = LinearRgb::try_from(rgb_for_simd).unwrap();
-        let xyb_simd = linear_rgb_to_xyb_simd(lrgb_for_simd, Tuning::detect());
+        let xyb_simd = {
+            let width = lrgb_for_simd.width();
+            let height = lrgb_for_simd.height();
+            let mut data = lrgb_for_simd.into_data();
+            xyb_simd::linear_rgb_to_xyb_simd(&mut data, Tuning::detect());
+            Xyb::new(data, width, height).unwrap()
+        };
 
         let mut max_diff = [0.0f32; 3];
         for (yuvxyb_pix, simd_pix) in xyb_yuvxyb.data().iter().zip(xyb_simd.data().iter()) {

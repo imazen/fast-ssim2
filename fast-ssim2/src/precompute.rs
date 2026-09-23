@@ -40,8 +40,7 @@ use crate::blur::Blur;
 use crate::input::ToLinearRgb;
 use crate::{
     LinearRgb, Msssim, MsssimScale, NUM_SCALES, SimdImpl, Ssimulacra2Error, downscale_by_2,
-    edge_diff_map, image_multiply, linear_rgb_to_xyb_simd, make_positive_xyb, ssim_map,
-    xyb_to_planar, xyb_to_planar_into,
+    edge_diff_map, image_multiply, linear_rgb_to_xyb_planar_into, ssim_map,
 };
 
 /// Reusable scratch buffers for [`Ssimulacra2Reference::compare_with`].
@@ -277,10 +276,12 @@ impl Ssimulacra2Reference {
             }
             blur.shrink_to(width, height);
 
-            let mut img1_xyb = linear_rgb_to_xyb_simd(img1.clone(), blur.tuning());
-            make_positive_xyb(&mut img1_xyb);
-
-            let img1_planar = xyb_to_planar(&img1_xyb);
+            let mut img1_planar = [
+                vec![0.0f32; width * height],
+                vec![0.0f32; width * height],
+                vec![0.0f32; width * height],
+            ];
+            linear_rgb_to_xyb_planar_into(&img1, SimdImpl::Simd, blur.tuning(), &mut img1_planar);
 
             // Precompute mu1 = blur(img1)
             let mu1 = blur.blur(&img1_planar);
@@ -427,11 +428,13 @@ impl Ssimulacra2Reference {
 
             ctx.shrink_to(width, height);
 
-            let mut img2_xyb = linear_rgb_to_xyb_simd(img2.clone(), ctx.blur.tuning());
-            make_positive_xyb(&mut img2_xyb);
-
             // Reuse ctx.img2_planar instead of allocating a fresh [Vec; 3].
-            xyb_to_planar_into(&img2_xyb, &mut ctx.img2_planar);
+            linear_rgb_to_xyb_planar_into(
+                &img2,
+                SimdImpl::Simd,
+                ctx.blur.tuning(),
+                &mut ctx.img2_planar,
+            );
 
             // mu2 = blur(img2)
             ctx.blur.blur_into(&ctx.img2_planar, &mut ctx.mu2);
