@@ -103,6 +103,34 @@ impl Blur {
         self.blur_plane_into(&img[2], &mut out[2]);
     }
 
+    /// Blur each plane in place: the buffer is the horizontal-pass input and
+    /// the vertical pass writes the result back over it. Same arithmetic as
+    /// [`Self::blur_into`]; one fewer live plane per call.
+    pub fn blur_inplace(&mut self, planes: &mut [Vec<f32>; 3]) {
+        for c in planes.iter_mut() {
+            self.blur_plane_inplace(c);
+        }
+    }
+
+    fn blur_plane_inplace(&mut self, plane: &mut [f32]) {
+        match self.impl_type {
+            SimdImpl::Scalar => {
+                self.scalar_kernel
+                    .horizontal_pass(&plane[..], &mut self.scalar_temp, self.width);
+                self.scalar_kernel.vertical_pass_chunked::<128, 32>(
+                    &self.scalar_temp,
+                    plane,
+                    self.width,
+                    self.height,
+                );
+            }
+            SimdImpl::Simd => {
+                self.simd
+                    .blur_single_plane_inplace(plane, self.width, self.height);
+            }
+        }
+    }
+
     fn blur_plane(&mut self, plane: &[f32]) -> Vec<f32> {
         let mut out = vec![0f32; self.width * self.height];
         self.blur_plane_into(plane, &mut out);

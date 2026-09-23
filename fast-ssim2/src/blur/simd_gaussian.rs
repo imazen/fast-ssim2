@@ -166,13 +166,9 @@ impl SimdGaussian {
         out
     }
 
-    pub fn blur_single_plane_into(
-        &mut self,
-        plane: &[f32],
-        out: &mut [f32],
-        width: usize,
-        height: usize,
-    ) {
+    /// Ensure `temp_buffer` and `vert_state` cover `width * height` and reset
+    /// the IIR state. Returns `(size, vert_state_needed)`.
+    fn prepare(&mut self, width: usize, height: usize) -> (usize, usize) {
         // checked_mul guards against silent wraparound on 32-bit targets where
         // a malicious caller could otherwise pass dims whose product overflows.
         let size = width
@@ -190,6 +186,17 @@ impl SimdGaussian {
         }
         // IIR initialises state to zero on every call.
         self.vert_state[..vert_state_needed].fill(0.0);
+        (size, vert_state_needed)
+    }
+
+    pub fn blur_single_plane_into(
+        &mut self,
+        plane: &[f32],
+        out: &mut [f32],
+        width: usize,
+        height: usize,
+    ) {
+        let (size, vert_state_needed) = self.prepare(width, height);
 
         // Horizontal pass: dispatched for FMA. `off` keeps the temp plane out
         // of 4 KiB congruence with `plane` — see `temp_offset`.
@@ -205,6 +212,33 @@ impl SimdGaussian {
         vertical_pass(
             &self.temp_buffer[off..off + size],
             out,
+            &mut self.vert_state[..vert_state_needed],
+            width,
+            height,
+            self.tuning,
+        );
+    }
+
+    /// Blur a plane in place: `plane` is the horizontal-pass input and the
+    /// vertical pass writes the result back over it. Sequential borrows let
+    /// one buffer serve as both, so no separate destination plane exists.
+    /// Same arithmetic as [`Self::blur_single_plane_into`].
+    pub fn blur_single_plane_inplace(&mut self, plane: &mut [f32], width: usize, height: usize) {
+        let (size, vert_state_needed) = self.prepare(width, height);
+
+        // `off` keeps the temp plane out of 4 KiB congruence with `plane`,
+        // which is both the input and the destination here.
+        let off = Self::temp_offset(self.temp_buffer.as_ptr(), plane.as_ptr());
+        horizontal_pass(
+            &plane[..],
+            &mut self.temp_buffer[off..off + size],
+            width,
+            self.tuning,
+        );
+
+        vertical_pass(
+            &self.temp_buffer[off..off + size],
+            plane,
             &mut self.vert_state[..vert_state_needed],
             width,
             height,

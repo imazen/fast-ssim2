@@ -466,12 +466,13 @@ fn process_strip(
     let alloc_3planes =
         |w: usize, h: usize| [alloc_plane(w, h), alloc_plane(w, h), alloc_plane(w, h)];
 
-    let mut mul = alloc_3planes(width, height);
-    let mut sigma1_sq = alloc_3planes(width, height);
-    let mut sigma2_sq = alloc_3planes(width, height);
-    let mut sigma12 = alloc_3planes(width, height);
-    let mut mu1 = alloc_3planes(width, height);
-    let mut mu2 = alloc_3planes(width, height);
+    // Derived planes start empty and are sized lazily after the downscale,
+    // so they don't sit on the peak during conversion.
+    let mut sigma1_sq: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut sigma2_sq: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut sigma12: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut mu1: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut mu2: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut img1_planar = alloc_3planes(width, height);
     let mut img2_planar = alloc_3planes(width, height);
     let mut blur = Blur::with_tuning(width, height, impl_type, tuning);
@@ -492,8 +493,8 @@ fn process_strip(
         }
 
         if scale > 0 {
-            img1 = downscale_by_2(&img1);
-            img2 = downscale_by_2(&img2);
+            // The strip images were downscaled eagerly at the end of the
+            // previous iteration; adopt their dims for this scale's work.
             width = img1.width().get();
             height = img2.height().get();
 
@@ -516,22 +517,15 @@ fn process_strip(
         scale0_interior_end_in_strip = scale0_interior_end_in_strip.min(height);
         if scale0_interior_start_in_strip >= scale0_interior_end_in_strip {
             // No interior rows at this scale; halo-only contributions are
-            // discarded.
+            // discarded. The pyramid still advances for the next scale.
+            img1 = downscale_by_2(&img1);
+            img2 = downscale_by_2(&img2);
             continue;
         }
 
-        // Resize per-scale buffers; cheap (no allocation when truncating).
+        // Resize the planar buffers; cheap (no allocation when truncating).
         let size = width * height;
-        for buf in [
-            &mut mul,
-            &mut sigma1_sq,
-            &mut sigma2_sq,
-            &mut sigma12,
-            &mut mu1,
-            &mut mu2,
-            &mut img1_planar,
-            &mut img2_planar,
-        ] {
+        for buf in [&mut img1_planar, &mut img2_planar] {
             for c in buf.iter_mut() {
                 c.resize(size, 0.0);
                 c.truncate(size);
@@ -544,13 +538,34 @@ fn process_strip(
         linear_rgb_to_xyb_planar_into(&img1, SimdImpl::Simd, tuning, &mut img1_planar);
         linear_rgb_to_xyb_planar_into(&img2, SimdImpl::Simd, tuning, &mut img2_planar);
 
-        // Variance / cross-term tensors (per pixel multiply).
-        image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type, tuning);
-        blur.blur_into(&mul, &mut sigma1_sq);
-        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type, tuning);
-        blur.blur_into(&mul, &mut sigma2_sq);
-        image_multiply(&img1_planar, &img2_planar, &mut mul, impl_type, tuning);
-        blur.blur_into(&mul, &mut sigma12);
+        // Downscale for the next scale now; the current-res strip inputs
+        // are dead weight through the derived-plane phase.
+        img1 = downscale_by_2(&img1);
+        img2 = downscale_by_2(&img2);
+
+        // Size the derived planes lazily — `resize` allocates on first use
+        // and truncates (keeping capacity) on later scales.
+        for buf in [
+            &mut sigma1_sq,
+            &mut sigma2_sq,
+            &mut sigma12,
+            &mut mu1,
+            &mut mu2,
+        ] {
+            for c in buf.iter_mut() {
+                c.resize(size, 0.0);
+            }
+        }
+
+        // Variance / cross-term tensors (per pixel multiply). Products are
+        // written straight into the sigma planes and blurred in place — no
+        // `mul` scratch plane exists.
+        image_multiply(&img1_planar, &img1_planar, &mut sigma1_sq, impl_type, tuning);
+        blur.blur_inplace(&mut sigma1_sq);
+        image_multiply(&img2_planar, &img2_planar, &mut sigma2_sq, impl_type, tuning);
+        blur.blur_inplace(&mut sigma2_sq);
+        image_multiply(&img1_planar, &img2_planar, &mut sigma12, impl_type, tuning);
+        blur.blur_inplace(&mut sigma12);
 
         // Means (separate blur calls — IIR has finite halo per row).
         blur.blur_into(&img1_planar, &mut mu1);
@@ -960,12 +975,12 @@ fn process_dist_strip_with_cached_ref(
     let alloc_3planes =
         |w: usize, h: usize| [alloc_plane(w, h), alloc_plane(w, h), alloc_plane(w, h)];
 
-    let mut mul = alloc_3planes(width, height);
-    let mut sigma1_sq_strip = alloc_3planes(width, height);
-    let mut sigma2_sq = alloc_3planes(width, height);
-    let mut sigma12 = alloc_3planes(width, height);
-    let mut mu1_strip = alloc_3planes(width, height);
-    let mut mu2 = alloc_3planes(width, height);
+    // Derived planes start empty and are sized lazily after the downscale.
+    let mut sigma1_sq_strip: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut sigma2_sq: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut sigma12: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut mu1_strip: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut mu2: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut img2_planar = alloc_3planes(width, height);
     // Per-strip slice of the reference's planar XYB image.
     let mut img1_planar_strip = alloc_3planes(width, height);
@@ -982,7 +997,7 @@ fn process_dist_strip_with_cached_ref(
         }
 
         if scale > 0 {
-            img2 = downscale_by_2(&img2);
+            // Downscaled eagerly at the end of the previous iteration.
             width = img2.width().get();
             height = img2.height().get();
             interior_start_in_strip = interior_start_in_strip.div_ceil(2);
@@ -998,6 +1013,8 @@ fn process_dist_strip_with_cached_ref(
         interior_start_in_strip = interior_start_in_strip.min(height);
         interior_end_in_strip = interior_end_in_strip.min(height);
         if interior_start_in_strip >= interior_end_in_strip {
+            // The pyramid still advances for the next scale.
+            img2 = downscale_by_2(&img2);
             continue;
         }
 
@@ -1025,16 +1042,7 @@ fn process_dist_strip_with_cached_ref(
              dist_strip_h={height} ref_h_for_strip={ref_h_for_strip} — alignment regression"
         );
         let size = width * actual_strip_h;
-        for buf in [
-            &mut mul,
-            &mut sigma1_sq_strip,
-            &mut sigma2_sq,
-            &mut sigma12,
-            &mut mu1_strip,
-            &mut mu2,
-            &mut img2_planar,
-            &mut img1_planar_strip,
-        ] {
+        for buf in [&mut img2_planar, &mut img1_planar_strip] {
             for c in buf.iter_mut() {
                 c.resize(size, 0.0);
                 c.truncate(size);
@@ -1057,30 +1065,49 @@ fn process_dist_strip_with_cached_ref(
 
         linear_rgb_to_xyb_planar_into(&img2, SimdImpl::Simd, tuning, &mut img2_planar);
 
+        // Downscale for the next scale now; the current-res strip input is
+        // dead weight through the derived-plane phase.
+        img2 = downscale_by_2(&img2);
+
+        // Size the derived planes lazily — `resize` allocates on first use
+        // and truncates (keeping capacity) on later scales.
+        for buf in [
+            &mut sigma1_sq_strip,
+            &mut sigma2_sq,
+            &mut sigma12,
+            &mut mu1_strip,
+            &mut mu2,
+        ] {
+            for c in buf.iter_mut() {
+                c.resize(size, 0.0);
+            }
+        }
+
         // mu1, mu2: recompute the ref-side blur per strip so it
         // shares the same IIR boundary handling as mu2.
         blur.blur_into(&img1_planar_strip, &mut mu1_strip);
         // sigma1_sq: same — recompute on the strip from cached planar.
+        // Products go straight into the sigma planes and blur in place.
         image_multiply(
             &img1_planar_strip,
             &img1_planar_strip,
-            &mut mul,
+            &mut sigma1_sq_strip,
             impl_type,
             tuning,
         );
-        blur.blur_into(&mul, &mut sigma1_sq_strip);
+        blur.blur_inplace(&mut sigma1_sq_strip);
         // sigma2_sq = blur(img2^2)
-        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type, tuning);
-        blur.blur_into(&mul, &mut sigma2_sq);
+        image_multiply(&img2_planar, &img2_planar, &mut sigma2_sq, impl_type, tuning);
+        blur.blur_inplace(&mut sigma2_sq);
         // sigma12 = blur(img1 * img2)
         image_multiply(
             &img1_planar_strip,
             &img2_planar,
-            &mut mul,
+            &mut sigma12,
             impl_type,
             tuning,
         );
-        blur.blur_into(&mul, &mut sigma12);
+        blur.blur_inplace(&mut sigma12);
         // mu2 = blur(img2)
         blur.blur_into(&img2_planar, &mut mu2);
 

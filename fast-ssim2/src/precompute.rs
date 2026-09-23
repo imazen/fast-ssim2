@@ -45,8 +45,8 @@ use crate::{
 
 /// Reusable scratch buffers for [`Ssimulacra2Reference::compare_with`].
 ///
-/// `Ssimulacra2Reference::compare` allocates roughly 13 image-sized
-/// `Vec<f32>` planes (`mul`, `mu2`, `sigma2_sq`, `sigma12`, `img2_planar`)
+/// `Ssimulacra2Reference::compare` allocates roughly 12 image-sized
+/// `Vec<f32>` planes (`mu2`, `sigma2_sq`, `sigma12`, `img2_planar`)
 /// plus the [`Blur`] working memory on every call. When you compare many
 /// distorted images against the same reference (encoder rate-distortion
 /// search, simulated annealing, picker training), reuse a `CompareContext`
@@ -63,7 +63,6 @@ pub struct CompareContext {
     width: usize,
     height: usize,
     blur: Blur,
-    mul: [Vec<f32>; 3],
     mu2: [Vec<f32>; 3],
     sigma2_sq: [Vec<f32>; 3],
     sigma12: [Vec<f32>; 3],
@@ -78,53 +77,49 @@ impl CompareContext {
             width,
             height,
             blur: Blur::new(width, height),
-            mul: alloc_3planes(),
-            mu2: alloc_3planes(),
-            sigma2_sq: alloc_3planes(),
-            sigma12: alloc_3planes(),
+            // Derived planes start empty: they are sized lazily inside the
+            // scale loop (after the input downscale) so they don't sit on
+            // the peak during conversion and the downscale transient.
+            mu2: [Vec::new(), Vec::new(), Vec::new()],
+            sigma2_sq: [Vec::new(), Vec::new(), Vec::new()],
+            sigma12: [Vec::new(), Vec::new(), Vec::new()],
             img2_planar: alloc_3planes(),
         }
     }
 
-    /// Restore the working buffers to the original reference dimensions.
+    /// Restore the conversion buffer to the original reference dimensions.
     /// Called at the start of each comparison so previous calls' truncations
-    /// don't leave the buffers under-sized for the next call's scale 0.
-    /// Cheap: the underlying `Vec` capacity is retained from construction,
-    /// so this only updates length (no allocation) plus fills the regrown
-    /// portion with zero.
+    /// don't leave it under-sized for the next call's scale 0. The derived
+    /// planes need no reset — they are sized lazily per scale.
     fn reset_to_full(&mut self) {
         let size = self.width * self.height;
-        for buf in [
-            &mut self.mul,
-            &mut self.mu2,
-            &mut self.sigma2_sq,
-            &mut self.sigma12,
-            &mut self.img2_planar,
-        ] {
-            for c in buf.iter_mut() {
-                c.resize(size, 0.0);
-            }
+        for c in self.img2_planar.iter_mut() {
+            c.resize(size, 0.0);
         }
         self.blur.shrink_to(self.width, self.height);
     }
 
-    /// Truncate the working buffers to fit `width * height` of the current scale.
-    /// `Vec::truncate` does not free memory, so subsequent scales just shrink
-    /// and we never reallocate while iterating the pyramid.
+    /// Truncate the conversion buffer to fit `width * height` of the current
+    /// scale. `Vec::truncate` does not free memory, so subsequent scales
+    /// just shrink and we never reallocate while iterating the pyramid.
     fn shrink_to(&mut self, width: usize, height: usize) {
         let size = width * height;
-        for buf in [
-            &mut self.mul,
-            &mut self.mu2,
-            &mut self.sigma2_sq,
-            &mut self.sigma12,
-            &mut self.img2_planar,
-        ] {
-            for c in buf.iter_mut() {
-                c.truncate(size);
-            }
+        for c in self.img2_planar.iter_mut() {
+            c.truncate(size);
         }
         self.blur.shrink_to(width, height);
+    }
+
+    /// Size the derived planes for the current scale. Called after the
+    /// input downscale — `resize` allocates on first use and truncates
+    /// (keeping capacity) afterwards.
+    fn size_derived(&mut self, width: usize, height: usize) {
+        let size = width * height;
+        for buf in [&mut self.mu2, &mut self.sigma2_sq, &mut self.sigma12] {
+            for c in buf.iter_mut() {
+                c.resize(size, 0.0);
+            }
+        }
     }
 }
 
@@ -252,11 +247,6 @@ impl Ssimulacra2Reference {
         let mut width = padded_width;
         let mut height = padded_height;
 
-        let mut mul = [
-            vec![0.0f32; width * height],
-            vec![0.0f32; width * height],
-            vec![0.0f32; width * height],
-        ];
         let mut blur = Blur::new(width, height);
         let mut scales = Vec::with_capacity(NUM_SCALES);
 
@@ -266,14 +256,11 @@ impl Ssimulacra2Reference {
             }
 
             if scale > 0 {
-                img1 = downscale_by_2(&img1);
+                // Downscaled eagerly at the end of the previous iteration.
                 width = img1.width().get();
                 height = img1.height().get();
             }
 
-            for c in &mut mul {
-                c.truncate(width * height);
-            }
             blur.shrink_to(width, height);
 
             let mut img1_planar = [
@@ -283,18 +270,29 @@ impl Ssimulacra2Reference {
             ];
             linear_rgb_to_xyb_planar_into(&img1, SimdImpl::Simd, blur.tuning(), &mut img1_planar);
 
+            // Free this resolution before the derived-plane phase; only the
+            // next scale needs the image from here.
+            img1 = downscale_by_2(&img1);
+
             // Precompute mu1 = blur(img1)
             let mu1 = blur.blur(&img1_planar);
 
-            // Precompute sigma1_sq = blur(img1 * img1)
+            // Precompute sigma1_sq = blur(img1 * img1): the product is
+            // written straight into the stored plane and blurred in place —
+            // no `mul` scratch plane exists.
+            let mut sigma1_sq = [
+                vec![0.0f32; width * height],
+                vec![0.0f32; width * height],
+                vec![0.0f32; width * height],
+            ];
             image_multiply(
                 &img1_planar,
                 &img1_planar,
-                &mut mul,
+                &mut sigma1_sq,
                 SimdImpl::default(),
                 blur.tuning(),
             );
-            let sigma1_sq = blur.blur(&mul);
+            blur.blur_inplace(&mut sigma1_sq);
 
             scales.push(ScaleData {
                 img1_planar,
@@ -421,7 +419,7 @@ impl Ssimulacra2Reference {
             }
 
             if scale_idx > 0 {
-                img2 = downscale_by_2(&img2);
+                // Downscaled eagerly at the end of the previous iteration.
                 width = img2.width().get();
                 height = img2.height().get();
             }
@@ -436,6 +434,12 @@ impl Ssimulacra2Reference {
                 &mut ctx.img2_planar,
             );
 
+            // Free this resolution before the derived-plane phase; only the
+            // next scale needs the image from here.
+            img2 = downscale_by_2(&img2);
+
+            ctx.size_derived(width, height);
+
             // mu2 = blur(img2)
             ctx.blur.blur_into(&ctx.img2_planar, &mut ctx.mu2);
 
@@ -443,21 +447,21 @@ impl Ssimulacra2Reference {
             image_multiply(
                 &ctx.img2_planar,
                 &ctx.img2_planar,
-                &mut ctx.mul,
+                &mut ctx.sigma2_sq,
                 SimdImpl::default(),
                 ctx.blur.tuning(),
             );
-            ctx.blur.blur_into(&ctx.mul, &mut ctx.sigma2_sq);
+            ctx.blur.blur_inplace(&mut ctx.sigma2_sq);
 
             // sigma12 = blur(img1 * img2) — cross-term
             image_multiply(
                 &scale_data.img1_planar,
                 &ctx.img2_planar,
-                &mut ctx.mul,
+                &mut ctx.sigma12,
                 SimdImpl::default(),
                 ctx.blur.tuning(),
             );
-            ctx.blur.blur_into(&ctx.mul, &mut ctx.sigma12);
+            ctx.blur.blur_inplace(&mut ctx.sigma12);
 
             // Use precomputed mu1 and sigma1_sq from reference
             let avg_ssim = ssim_map(

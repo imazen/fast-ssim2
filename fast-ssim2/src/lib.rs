@@ -532,7 +532,7 @@ fn compute_frame_flavored(
     }
 
     // Cap total pixel count before the working-buffer allocations below.
-    // Each call allocates ~24 image-sized f32 planes plus a downscale pyramid;
+    // Each call allocates ~21 image-sized f32 planes plus a downscale pyramid;
     // unbounded caller-supplied dims are a memory-exhaustion vector.
     let pixels = img1
         .width()
@@ -552,16 +552,18 @@ fn compute_frame_flavored(
     // `WEIGHT[]` using the same linear walk `score()` performs.
     let scales_n = weights::count_scales(width, height);
 
-    // Pre-allocate reusable buffers (sized for initial dimensions, shrunk per scale)
+    // Pre-allocate the planar buffers (sized for initial dimensions, shrunk
+    // per scale). The sigma/mu planes start empty and are sized lazily on
+    // first use — see the `resize` below — so they don't sit on the peak
+    // during conversion and the downscale transient.
     let alloc_plane = || vec![0.0f32; width * height];
     let alloc_3planes = || [alloc_plane(), alloc_plane(), alloc_plane()];
 
-    let mut mul = alloc_3planes();
-    let mut sigma1_sq = alloc_3planes();
-    let mut sigma2_sq = alloc_3planes();
-    let mut sigma12 = alloc_3planes();
-    let mut mu1 = alloc_3planes();
-    let mut mu2 = alloc_3planes();
+    let mut sigma1_sq: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut sigma2_sq: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut sigma12: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut mu1: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    let mut mu2: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     let mut img1_planar = alloc_3planes();
     let mut img2_planar = alloc_3planes();
 
@@ -580,24 +582,15 @@ fn compute_frame_flavored(
         }
 
         if scale > 0 {
-            img1 = downscale_by_2(&img1);
-            img2 = downscale_by_2(&img2);
+            // The images were downscaled eagerly at the end of the previous
+            // iteration; adopt their dims for this scale's work.
             width = img1.width().get();
             height = img2.height().get();
         }
 
-        // Shrink all buffers to current scale size
+        // Shrink the planar buffers to current scale size
         let size = width * height;
-        for buf in [
-            &mut mul,
-            &mut sigma1_sq,
-            &mut sigma2_sq,
-            &mut sigma12,
-            &mut mu1,
-            &mut mu2,
-            &mut img1_planar,
-            &mut img2_planar,
-        ] {
+        for buf in [&mut img1_planar, &mut img2_planar] {
             for c in buf.iter_mut() {
                 c.truncate(size);
             }
@@ -617,14 +610,38 @@ fn compute_frame_flavored(
             }
         }
 
-        image_multiply(&img1_planar, &img1_planar, &mut mul, impl_type, tuning);
-        blur.blur_into(&mul, &mut sigma1_sq);
+        // Downscale for the next scale now: the current-res inputs are dead
+        // weight through the derived-plane phase (~24 B/px at scale 0), and
+        // `width`/`height` keep this scale's dims so the <8px gate at the top
+        // still runs on pre-downscale dims as before.
+        img1 = downscale_by_2(&img1);
+        img2 = downscale_by_2(&img2);
 
-        image_multiply(&img2_planar, &img2_planar, &mut mul, impl_type, tuning);
-        blur.blur_into(&mul, &mut sigma2_sq);
+        // Size the sigma/mu planes lazily, only now that they are needed:
+        // `resize` allocates on the first scale and truncates (keeping
+        // capacity) on later ones, so the allocation pattern is unchanged.
+        for buf in [
+            &mut sigma1_sq,
+            &mut sigma2_sq,
+            &mut sigma12,
+            &mut mu1,
+            &mut mu2,
+        ] {
+            for c in buf.iter_mut() {
+                c.resize(size, 0.0);
+            }
+        }
 
-        image_multiply(&img1_planar, &img2_planar, &mut mul, impl_type, tuning);
-        blur.blur_into(&mul, &mut sigma12);
+        // Products are written straight into the sigma planes and blurred in
+        // place — no `mul` scratch plane exists.
+        image_multiply(&img1_planar, &img1_planar, &mut sigma1_sq, impl_type, tuning);
+        blur.blur_inplace(&mut sigma1_sq);
+
+        image_multiply(&img2_planar, &img2_planar, &mut sigma2_sq, impl_type, tuning);
+        blur.blur_inplace(&mut sigma2_sq);
+
+        image_multiply(&img1_planar, &img2_planar, &mut sigma12, impl_type, tuning);
+        blur.blur_inplace(&mut sigma12);
 
         blur.blur_into(&img1_planar, &mut mu1);
         blur.blur_into(&img2_planar, &mut mu2);

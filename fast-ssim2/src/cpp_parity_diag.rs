@@ -399,7 +399,6 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
 
     let alloc_plane = || vec![0.0f32; width * height];
     let alloc_3planes = || [alloc_plane(), alloc_plane(), alloc_plane()];
-    let mut mul = alloc_3planes();
     let mut sigma1_sq = alloc_3planes();
     let mut sigma2_sq = alloc_3planes();
     let mut sigma12 = alloc_3planes();
@@ -416,14 +415,12 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
             break;
         }
         if scale > 0 {
-            img1 = downscale_by_2(&img1);
-            img2 = downscale_by_2(&img2);
+            // Downscaled eagerly at the end of the previous iteration.
             width = img1.width().get();
             height = img1.height().get();
         }
         let size = width * height;
         for buf in [
-            &mut mul,
             &mut sigma1_sq,
             &mut sigma2_sq,
             &mut sigma12,
@@ -443,6 +440,10 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
         xyb_to_planar_into(&a, &mut img1_planar);
         xyb_to_planar_into(&b, &mut img2_planar);
 
+        // Downscale for the next scale now, matching production.
+        img1 = downscale_by_2(&img1);
+        img2 = downscale_by_2(&img2);
+
         let do_blur =
             |src: &[Vec<f32>; 3], dst: &mut [Vec<f32>; 3], blur: &mut Blur| match cfg.horiz {
                 None => blur.blur_into(src, dst),
@@ -452,31 +453,42 @@ pub fn run(img1: LinearRgb, img2: LinearRgb, cfg: DiagConfig) -> (f64, Vec<Msssi
                     }
                 }
             };
+        // In-place variant for the sigma planes (production writes products
+        // straight into them and blurs in place — no `mul` scratch).
+        let do_blur_inplace = |buf: &mut [Vec<f32>; 3], blur: &mut Blur| match cfg.horiz {
+            None => blur.blur_inplace(buf),
+            Some(kind) => {
+                for c in 0..3 {
+                    let src = buf[c].clone();
+                    buf[c].copy_from_slice(&blur_plane(&src, width, height, kind));
+                }
+            }
+        };
 
         image_multiply(
             &img1_planar,
             &img1_planar,
-            &mut mul,
+            &mut sigma1_sq,
             impl_type,
             blur.tuning(),
         );
-        do_blur(&mul, &mut sigma1_sq, &mut blur);
+        do_blur_inplace(&mut sigma1_sq, &mut blur);
         image_multiply(
             &img2_planar,
             &img2_planar,
-            &mut mul,
+            &mut sigma2_sq,
             impl_type,
             blur.tuning(),
         );
-        do_blur(&mul, &mut sigma2_sq, &mut blur);
+        do_blur_inplace(&mut sigma2_sq, &mut blur);
         image_multiply(
             &img1_planar,
             &img2_planar,
-            &mut mul,
+            &mut sigma12,
             impl_type,
             blur.tuning(),
         );
-        do_blur(&mul, &mut sigma12, &mut blur);
+        do_blur_inplace(&mut sigma12, &mut blur);
         do_blur(&img1_planar, &mut mu1, &mut blur);
         do_blur(&img2_planar, &mut mu2, &mut blur);
 
@@ -684,22 +696,21 @@ fn diag_flat_field_conditioning() {
         let p2 = xyb_to_planar(&b);
 
         let mut blur = Blur::with_simd_impl(size, size, SimdImpl::Simd);
-        let mut mul = [
+        let mut s11 = [
             vec![0.0f32; size * size],
             vec![0.0; size * size],
             vec![0.0; size * size],
         ];
-        let mut s11 = mul.clone();
-        let mut s22 = mul.clone();
-        let mut s12 = mul.clone();
-        let mut mu1 = mul.clone();
-        let mut mu2 = mul.clone();
-        image_multiply(&p1, &p1, &mut mul, SimdImpl::Simd, blur.tuning());
-        blur.blur_into(&mul, &mut s11);
-        image_multiply(&p2, &p2, &mut mul, SimdImpl::Simd, blur.tuning());
-        blur.blur_into(&mul, &mut s22);
-        image_multiply(&p1, &p2, &mut mul, SimdImpl::Simd, blur.tuning());
-        blur.blur_into(&mul, &mut s12);
+        let mut s22 = s11.clone();
+        let mut s12 = s11.clone();
+        let mut mu1 = s11.clone();
+        let mut mu2 = s11.clone();
+        image_multiply(&p1, &p1, &mut s11, SimdImpl::Simd, blur.tuning());
+        blur.blur_inplace(&mut s11);
+        image_multiply(&p2, &p2, &mut s22, SimdImpl::Simd, blur.tuning());
+        blur.blur_inplace(&mut s22);
+        image_multiply(&p1, &p2, &mut s12, SimdImpl::Simd, blur.tuning());
+        blur.blur_inplace(&mut s12);
         blur.blur_into(&p1, &mut mu1);
         blur.blur_into(&p2, &mut mu2);
 
