@@ -52,6 +52,9 @@ sha2 = "0.11.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }
+zenjpeg = { path = "../../zenjpeg/zenjpeg" }
+enough = "0.4.4"
+iai-callgrind = "0.16.1"
 # `testable_dispatch` lets benches/tier_isolation.rs disable the baseline SIMD
 # token (NEON on aarch64) so the scalar arm is real rather than a second
 # measurement of the SIMD path.
@@ -69,6 +72,10 @@ hdr-pu = []
 [[example]]
 name = "upiq_pu_score"
 required-features = ["hdr-pu"]
+
+[[bench]]
+name = "official_iai"
+harness = false
 
 [[bench]]
 name = "benches"

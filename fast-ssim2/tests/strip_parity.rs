@@ -163,3 +163,106 @@ fn strip_mismatched_dimensions_errors() {
     let b = generate_image(32, 32, 0);
     assert!(compute_ssimulacra2_strip(a, b, 32).is_err());
 }
+
+// ============================================================================
+// Match-official strip parity
+// ============================================================================
+
+fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> yuvxyb::Rgb {
+    let mut data = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            let v = (((x as u32).wrapping_mul(7).wrapping_add(y as u32 * 13).wrapping_add(seed)) & 0xff) as f32 / 255.0;
+            let g = (((x as u32).wrapping_mul(11).wrapping_add(y as u32 * 3).wrapping_add(seed + 50)) & 0xff) as f32 / 255.0;
+            let b = (((x as u32).wrapping_mul(5).wrapping_add(y as u32 * 17).wrapping_add(seed + 100)) & 0xff) as f32 / 255.0;
+            data.push([v, g, b]);
+        }
+    }
+    yuvxyb::Rgb::new(
+        data,
+        std::num::NonZeroUsize::new(width).unwrap(),
+        std::num::NonZeroUsize::new(height).unwrap(),
+        yuvxyb::TransferCharacteristic::SRGB,
+        yuvxyb::ColorPrimaries::BT709,
+    )
+    .unwrap()
+}
+
+/// Match-official strip mode must approximate the full-image official
+/// score within the same halo tolerance as the precise strip path.
+#[test]
+fn strip_parity_official_512x512() {
+    use fast_ssim2::{
+        Ssimulacra2Config, Ssimulacra2StripConfig, compute_ssimulacra2_strip_with_config,
+        compute_ssimulacra2_with_config,
+    };
+    let source = generate_encoded_rgb(512, 512, 7);
+    let distorted = generate_encoded_rgb(512, 512, 8);
+    let official = Ssimulacra2Config::official();
+    let full = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), official).unwrap();
+    for strip_h in [64u32, 128, 256] {
+        let cfg = Ssimulacra2StripConfig::default().with_inner(official);
+        let strip = compute_ssimulacra2_strip_with_config(
+            source.clone(),
+            distorted.clone(),
+            strip_h,
+            cfg,
+        )
+        .unwrap();
+        assert!(
+            (full - strip).abs() < SCORE_TOLERANCE,
+            "official strip{strip_h} {strip:.4} vs full {full:.4} differs by more than {SCORE_TOLERANCE}",
+        );
+    }
+}
+
+/// `parallel_strips` must produce bit-identical output: strips merge in
+/// fixed order so the f64 accumulation is schedule-independent.
+#[test]
+fn strip_parallel_deterministic() {
+    use fast_ssim2::{Ssimulacra2Config, Ssimulacra2StripConfig, compute_ssimulacra2_strip_with_config};
+    let source = generate_image(512, 512, 11);
+    let distorted = generate_image(512, 512, 12);
+    for strip_h in [32u32, 96] {
+        let serial = compute_ssimulacra2_strip_with_config(
+            source.clone(),
+            distorted.clone(),
+            strip_h,
+            Ssimulacra2StripConfig::default(),
+        )
+        .unwrap();
+        let par = compute_ssimulacra2_strip_with_config(
+            source.clone(),
+            distorted.clone(),
+            strip_h,
+            Ssimulacra2StripConfig::default().with_parallel_strips(true),
+        )
+        .unwrap();
+        assert_eq!(
+            serial, par,
+            "strip_h={strip_h}: parallel {par} != serial {serial} — ordered merge is broken",
+        );
+        // And the official-fidelity path (encoded input → MatchOfficial).
+        let official = Ssimulacra2Config::official();
+        let serial_o = compute_ssimulacra2_strip_with_config(
+            source.clone(),
+            distorted.clone(),
+            strip_h,
+            Ssimulacra2StripConfig::default().with_inner(official),
+        )
+        .unwrap();
+        let par_o = compute_ssimulacra2_strip_with_config(
+            source.clone(),
+            distorted.clone(),
+            strip_h,
+            Ssimulacra2StripConfig::default()
+                .with_inner(official)
+                .with_parallel_strips(true),
+        )
+        .unwrap();
+        assert_eq!(
+            serial_o, par_o,
+            "official strip_h={strip_h}: parallel {par_o} != serial {serial_o}",
+        );
+    }
+}

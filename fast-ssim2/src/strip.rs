@@ -124,6 +124,14 @@ pub struct Ssimulacra2StripConfig {
     pub halo_rows: usize,
     /// Underlying SIMD configuration for the per-strip ops.
     pub inner: Ssimulacra2Config,
+    /// Process strips in parallel (requires the `rayon` feature).
+    ///
+    /// Off by default because parallelism multiplies the memory bound:
+    /// peak RSS becomes ~`threads × (strip+2·halo) × width × ~30 f32
+    /// planes`. On low-RAM machines keep this `false` — the memory
+    /// bound is the strip path's contract. Scores are bit-identical
+    /// either way (sums merge in fixed strip order).
+    pub parallel_strips: bool,
 }
 
 impl Default for Ssimulacra2StripConfig {
@@ -131,6 +139,7 @@ impl Default for Ssimulacra2StripConfig {
         Self {
             halo_rows: HALO_ROWS_DEFAULT,
             inner: Ssimulacra2Config::default(),
+            parallel_strips: false,
         }
     }
 }
@@ -142,6 +151,7 @@ impl Ssimulacra2StripConfig {
         Self {
             halo_rows,
             inner: Ssimulacra2Config::default(),
+            parallel_strips: false,
         }
     }
 
@@ -149,6 +159,14 @@ impl Ssimulacra2StripConfig {
     #[must_use]
     pub fn with_inner(mut self, inner: Ssimulacra2Config) -> Self {
         self.inner = inner;
+        self
+    }
+
+    /// Enable parallel strip processing (requires `rayon`; multiplies
+    /// peak memory by the thread count — see [`Self::parallel_strips`]).
+    #[must_use]
+    pub fn with_parallel_strips(mut self, parallel: bool) -> Self {
+        self.parallel_strips = parallel;
         self
     }
 }
@@ -262,6 +280,84 @@ where
     S: ToLinearRgb,
     D: ToLinearRgb,
 {
+    // `Fidelity::MatchOfficial` strips the *encoded* input rows and
+    // linearizes per-strip through the reference-captured LUT; inputs
+    // without an encoded form take the linear-planes variant.
+    if config.inner.fidelity == crate::Fidelity::MatchOfficial {
+        let e1 = source.to_encoded_srgb();
+        let e2 = distorted.to_encoded_srgb();
+        if let (Some(e1), Some(e2)) = (&e1, &e2) {
+            // Same sub-8px crate contract as compute_match_official —
+            // pad encoded planes (per-pixel LUT ⇒ U8-exact, identical
+            // to padding post-linearization).
+            let p1 = e1.reflect_padded(8);
+            let p2 = e2.reflect_padded(8);
+            return crate::official::strip::compute_encoded_strip_stop(
+                &p1,
+                &p2,
+                strip_height as usize,
+                config.halo_rows,
+                crate::official::PermuteOpts {
+                    blur: crate::official::BlurSel::OfficialSimd,
+                    ..crate::official::PermuteOpts::OFFICIAL
+                },
+                config.parallel_strips,
+                stop,
+            );
+        }
+        let img1: LinearRgbImage = source.into_linear_rgb();
+        let img2: LinearRgbImage = distorted.into_linear_rgb();
+        let (w, h) = (img1.width(), img1.height());
+        let to_planes = |img: &LinearRgbImage| -> [Vec<f32>; 3] {
+            let mut p = [Vec::with_capacity(w * h), Vec::with_capacity(w * h), Vec::with_capacity(w * h)];
+            for px in img.data() {
+                p[0].push(px[0]);
+                p[1].push(px[1]);
+                p[2].push(px[2]);
+            }
+            p
+        };
+        if strip_height < MIN_STRIP_HEIGHT as u32 {
+            return Err(Ssimulacra2Error::InvalidImageSize);
+        }
+        let mut p1 = to_planes(&img1);
+        let mut p2 = to_planes(&img2);
+        let (w, h) = if w < 8 || h < 8 {
+            let (pw, ph) = (w.max(8), h.max(8));
+            let pad = |p: [Vec<f32>; 3]| {
+                p.map(|data| {
+                    let mut out = Vec::with_capacity(pw * ph);
+                    for y in 0..ph {
+                        let row = crate::reflect_index(y, h) * w;
+                        for x in 0..pw {
+                            out.push(data[row + crate::reflect_index(x, w)]);
+                        }
+                    }
+                    out
+                })
+            };
+            p1 = pad(p1);
+            p2 = pad(p2);
+            (pw, ph)
+        } else {
+            (w, h)
+        };
+        return crate::official::strip::compute_linear_strip_stop(
+            &p1,
+            &p2,
+            w,
+            h,
+            strip_height as usize,
+            config.halo_rows,
+            crate::official::PermuteOpts {
+                blur: crate::official::BlurSel::OfficialSimd,
+                ..crate::official::PermuteOpts::OFFICIAL
+            },
+            config.parallel_strips,
+            stop,
+        );
+    }
+
     let img1: LinearRgbImage = source.into_linear_rgb();
     let img2: LinearRgbImage = distorted.into_linear_rgb();
     let lin1: LinearRgb = img1.into();
@@ -347,20 +443,6 @@ impl StripAccumulator {
         }
     }
 
-    fn add_strip_sums(&mut self, scale: usize, ssim: &[f64; 6], edge: &[f64; 12], pixels: u64) {
-        if scale >= self.per_scale.len() {
-            return;
-        }
-        let s = &mut self.per_scale[scale];
-        for (dst, &src) in s.ssim_sums.iter_mut().zip(ssim.iter()) {
-            *dst += src;
-        }
-        for (dst, &src) in s.edge_sums.iter_mut().zip(edge.iter()) {
-            *dst += src;
-        }
-        s.pixels += pixels;
-        s.initialised = true;
-    }
 
     fn finalise(self) -> Result<f64, Ssimulacra2Error> {
         // Sanity-check that the accumulated pixel counts equal the
@@ -441,39 +523,71 @@ fn linear_rgb_strip(src: &LinearRgb, row_start: usize, row_end: usize) -> Linear
 /// `[strip_y0, strip_y0 + strip_image_height)` where `strip_y0` is the
 /// row offset passed in. Interior rows are accumulated; halo rows are
 /// processed but discarded.
+/// Per-worker scratch for `process_strip` — reused across strips and
+/// scales so plane buffers mmap/fault once per worker, not ~24 planes
+/// per strip. Under `parallel_strips` rayon `map_init` gives each pool
+/// thread its own `PreciseStripScratch`.
+struct PreciseStripScratch {
+    mul: [Vec<f32>; 3],
+    sigma1_sq: [Vec<f32>; 3],
+    sigma2_sq: [Vec<f32>; 3],
+    sigma12: [Vec<f32>; 3],
+    mu1: [Vec<f32>; 3],
+    mu2: [Vec<f32>; 3],
+    img1_planar: [Vec<f32>; 3],
+    img2_planar: [Vec<f32>; 3],
+    blur: Blur,
+}
+
+impl PreciseStripScratch {
+    fn new(width: usize, height: usize, impl_type: crate::SimdImpl) -> Self {
+        let alloc = || vec![0.0f32; width * height];
+        Self {
+            mul: [alloc(), alloc(), alloc()],
+            sigma1_sq: [alloc(), alloc(), alloc()],
+            sigma2_sq: [alloc(), alloc(), alloc()],
+            sigma12: [alloc(), alloc(), alloc()],
+            mu1: [alloc(), alloc(), alloc()],
+            mu2: [alloc(), alloc(), alloc()],
+            img1_planar: [alloc(), alloc(), alloc()],
+            img2_planar: [alloc(), alloc(), alloc()],
+            blur: Blur::with_simd_impl(width, height, impl_type),
+        }
+    }
+}
+
 fn process_strip(
     img1_strip: LinearRgb,
     img2_strip: LinearRgb,
     strip_y0: usize,       // scale-0 row index of the first row in img*_strip
     interior_start: usize, // scale-0 row index of first interior row (inclusive)
     interior_end: usize,   // scale-0 row index of last interior row (exclusive)
-    acc: &mut StripAccumulator,
+    total_scales: usize,
     config: Ssimulacra2Config,
-) {
+    scratch: &mut PreciseStripScratch,
+) -> Vec<ScaleSums> {
     let impl_type = config.impl_type;
     let mut img1 = img1_strip;
     let mut img2 = img2_strip;
+    let mut strip_sums = vec![ScaleSums::default(); total_scales];
 
     let mut width = img1.width().get();
     let mut height = img1.height().get();
-    let total_scales = acc.per_scale.len();
 
-    // Per-strip reusable allocations sized for the current strip
-    // height (much smaller than the full image). `Vec::truncate`
-    // reuses capacity at higher scales.
-    let alloc_plane = |w: usize, h: usize| vec![0.0f32; w * h];
-    let alloc_3planes =
-        |w: usize, h: usize| [alloc_plane(w, h), alloc_plane(w, h), alloc_plane(w, h)];
-
-    let mut mul = alloc_3planes(width, height);
-    let mut sigma1_sq = alloc_3planes(width, height);
-    let mut sigma2_sq = alloc_3planes(width, height);
-    let mut sigma12 = alloc_3planes(width, height);
-    let mut mu1 = alloc_3planes(width, height);
-    let mut mu2 = alloc_3planes(width, height);
-    let mut img1_planar = alloc_3planes(width, height);
-    let mut img2_planar = alloc_3planes(width, height);
-    let mut blur = Blur::with_simd_impl(width, height, impl_type);
+    // Per-strip buffers come from the worker scratch — `resize`
+    // reuses capacity across scales and strips.
+    let sc = &mut *scratch;
+    let (mut mul, mut sigma1_sq, mut sigma2_sq, mut sigma12, mut mu1, mut mu2, mut img1_planar, mut img2_planar, blur) = (
+        &mut sc.mul,
+        &mut sc.sigma1_sq,
+        &mut sc.sigma2_sq,
+        &mut sc.sigma12,
+        &mut sc.mu1,
+        &mut sc.mu2,
+        &mut sc.img1_planar,
+        &mut sc.img2_planar,
+        &mut sc.blur,
+    );
 
     // Scale-0 strip-local interior bounds; updated per scale via
     // halve-with-snap-down semantics matching the downscale.
@@ -522,14 +636,14 @@ fn process_strip(
         // Resize per-scale buffers; cheap (no allocation when truncating).
         let size = width * height;
         for buf in [
-            &mut mul,
-            &mut sigma1_sq,
-            &mut sigma2_sq,
-            &mut sigma12,
-            &mut mu1,
-            &mut mu2,
-            &mut img1_planar,
-            &mut img2_planar,
+            &mut *mul,
+            &mut *sigma1_sq,
+            &mut *sigma2_sq,
+            &mut *sigma12,
+            &mut *mu1,
+            &mut *mu2,
+            &mut *img1_planar,
+            &mut *img2_planar,
         ] {
             for c in buf.iter_mut() {
                 c.resize(size, 0.0);
@@ -586,8 +700,13 @@ fn process_strip(
 
         let interior_h = scale0_interior_end_in_strip - scale0_interior_start_in_strip;
         let interior_pixels = (interior_h as u64) * (width as u64);
-        acc.add_strip_sums(scale, &ssim_sums, &edge_sums, interior_pixels);
+        let s = &mut strip_sums[scale];
+        for (dst, &src) in s.ssim_sums.iter_mut().zip(ssim_sums.iter()) { *dst += src; }
+        for (dst, &src) in s.edge_sums.iter_mut().zip(edge_sums.iter()) { *dst += src; }
+        s.pixels += interior_pixels;
+        s.initialised = true;
     }
+    strip_sums
 }
 
 /// Sums (sum_d, sum_d4) per channel over the strip's interior rows,
@@ -734,40 +853,89 @@ fn compute_strip_impl(
     // to multiples of 32 (or to `height`, whichever is smaller).
     const ALIGNMENT: usize = 32;
     let strip_h = strip_height.max(MIN_STRIP_HEIGHT);
+    let n_scales = acc.per_scale.len();
 
+    // Strip descriptors built up front: (interior_start, interior_end,
+    // strip_y0, strip_y1). Fixed order makes the parallel path's merge
+    // deterministic — bit-identical output regardless of thread count.
+    let mut strips = Vec::new();
     let mut y = 0usize;
     while y < height {
-        // Cooperative cancellation check at the per-strip OUTER-loop
-        // boundary only (never inside the per-scale/per-pixel inner
-        // loops in `process_strip`), so it adds no cost to the hot path.
-        // `Unstoppable` short-circuits to a no-op.
-        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
-
         let mut next_y = (y + strip_h).next_multiple_of(ALIGNMENT);
         if next_y >= height || height - next_y < ALIGNMENT {
             next_y = height;
         }
-        let interior_start = y;
-        let interior_end = next_y;
-        let halo_above = halo.min(interior_start);
-        let halo_below = halo.min(height - interior_end);
-        let strip_y0 = interior_start - halo_above;
-        let strip_y1 = interior_end + halo_below;
-
-        let img1_strip = linear_rgb_strip(&img1, strip_y0, strip_y1);
-        let img2_strip = linear_rgb_strip(&img2, strip_y0, strip_y1);
-
-        process_strip(
-            img1_strip,
-            img2_strip,
-            strip_y0,
-            interior_start,
-            interior_end,
-            &mut acc,
-            config.inner,
-        );
-
+        let (sy0, sy1) = (y - halo.min(y), next_y + halo.min(height - next_y));
+        strips.push((y, next_y, sy0, sy1));
         y = next_y;
+    }
+
+    let max_strip_h = strip_h + 2 * halo;
+    let run_strip = |scratch: &mut PreciseStripScratch,
+                     &(int_s, int_e, sy0, sy1): &(usize, usize, usize, usize)| {
+        let img1_strip = linear_rgb_strip(&img1, sy0, sy1);
+        let img2_strip = linear_rgb_strip(&img2, sy0, sy1);
+        process_strip(
+            img1_strip, img2_strip, sy0, int_s, int_e, n_scales, config.inner, scratch,
+        )
+    };
+
+    // Cooperative cancellation: serial path checks per-strip; the
+    // parallel path checks once up front (per-strip checks inside the
+    // rayon closure can't propagate a cancel error out of map).
+    #[cfg(feature = "rayon")]
+    let strip_results: Vec<Vec<ScaleSums>> = if config.parallel_strips {
+        use rayon::prelude::*;
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        // Bandwidth-bound: no speedup past ~8 strips in flight (knee at
+        // T=8 measured at 4K), while peak RSS grows ~threads × footprint.
+        let cap = rayon::current_num_threads().min(8).max(1);
+        let mut out = Vec::with_capacity(strips.len());
+        for group in strips.chunks(cap) {
+            let g: Vec<Vec<ScaleSums>> = group
+                .par_iter()
+                .map_init(
+                    || PreciseStripScratch::new(width, max_strip_h, config.inner.impl_type),
+                    |scratch, d| run_strip(scratch, d),
+                )
+                .collect();
+            out.extend(g);
+        }
+        out
+    } else {
+        let mut scratch = PreciseStripScratch::new(width, max_strip_h, config.inner.impl_type);
+        strips
+            .iter()
+            .map(|d| {
+                stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                Ok(run_strip(&mut scratch, d))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    #[cfg(not(feature = "rayon"))]
+    let strip_results: Vec<Vec<ScaleSums>> = {
+        let mut scratch = PreciseStripScratch::new(width, max_strip_h, config.inner.impl_type);
+        strips
+            .iter()
+            .map(|d| {
+                stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                Ok(run_strip(&mut scratch, d))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    // Ordered merge — deterministic f64 accumulation.
+    for sums in strip_results {
+        for (scale, s) in sums.iter().enumerate() {
+            if !s.initialised {
+                continue;
+            }
+            let dst = &mut acc.per_scale[scale];
+            for (d, &v) in dst.ssim_sums.iter_mut().zip(s.ssim_sums.iter()) { *d += v; }
+            for (d, &v) in dst.edge_sums.iter_mut().zip(s.edge_sums.iter()) { *d += v; }
+            dst.pixels += s.pixels;
+            dst.initialised = true;
+        }
     }
 
     acc.finalise()
@@ -856,6 +1024,57 @@ impl Ssimulacra2Reference {
         // share the strip's IIR boundary handling — see
         // `process_dist_strip_with_cached_ref`), while the dist side
         // streams strip-by-strip.
+        //
+        // The MatchOfficial variant (`Ssimulacra2Reference::new_official`)
+        // holds `official::precompute::OfficialReference` planes — its
+        // strip walker re-blurs sliced ref planes per strip under the
+        // official semantics.
+        if let Some(oref) = self.official_ref() {
+            if strip_height < MIN_STRIP_HEIGHT as u32 {
+                return Err(Ssimulacra2Error::InvalidImageSize);
+            }
+            let enc = distorted.to_encoded_srgb();
+            if let Some(e2) = &enc {
+                let p2 = e2.reflect_padded(8);
+                if p2.width != self.width() || p2.height != self.height() {
+                    return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+                }
+                return oref.compare_strip_stop(
+                    &p2,
+                    strip_height.max(MIN_STRIP_HEIGHT as u32) as usize,
+                    config.halo_rows,
+                    config.parallel_strips,
+                    stop,
+                );
+            }
+            // Linear-input fallback — same rules as the non-strip
+            // `compute_match_official` planes path.
+            let padded = crate::reflect_pad_linear(distorted.into_linear_rgb(), 8);
+            let (pw, ph) = (padded.width(), padded.height());
+            if (pw, ph) != (oref.width(), oref.height()) {
+                return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+            }
+            let mut planes = [
+                Vec::with_capacity(pw * ph),
+                Vec::with_capacity(pw * ph),
+                Vec::with_capacity(pw * ph),
+            ];
+            for px in padded.data() {
+                planes[0].push(px[0]);
+                planes[1].push(px[1]);
+                planes[2].push(px[2]);
+            }
+            return oref.compare_strip_linear(
+                &planes,
+                strip_height.max(MIN_STRIP_HEIGHT as u32) as usize,
+                config.halo_rows,
+                config.parallel_strips,
+                stop,
+            );
+        }
+        if config.inner.fidelity == crate::Fidelity::MatchOfficial {
+            return Err(Ssimulacra2Error::UnsupportedFidelity);
+        }
         let img2: LinearRgb = distorted.into_linear_rgb().into();
         let width = img2.width().get();
         let height = img2.height().get();
@@ -892,36 +1111,79 @@ fn compare_strip_with_cached_ref(
 
     const ALIGNMENT: usize = 32;
     let strip_h = strip_height.max(MIN_STRIP_HEIGHT);
+    let n_scales = acc.per_scale.len();
 
+    let mut strips = Vec::new();
     let mut y = 0usize;
     while y < height {
-        // Cooperative cancellation: per-strip outer boundary (never per-pixel).
-        // `Unstoppable` short-circuits to a no-op.
-        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let mut next_y = (y + strip_h).next_multiple_of(ALIGNMENT);
         if next_y >= height || height - next_y < ALIGNMENT {
             next_y = height;
         }
-        let interior_start = y;
-        let interior_end = next_y;
-        let halo_above = halo.min(interior_start);
-        let halo_below = halo.min(height - interior_end);
-        let strip_y0 = interior_start - halo_above;
-        let strip_y1 = interior_end + halo_below;
-
-        let img2_strip = linear_rgb_strip(&img2_full, strip_y0, strip_y1);
-
-        process_dist_strip_with_cached_ref(
-            reference,
-            img2_strip,
-            strip_y0,
-            interior_start,
-            interior_end,
-            &mut acc,
-            config.inner,
-        );
-
+        let (sy0, sy1) = (y - halo.min(y), next_y + halo.min(height - next_y));
+        strips.push((y, next_y, sy0, sy1));
         y = next_y;
+    }
+
+    let max_strip_h = strip_h + 2 * halo;
+    let run_strip = |scratch: &mut PreciseStripScratch,
+                     &(int_s, int_e, sy0, sy1): &(usize, usize, usize, usize)| {
+        let img2_strip = linear_rgb_strip(&img2_full, sy0, sy1);
+        process_dist_strip_with_cached_ref(
+            reference, img2_strip, sy0, int_s, int_e, n_scales, config.inner, scratch,
+        )
+    };
+
+    #[cfg(feature = "rayon")]
+    let strip_results: Vec<Vec<ScaleSums>> = if config.parallel_strips {
+        use rayon::prelude::*;
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        let cap = rayon::current_num_threads().min(8).max(1);
+        let mut out = Vec::with_capacity(strips.len());
+        for group in strips.chunks(cap) {
+            let g: Vec<Vec<ScaleSums>> = group
+                .par_iter()
+                .map_init(
+                    || PreciseStripScratch::new(width, max_strip_h, config.inner.impl_type),
+                    |scratch, d| run_strip(scratch, d),
+                )
+                .collect();
+            out.extend(g);
+        }
+        out
+    } else {
+        let mut scratch = PreciseStripScratch::new(width, max_strip_h, config.inner.impl_type);
+        strips
+            .iter()
+            .map(|d| {
+                stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                Ok(run_strip(&mut scratch, d))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    #[cfg(not(feature = "rayon"))]
+    let strip_results: Vec<Vec<ScaleSums>> = {
+        let mut scratch = PreciseStripScratch::new(width, max_strip_h, config.inner.impl_type);
+        strips
+            .iter()
+            .map(|d| {
+                stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                Ok(run_strip(&mut scratch, d))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    for sums in strip_results {
+        for (scale, s) in sums.iter().enumerate() {
+            if !s.initialised {
+                continue;
+            }
+            let dst = &mut acc.per_scale[scale];
+            for (d, &v) in dst.ssim_sums.iter_mut().zip(s.ssim_sums.iter()) { *d += v; }
+            for (d, &v) in dst.edge_sums.iter_mut().zip(s.edge_sums.iter()) { *d += v; }
+            dst.pixels += s.pixels;
+            dst.initialised = true;
+        }
     }
 
     acc.finalise()
@@ -948,30 +1210,28 @@ fn process_dist_strip_with_cached_ref(
     strip_y0: usize,
     interior_start: usize,
     interior_end: usize,
-    acc: &mut StripAccumulator,
+    total_scales: usize,
     config: Ssimulacra2Config,
-) {
+    scratch: &mut PreciseStripScratch,
+) -> Vec<ScaleSums> {
+    let mut strip_sums = vec![ScaleSums::default(); total_scales];
     let impl_type = config.impl_type;
     let mut img2 = img2_strip;
     let mut width = img2.width().get();
     let mut height = img2.height().get();
-    let total_scales = acc.per_scale.len();
 
-    let alloc_plane = |w: usize, h: usize| vec![0.0f32; w * h];
-    let alloc_3planes =
-        |w: usize, h: usize| [alloc_plane(w, h), alloc_plane(w, h), alloc_plane(w, h)];
-
-    let mut mul = alloc_3planes(width, height);
-    let mut sigma1_sq_strip = alloc_3planes(width, height);
-    let mut sigma2_sq = alloc_3planes(width, height);
-    let mut sigma12 = alloc_3planes(width, height);
-    let mut mu1_strip = alloc_3planes(width, height);
-    let mut mu2 = alloc_3planes(width, height);
-    let mut img2_planar = alloc_3planes(width, height);
-    // Per-strip slice of the reference's planar XYB image.
-    let mut img1_planar_strip = alloc_3planes(width, height);
-
-    let mut blur = Blur::with_simd_impl(width, height, impl_type);
+    let sc = &mut *scratch;
+    let (mut mul, mut sigma1_sq_strip, mut sigma2_sq, mut sigma12, mut mu1_strip, mut mu2, mut img2_planar, img1_planar_strip, blur) = (
+        &mut sc.mul,
+        &mut sc.sigma1_sq,
+        &mut sc.sigma2_sq,
+        &mut sc.sigma12,
+        &mut sc.mu1,
+        &mut sc.mu2,
+        &mut sc.img2_planar,
+        &mut sc.img1_planar,
+        &mut sc.blur,
+    );
 
     let mut interior_start_in_strip = interior_start - strip_y0;
     let mut interior_end_in_strip = interior_end - strip_y0;
@@ -1027,14 +1287,14 @@ fn process_dist_strip_with_cached_ref(
         );
         let size = width * actual_strip_h;
         for buf in [
-            &mut mul,
-            &mut sigma1_sq_strip,
-            &mut sigma2_sq,
-            &mut sigma12,
-            &mut mu1_strip,
-            &mut mu2,
-            &mut img2_planar,
-            &mut img1_planar_strip,
+            &mut *mul,
+            &mut *sigma1_sq_strip,
+            &mut *sigma2_sq,
+            &mut *sigma12,
+            &mut *mu1_strip,
+            &mut *mu2,
+            &mut *img2_planar,
+            &mut *img1_planar_strip,
         ] {
             for c in buf.iter_mut() {
                 c.resize(size, 0.0);
@@ -1101,6 +1361,11 @@ fn process_dist_strip_with_cached_ref(
 
         let interior_h = interior_end_in_strip - interior_start_in_strip;
         let interior_pixels = (interior_h as u64) * (width as u64);
-        acc.add_strip_sums(scale, &ssim_sums, &edge_sums, interior_pixels);
+        let s = &mut strip_sums[scale];
+        for (dst, &src) in s.ssim_sums.iter_mut().zip(ssim_sums.iter()) { *dst += src; }
+        for (dst, &src) in s.edge_sums.iter_mut().zip(edge_sums.iter()) { *dst += src; }
+        s.pixels += interior_pixels;
+        s.initialised = true;
     }
+    strip_sums
 }

@@ -130,6 +130,18 @@ pub trait ToLinearRgb {
     {
         self.to_linear_rgb()
     }
+
+    /// Encoded sRGB pixel data, if this input type carries quantized or
+    /// encoded sRGB values (u8/u16 rasters, `yuvxyb::Rgb`).
+    ///
+    /// [`Fidelity::MatchOfficial`](crate::Fidelity::MatchOfficial) uses this
+    /// to apply the reference implementation's exact linearization instead
+    /// of [`to_linear_rgb`](ToLinearRgb::to_linear_rgb). The default `None`
+    /// means "already-linear / not an encoded sRGB container" — match-official
+    /// then falls back to the linearized data (documented approximation).
+    fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+        None
+    }
 }
 
 /// Identity implementation for already-converted images.
@@ -240,6 +252,17 @@ mod imgref_impl {
                 .collect();
             LinearRgbImage::new(data, self.width(), self.height())
         }
+
+        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+            Some(crate::official::EncodedSrgb {
+                width: self.width(),
+                height: self.height(),
+                data: crate::official::EncodedData::U8(
+                    self.pixels().flatten().collect(),
+                ),
+                            alpha: None,
+            })
+        }
     }
 
     /// RGB u16 (sRGB) -> Linear RGB
@@ -256,6 +279,87 @@ mod imgref_impl {
                 })
                 .collect();
             LinearRgbImage::new(data, self.width(), self.height())
+        }
+
+        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+            Some(crate::official::EncodedSrgb {
+                width: self.width(),
+                height: self.height(),
+                data: crate::official::EncodedData::U16(
+                    self.pixels().flatten().collect(),
+                ),
+                            alpha: None,
+            })
+        }
+    }
+
+    /// RGBA u8 (sRGB + alpha) -> Linear RGB
+    ///
+    /// Alpha-blends onto the reference background `0.5` in *encoded* space
+    /// (`a * v + (1 - a) * 0.5` in f32), matching the official binary's
+    /// `AlphaBlend` before `TransformTo`, then linearizes.
+    impl ToLinearRgb for ImgRef<'_, [u8; 4]> {
+        fn to_linear_rgb(&self) -> LinearRgbImage {
+            let data: Vec<[f32; 3]> = self
+                .pixels()
+                .map(|[r, g, b, a]| {
+                    let af = a as f32 * (1.0 / 255.0);
+                    [
+                        srgb_to_linear(af * (r as f32 * (1.0 / 255.0)) + (1.0 - af) * 0.5),
+                        srgb_to_linear(af * (g as f32 * (1.0 / 255.0)) + (1.0 - af) * 0.5),
+                        srgb_to_linear(af * (b as f32 * (1.0 / 255.0)) + (1.0 - af) * 0.5),
+                    ]
+                })
+                .collect();
+            LinearRgbImage::new(data, self.width(), self.height())
+        }
+
+        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+            let mut rgb = Vec::with_capacity(self.pixels().count() * 3);
+            let mut alpha = Vec::with_capacity(self.pixels().count());
+            for [r, g, b, a] in self.pixels() {
+                rgb.extend_from_slice(&[r, g, b]);
+                alpha.push(a as f32 * (1.0 / 255.0));
+            }
+            Some(crate::official::EncodedSrgb {
+                width: self.width(),
+                height: self.height(),
+                data: crate::official::EncodedData::U8(rgb),
+                alpha: Some(alpha),
+            })
+        }
+    }
+
+    /// RGBA u16 (sRGB + alpha) -> Linear RGB (same encoded-space blend).
+    impl ToLinearRgb for ImgRef<'_, [u16; 4]> {
+        fn to_linear_rgb(&self) -> LinearRgbImage {
+            let data: Vec<[f32; 3]> = self
+                .pixels()
+                .map(|[r, g, b, a]| {
+                    let af = a as f32 * (1.0 / 65535.0);
+                    [
+                        srgb_to_linear(af * (r as f32 * (1.0 / 65535.0)) + (1.0 - af) * 0.5),
+                        srgb_to_linear(af * (g as f32 * (1.0 / 65535.0)) + (1.0 - af) * 0.5),
+                        srgb_to_linear(af * (b as f32 * (1.0 / 65535.0)) + (1.0 - af) * 0.5),
+                    ]
+                })
+                .collect();
+            LinearRgbImage::new(data, self.width(), self.height())
+        }
+
+        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+            let mut rgb = Vec::with_capacity(self.pixels().count() * 3);
+            let mut alpha = Vec::with_capacity(self.pixels().count());
+            for [r, g, b, a] in self.pixels() {
+                rgb.extend_from_slice(&[r, g, b]);
+                alpha.push(a as f32 * (1.0 / 65535.0));
+            }
+            Some(crate::official::EncodedSrgb {
+                width: self.width(),
+                height: self.height(),
+                data: crate::official::EncodedData::U16(rgb),
+                alpha: Some(alpha),
+            })
         }
     }
 
@@ -278,6 +382,17 @@ mod imgref_impl {
                 })
                 .collect();
             LinearRgbImage::new(data, self.width(), self.height())
+        }
+
+        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+            // The reference expands grayscale to RGB before the metric.
+            let data: Vec<u8> = self.pixels().flat_map(|v| [v, v, v]).collect();
+            Some(crate::official::EncodedSrgb {
+                width: self.width(),
+                height: self.height(),
+                data: crate::official::EncodedData::U8(data),
+                            alpha: None,
+            })
         }
     }
 
@@ -337,6 +452,19 @@ impl From<LinearRgbImage> for yuvxyb::LinearRgb {
 }
 
 impl ToLinearRgb for yuvxyb::Rgb {
+    fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+        if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
+            Some(crate::official::EncodedSrgb {
+                width: self.width().get(),
+                height: self.height().get(),
+                data: crate::official::EncodedData::F32(self.data().to_vec().concat()),
+                            alpha: None,
+            })
+        } else {
+            None
+        }
+    }
+
     fn to_linear_rgb(&self) -> LinearRgbImage {
         if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
             // Use our own IEC 61966-2-1 sRGB linearization (standard constants)

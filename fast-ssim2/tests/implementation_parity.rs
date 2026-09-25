@@ -2,7 +2,7 @@
 //!
 //! This ensures Scalar and Simd (archmage) backends compute the same results.
 
-use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
+use fast_ssim2::{Fidelity, Ssimulacra2Config, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
@@ -99,7 +99,7 @@ fn compute_score_from_data(
 fn test_identical_images_exact_score_scalar() {
     let source = load_image("source.png");
     let score =
-        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::scalar())
+        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise))
             .unwrap();
     assert_eq!(
         score, 100.0,
@@ -112,7 +112,7 @@ fn test_identical_images_exact_score_scalar() {
 fn test_identical_images_exact_score_simd() {
     let source = load_image("source.png");
     let score =
-        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::simd()).unwrap();
+        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise)).unwrap();
     assert_eq!(
         score, 100.0,
         "SIMD: identical images must score exactly 100.0, got {}",
@@ -168,7 +168,7 @@ fn test_simd_scores_pinned_real_images() {
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
         let score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise))
                 .unwrap();
 
         // Exact match - any deviation indicates a regression
@@ -193,12 +193,12 @@ fn test_scalar_vs_simd_real_images() {
         let scalar_score = compute_ssimulacra2_with_config(
             source.clone(),
             distorted.clone(),
-            Ssimulacra2Config::scalar(),
+            Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise),
         )
         .unwrap();
 
         let simd_score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise))
                 .unwrap();
 
         let diff = (scalar_score - simd_score).abs();
@@ -233,14 +233,14 @@ fn test_scalar_vs_simd_synthetic() {
             &distorted_data,
             width,
             height,
-            Ssimulacra2Config::scalar(),
+            Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise),
         );
         let simd_score = compute_score_from_data(
             &source_data,
             &distorted_data,
             width,
             height,
-            Ssimulacra2Config::simd(),
+            Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise),
         );
 
         let diff = (scalar_score - simd_score).abs();
@@ -272,7 +272,7 @@ fn test_jpeg_quality_ordering_preserved() {
     for file in files {
         let distorted = load_image(file);
         let score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise))
                 .unwrap();
 
         assert!(

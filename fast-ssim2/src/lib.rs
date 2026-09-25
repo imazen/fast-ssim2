@@ -157,18 +157,19 @@
 //!
 //! ## Requirements
 //!
-//! - **Image size:** [`compute_ssimulacra2`] and [`Ssimulacra2Reference`]
-//!   accept any size from 1×1 up to [`MAX_IMAGE_PIXELS`] pixels; inputs
-//!   below the metric's 8×8 pyramid floor are reflect(mirror)-padded.
-//!   The strip APIs ([`compute_ssimulacra2_strip`],
-//!   [`Ssimulacra2Reference::compare_strip`]) target very large images and
-//!   require at least 8×8.
+//! - **Image size:** [`compute_ssimulacra2`], [`Ssimulacra2Reference`],
+//!   and [`compute_ssimulacra2_strip`] accept any size from 1×1 up to
+//!   [`MAX_IMAGE_PIXELS`] pixels; inputs below the metric's 8×8 pyramid
+//!   floor are reflect(mirror)-padded before processing (a crate-level
+//!   extension — the reference binary refuses such images).
 //! - **MSRV:** 1.89.0
 
 #![forbid(unsafe_code)]
 
 mod blur;
 mod input;
+#[doc(hidden)]
+pub mod official;
 mod precompute;
 // Reference data for parity testing (hidden from docs but accessible for tests)
 #[cfg(feature = "hdr-pu")]
@@ -220,17 +221,58 @@ impl SimdImpl {
     }
 }
 
+/// Score fidelity relative to the reference SSIMULACRA2 implementation.
+///
+/// Both published references — Cloudinary's standalone `ssimulacra2` and
+/// the `ssimulacra2` tool vendored in libjxl (verified v0.12.0) — produce
+/// identical scores, so [`Fidelity::MatchOfficial`] targets a single,
+/// well-defined behavior.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Fidelity {
+    /// Numerically stable implementation. Matches the official metric's
+    /// math but not its floating-point artifacts: on natural images
+    /// scores differ by ≲0.1; on pathological flat uniform inputs the
+    /// reference's f32 cancellation noise can deviate by ~2 points,
+    /// where this implementation stays at the mathematically intended
+    /// value. Select via [`Ssimulacra2Config::precise`].
+    Precise,
+    /// Bit-exact reproduction of the reference pipeline, including its
+    /// floating-point quirks (lcms2 linearization LUT, `CubeRootAndAdd`,
+    /// the 4-lane-unrolled `FastGaussian` FMA ordering, and the f32/f64
+    /// split in the map aggregates). Guaranteed bit-identical printed
+    /// scores for quantized inputs (u8/u16 images); arbitrary f32-encoded
+    /// inputs are linearized by LUT interpolation, a close approximation.
+    ///
+    /// **Default** — it is the strictly better engine: faster serial
+    /// (fused product blurs, f64-lane edge maps), lower peak memory
+    /// (per-channel sigma/mu streaming), and it reproduces the values
+    /// downstream pipelines actually calibrate against. Images below
+    /// 8×8 are reflect-padded per the crate contract (the reference
+    /// binary refuses them; padding is a crate-level extension).
+    #[default]
+    MatchOfficial,
+}
+
 /// Configuration for SSIMULACRA2 computation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Ssimulacra2Config {
     /// Implementation backend for all operations
     pub impl_type: SimdImpl,
+    /// Score fidelity relative to the reference implementation.
+    ///
+    /// With [`Fidelity::MatchOfficial`], `impl_type` is ignored: the
+    /// official path is a dedicated scalar pipeline chosen once at entry
+    /// (zero per-pixel dispatch cost).
+    pub fidelity: Fidelity,
 }
 
 impl Ssimulacra2Config {
     /// Create configuration with specified implementation
     pub fn new(impl_type: SimdImpl) -> Self {
-        Self { impl_type }
+        Self {
+            impl_type,
+            fidelity: Fidelity::MatchOfficial,
+        }
     }
 
     /// Default configuration using SIMD for all operations
@@ -241,6 +283,26 @@ impl Ssimulacra2Config {
     /// Scalar configuration (baseline, most compatible)
     pub fn scalar() -> Self {
         Self::new(SimdImpl::Scalar)
+    }
+
+    /// Bit-exact match with the official reference implementation
+    /// (`Fidelity::MatchOfficial`, the default); see [`Fidelity`].
+    pub fn official() -> Self {
+        Self::new(SimdImpl::Simd)
+    }
+
+    /// The precise/numerically-stable fidelity — the previous default
+    /// engine. Retained for comparison and for inputs where the
+    /// reference's f32 quirks are undesirable (pathological flat
+    /// inputs); see [`Fidelity::Precise`].
+    pub fn precise() -> Self {
+        Self::new(SimdImpl::Simd).with_fidelity(Fidelity::Precise)
+    }
+
+    /// Builder: set [`Ssimulacra2Config::fidelity`].
+    pub fn with_fidelity(mut self, fidelity: Fidelity) -> Self {
+        self.fidelity = fidelity;
+        self
     }
 }
 
@@ -289,6 +351,11 @@ pub enum Ssimulacra2Error {
         actual: usize,
     },
 
+    /// The requested [`Fidelity`] mode is not supported by this entry
+    /// point — e.g. [`Fidelity::MatchOfficial`] on the cached-reference
+    /// strip path (whose precomputed planes are precise-path).
+    #[error("fidelity mode not supported by this entry point")]
+    UnsupportedFidelity,
     /// Gaussian blur operation failed.
     #[error("Gaussian blur operation failed")]
     GaussianBlurError,
@@ -325,10 +392,13 @@ pub fn compute_frame_ssimulacra2<T, U>(source: T, distorted: U) -> Result<f64, S
 where
     LinearRgb: TryFrom<T> + TryFrom<U>,
 {
+    // Deprecated LinearRgb-only entry predates `Fidelity` — preserve its
+    // historical engine (Precise) rather than the new MatchOfficial
+    // default; the official path needs encoded inputs this API lacks.
     compute_frame_ssimulacra2_impl(
         source,
         distorted,
-        Ssimulacra2Config::default(),
+        Ssimulacra2Config::precise(),
         &enough::Unstoppable,
     )
 }
@@ -428,6 +498,10 @@ where
     S: ToLinearRgb,
     D: ToLinearRgb,
 {
+    if config.fidelity == Fidelity::MatchOfficial {
+        return compute_match_official(source, distorted, stop);
+    }
+
     // Reflect(mirror)-pad sub-8px inputs up to the pyramid floor so the
     // metric scores down to 1×1 instead of Err(InvalidImageSize). The
     // pad runs on the converted LinearRgbImage (reflect-101 boundary);
@@ -438,12 +512,112 @@ where
     compute_frame_ssimulacra2_impl(img1, img2, config, stop)
 }
 
+/// `Fidelity::MatchOfficial` entry point: reproduce the reference
+/// SSIMULACRA2 pipeline bit-for-bit where possible.
+///
+/// Inputs that carry encoded sRGB data (`to_encoded_srgb`) are linearized
+/// through the captured reference LUTs; already-linear inputs are used
+/// as-is (the reference binary never sees such inputs, so bit-exactness
+/// there is undefined — see [`Fidelity::MatchOfficial`]).
+fn compute_match_official<S, D>(
+    source: S,
+    distorted: D,
+    stop: &dyn enough::Stop,
+) -> Result<f64, Ssimulacra2Error>
+where
+    S: ToLinearRgb,
+    D: ToLinearRgb,
+{
+    let enc1 = source.to_encoded_srgb();
+    let enc2 = distorted.to_encoded_srgb();
+    if let (Some(e1), Some(e2)) = (&enc1, &enc2) {
+        // Sub-8px inputs: the reference binary refuses them, but the
+        // crate's `compute_ssimulacra2` contract scores down to 1×1 via
+        // mirror padding — apply it on encoded planes (per-pixel LUT ⇒
+        // identical to padding post-linearization, and stays U8-exact).
+        let p1 = e1.reflect_padded(8);
+        let p2 = e2.reflect_padded(8);
+        return official::compute_encoded_opts_stop(
+            &p1,
+            &p2,
+            official::PermuteOpts {
+                blur: official::BlurSel::OfficialSimd,
+                ..official::PermuteOpts::OFFICIAL
+            },
+            stop,
+        );
+    }
+
+    fn planes<T: ToLinearRgb>(t: &T) -> ([Vec<f32>; 3], usize, usize) {
+        let img = t.to_linear_rgb();
+        let (w, h) = (img.width(), img.height());
+        let mut p = [
+            Vec::with_capacity(w * h),
+            Vec::with_capacity(w * h),
+            Vec::with_capacity(w * h),
+        ];
+        for px in img.data() {
+            p[0].push(px[0]);
+            p[1].push(px[1]);
+            p[2].push(px[2]);
+        }
+        (p, w, h)
+    }
+
+    let (lin1, w1, h1) = planes(&source);
+    let (lin2, w2, h2) = planes(&distorted);
+    if w1 != w2 || h1 != h2 {
+        return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+    }
+    // Same sub-8px crate contract for the linear-input fallback: pad
+    // planes via the encoded-pad equivalent on linear data (per-pixel
+    // semantics already applied by to_linear_rgb).
+    if w1 < 8 || h1 < 8 {
+        let pw = w1.max(8);
+        let ph = h1.max(8);
+        let pad = |p: [Vec<f32>; 3]| {
+            p.map(|data| {
+                let mut out = Vec::with_capacity(pw * ph);
+                for y in 0..ph {
+                    let row = reflect_index(y, h1) * w1;
+                    for x in 0..pw {
+                        out.push(data[row + reflect_index(x, w1)]);
+                    }
+                }
+                out
+            })
+        };
+        return official::compute_opts_stop(
+            pad(lin1),
+            pad(lin2),
+            pw,
+            ph,
+            official::PermuteOpts {
+                blur: official::BlurSel::OfficialSimd,
+                ..official::PermuteOpts::OFFICIAL
+            },
+            stop,
+        );
+    }
+    official::compute_opts_stop(
+        lin1,
+        lin2,
+        w1,
+        h1,
+        official::PermuteOpts {
+            blur: official::BlurSel::OfficialSimd,
+            ..official::PermuteOpts::OFFICIAL
+        },
+        stop,
+    )
+}
+
 /// Reflect-101 index map (OpenCV `BORDER_REFLECT_101`): fold an
 /// out-of-range index `i` back into `[0, n)` by mirroring at the borders
 /// without repeating the edge sample. Identity for `i < n`; `n <= 1`
 /// collapses to 0.
 #[inline]
-fn reflect_index(i: usize, n: usize) -> usize {
+pub(crate) fn reflect_index(i: usize, n: usize) -> usize {
     if n <= 1 {
         return 0;
     }
@@ -502,6 +676,12 @@ fn compute_frame_ssimulacra2_impl<T, U>(
 where
     LinearRgb: TryFrom<T> + TryFrom<U>,
 {
+    // `LinearRgb`-only API — there is no encoded form for the official
+    // pipeline's captured-LUT semantics; the official entry point is
+    // `compute_ssimulacra2` (which reaches `to_encoded_srgb` inputs).
+    if config.fidelity == Fidelity::MatchOfficial {
+        return Err(Ssimulacra2Error::UnsupportedFidelity);
+    }
     let Ok(img1) = LinearRgb::try_from(source) else {
         return Err(Ssimulacra2Error::LinearRgbConversionFailed);
     };

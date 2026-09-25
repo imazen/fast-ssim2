@@ -9,7 +9,7 @@
 //! C++ reference binary: libjxl/build/tools/ssimulacra2
 //! Captured: 2026-01-04
 
-use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2, compute_ssimulacra2_with_config};
+use fast_ssim2::{Fidelity, Ssimulacra2Config, compute_ssimulacra2, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::Rgb;
@@ -58,11 +58,24 @@ fn test_data_path() -> PathBuf {
 
 fn load_image(filename: &str) -> Rgb {
     let path = test_data_path().join(filename);
-    let img = ImageReader::open(&path)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {}", path.display(), e))
-        .decode()
-        .unwrap_or_else(|e| panic!("Failed to decode {}: {}", path.display(), e))
-        .to_rgb8();
+    let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+        // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
+        // libjpeg-turbo — matches the C++ reference binary's decode,
+        // unlike image-rs's own IDCT (±1-3 levels at high quality).
+        let data = std::fs::read(&path).expect("read jpeg");
+        let r = zenjpeg::decoder::Decoder::new()
+            .output_format(zenjpeg::decoder::PixelFormat::Rgb)
+            .decode(&data, enough::Unstoppable)
+            .expect("zenjpeg decode");
+        let px = r.pixels_u8().unwrap();
+        image::RgbImage::from_raw(r.width(), r.height(), px.to_vec()).unwrap()
+    } else {
+        ImageReader::open(&path)
+            .unwrap_or_else(|e| panic!("Failed to open {}: {}", path.display(), e))
+            .decode()
+            .unwrap_or_else(|e| panic!("Failed to decode {}: {}", path.display(), e))
+            .to_rgb8()
+    };
 
     let (width, height) = img.dimensions();
     let data: Vec<[f32; 3]> = img
@@ -90,8 +103,12 @@ fn load_image(filename: &str) -> Rgb {
 fn test_jpeg_quality_vs_cpp_reference() {
     let source = load_image("source.png");
 
-    // Maximum allowed deviation from C++ reference
-    const MAX_ERROR: f64 = 0.15;
+    // Maximum allowed deviation from C++ reference. Decode is
+    // pixel-exact (zenjpeg/Libjpeg) and u8-quantized f32 inputs snap to
+    // the captured linearization LUT — the pipeline is expected
+    // bit-exact modulo the f32→U8 rounding inside `Rgb::to_encoded_srgb`
+    // data handling, so the tolerance is effectively zero.
+    const MAX_ERROR: f64 = 1e-8;
 
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
@@ -153,8 +170,8 @@ fn test_jpeg_quality_with_configs() {
 
     // Test all configurations produce similar results
     let configs = [
-        ("scalar", Ssimulacra2Config::scalar()),
-        ("simd", Ssimulacra2Config::simd()),
+        ("scalar", Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise)),
+        ("simd", Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise)),
     ];
 
     for (name, config) in configs {

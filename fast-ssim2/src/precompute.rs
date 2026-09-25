@@ -146,20 +146,40 @@ struct ScaleData {
 /// allowing you to quickly compare multiple distorted images against the same
 /// reference without recomputing the reference-side data each time.
 ///
-/// For simulated annealing or other optimization where you compare many variations
-/// against the same source, this provides approximately 2x speedup.
+/// At the default [`Fidelity::MatchOfficial`], `compare` skips the
+/// reference-side pipeline (≈36% of instructions measured on a 512²
+/// workload via iai-callgrind; `new` pays for itself from the second
+/// compare). At [`Fidelity::Precise`] ([`Self::new_precise`]) the saving
+/// is closer to ~2× because the precise ref-side share is larger.
+///
+/// For simulated annealing or other optimization where you compare many
+/// variations against the same source this amortizes the expensive half
+/// of the metric.
+/// The precise-path precompute state (per-scale `{img1, mu1, sigma1}`).
 #[derive(Clone, Debug)]
-pub struct Ssimulacra2Reference {
+struct PreciseReferenceData {
     scales: Vec<ScaleData>,
-    /// Dimensions of the source image as supplied by the caller
-    /// (before any sub-8px reflect-padding).
-    original_width: usize,
-    original_height: usize,
     /// Working dimensions after sub-8px reflect-padding — equal to the
     /// original dimensions whenever the source is at least 8x8. The
-    /// per-scale planes are sized from these.
+    /// per-scale planes are sized from these. (The caller-supplied
+    /// dimensions live on the outer `Ssimulacra2Reference`.)
     padded_width: usize,
     padded_height: usize,
+}
+
+#[derive(Clone, Debug)]
+enum RefInner {
+    Precise(PreciseReferenceData),
+    Official(crate::official::precompute::OfficialReference),
+}
+
+#[derive(Clone, Debug)]
+pub struct Ssimulacra2Reference {
+    kind: RefInner,
+    /// Un-padded source dimensions — what callers must supply on
+    /// `compare*` (padding is applied internally, matching `new`).
+    original_width: usize,
+    original_height: usize,
 }
 
 /// Read-only view of a single scale of the precomputed reference.
@@ -192,14 +212,20 @@ impl Ssimulacra2Reference {
     #[doc(hidden)]
     #[must_use]
     pub fn scale_planes(&self, scale: usize) -> Option<ScalePlanesView<'_>> {
-        let data = self.scales.get(scale)?;
+        let RefInner::Precise(data_p) = &self.kind else {
+            // MatchOfficial references store a different per-scale
+            // representation (`official::precompute::RefScale`) — the
+            // doc-hidden view is a precise-path concept.
+            return None;
+        };
+        let data = data_p.scales.get(scale)?;
         // Scale-s dimensions follow the same `div_ceil(2)` rule as
         // `downscale_by_2`. We recompute them here rather than store
         // per-scale so this view stays zero-cost when not used. The walk
         // starts from the padded dimensions — that is what the per-scale
         // planes are sized from (== original dims for sources >= 8x8).
-        let mut w = self.padded_width;
-        let mut h = self.padded_height;
+        let mut w = data_p.padded_width;
+        let mut h = data_p.padded_height;
         for _ in 0..scale {
             w = w.div_ceil(2);
             h = h.div_ceil(2);
@@ -227,7 +253,30 @@ impl Ssimulacra2Reference {
     ///
     /// # Errors
     /// - If the image (after padding) exceeds [`crate::MAX_IMAGE_PIXELS`] pixels
+    /// Precompute reference data for the given source image at the
+    /// default fidelity — [`Fidelity::MatchOfficial`]. For the precise
+    /// (numerically stable) prepared path, use [`Self::new_precise`];
+    /// to select explicitly, [`Self::new_with_config`].
     pub fn new<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
+        Self::new_with_config(source, crate::Ssimulacra2Config::default())
+    }
+
+    /// Precompute at an explicit [`Ssimulacra2Config`] — `fidelity` selects
+    /// the official ([`crate::official::precompute::OfficialReference`])
+    /// or precise (per-scale `{img1, mu1, sigma1}`) cache.
+    pub fn new_with_config<T: ToLinearRgb>(
+        source: T,
+        config: crate::Ssimulacra2Config,
+    ) -> Result<Self, Ssimulacra2Error> {
+        if config.fidelity == crate::Fidelity::MatchOfficial {
+            return Self::new_official(source);
+        }
+        Self::new_precise(source)
+    }
+
+    /// Precompute under [`Fidelity::Precise`] — the historical
+    /// [`Self::new`] behavior.
+    pub fn new_precise<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
         let source_img = source.into_linear_rgb();
         let original_width = source_img.width();
         let original_height = source_img.height();
@@ -297,11 +346,62 @@ impl Ssimulacra2Reference {
         }
 
         Ok(Self {
-            scales,
+            kind: RefInner::Precise(PreciseReferenceData {
+                scales,
+                padded_width,
+                padded_height,
+            }),
             original_width,
             original_height,
-            padded_width,
-            padded_height,
+        })
+    }
+
+    /// Build the reference at [`Fidelity::MatchOfficial`] — the
+    /// prepared-reference path for `Ssimulacra2Config::official()`.
+    /// Encoded inputs (u8/u16, incl. RGBA alpha semantics) run through
+    /// [`crate::official::precompute::OfficialReference`]; compare-side
+    /// work is bit-identical to `compute_ssimulacra2` at MatchOfficial
+    /// with the reference-side pipeline paid once here.
+    pub fn new_official<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
+        let encoded = source.to_encoded_srgb();
+        if let Some(enc) = &encoded {
+            if enc.width == 0 || enc.height == 0 {
+                return Err(Ssimulacra2Error::InvalidImageSize);
+            }
+            let padded = enc.reflect_padded(8);
+            let (ow, oh) = (enc.width, enc.height);
+            return Ok(Self {
+                kind: RefInner::Official(
+                    crate::official::precompute::OfficialReference::new(&padded)?,
+                ),
+                original_width: ow,
+                original_height: oh,
+            });
+        }
+        // Linear-input fallback — same as `compute_match_official`'s.
+        let img = source.into_linear_rgb();
+        let (w, h) = (img.width(), img.height());
+        let padded = crate::reflect_pad_linear(img, 8);
+        let (pw, ph) = (padded.width(), padded.height());
+        if pw < 8 || ph < 8 {
+            return Err(Ssimulacra2Error::InvalidImageSize);
+        }
+        let mut planes = [
+            Vec::with_capacity(pw * ph),
+            Vec::with_capacity(pw * ph),
+            Vec::with_capacity(pw * ph),
+        ];
+        for px in padded.data() {
+            planes[0].push(px[0]);
+            planes[1].push(px[1]);
+            planes[2].push(px[2]);
+        }
+        Ok(Self {
+            kind: RefInner::Official(
+                crate::official::precompute::OfficialReference::new_linear(planes, pw, ph)?,
+            ),
+            original_width: w,
+            original_height: h,
         })
     }
 
@@ -311,7 +411,14 @@ impl Ssimulacra2Reference {
     /// without allocating fresh working buffers on each call.
     #[must_use]
     pub fn compare_context(&self) -> CompareContext {
-        CompareContext::new(self.padded_width, self.padded_height)
+        let (w, h) = match &self.kind {
+            RefInner::Precise(d) => (d.padded_width, d.padded_height),
+            // MatchOfficial: `compare_with*` runs the official dist-side
+            // pipeline which owns its own scratch — the context exists
+            // for API parity only; sizing it is harmless.
+            RefInner::Official(r) => (r.width(), r.height()),
+        };
+        CompareContext::new(w, h)
     }
 
     /// Compare a distorted image against the precomputed reference.
@@ -377,6 +484,39 @@ impl Ssimulacra2Reference {
         distorted: T,
         stop: &dyn enough::Stop,
     ) -> Result<f64, Ssimulacra2Error> {
+        if let RefInner::Official(oref) = &self.kind {
+            stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+            let _ = ctx;
+            if let Some(enc) = distorted.to_encoded_srgb() {
+                if enc.width != self.original_width || enc.height != self.original_height {
+                    return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+                }
+                return oref.compare_stop(&enc.reflect_padded(8), stop);
+            }
+            let distorted_img = distorted.into_linear_rgb();
+            // Dimension contract is on caller-supplied dims, before
+            // padding — a 4x4 distorted vs a 5x5 reference must reject
+            // even though both pad to 8x8.
+            if distorted_img.width() != self.original_width
+                || distorted_img.height() != self.original_height
+            {
+                return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+            }
+            let padded = crate::reflect_pad_linear(distorted_img, 8);
+            let (pw, ph) = (padded.width(), padded.height());
+            let mut planes = [
+                Vec::with_capacity(pw * ph),
+                Vec::with_capacity(pw * ph),
+                Vec::with_capacity(pw * ph),
+            ];
+            for px in padded.data() {
+                planes[0].push(px[0]);
+                planes[1].push(px[1]);
+                planes[2].push(px[2]);
+            }
+            return oref.compare_linear(planes, pw, ph);
+        }
+
         let distorted_img = distorted.into_linear_rgb();
         // Dimensions must match the *original* (pre-padding) reference
         // dimensions; sub-8px distorted images are then reflect-padded
@@ -386,8 +526,12 @@ impl Ssimulacra2Reference {
         {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
+
+        let RefInner::Precise(pdata) = &self.kind else {
+            unreachable!()
+        };
         let mut img2: LinearRgb = crate::reflect_pad_linear(distorted_img, 8).into();
-        if ctx.width != self.padded_width || ctx.height != self.padded_height {
+        if ctx.width != pdata.padded_width || ctx.height != pdata.padded_height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
 
@@ -402,10 +546,10 @@ impl Ssimulacra2Reference {
 
         // Use the actual number of cached reference scales — the skip-map
         // must agree with what `score()`'s linear WEIGHT walk will index.
-        let scales_n = self.scales.len();
+        let scales_n = pdata.scales.len();
         let mut msssim = Msssim::default();
 
-        for (scale_idx, scale_data) in self.scales.iter().enumerate() {
+        for (scale_idx, scale_data) in pdata.scales.iter().enumerate() {
             // Cooperative cancellation: per-scale outer boundary (never
             // per-pixel). `Unstoppable` short-circuits to a no-op.
             stop.check().map_err(Ssimulacra2Error::Cancelled)?;
@@ -483,6 +627,22 @@ impl Ssimulacra2Reference {
         Ok(msssim.score())
     }
 
+    /// The official-fidelity reference, when built via
+    /// [`Self::new_official`]; `None` for the default precise stack.
+    pub(crate) fn official_ref(&self) -> Option<&crate::official::precompute::OfficialReference> {
+        match &self.kind {
+            RefInner::Official(r) => Some(r),
+            RefInner::Precise(_) => None,
+        }
+    }
+
+    /// `true` when this reference was built for
+    /// [`Fidelity::MatchOfficial`] ([`Self::new_official`]).
+    #[must_use]
+    pub fn is_official(&self) -> bool {
+        matches!(self.kind, RefInner::Official(_))
+    }
+
     /// Get the width of the original reference image, as supplied by the
     /// caller (before any sub-8px reflect-padding).
     #[must_use]
@@ -500,7 +660,10 @@ impl Ssimulacra2Reference {
     /// Get the number of scales that were precomputed.
     #[must_use]
     pub fn num_scales(&self) -> usize {
-        self.scales.len()
+        match &self.kind {
+            RefInner::Precise(d) => d.scales.len(),
+            RefInner::Official(r) => r.num_scales(),
+        }
     }
 }
 
