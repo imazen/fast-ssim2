@@ -19,4 +19,3 @@ api-doc-check:
 test:
     cargo test --all-targets
     cargo test --doc
-    cargo test -p fast-ssim2 --features hdr-pu

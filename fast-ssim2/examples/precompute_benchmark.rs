@@ -1,10 +1,8 @@
-//! Benchmark comparing Ssim2Reference precomputation vs full computation.
+//! Benchmark: Ssimulacra2Reference (cached ref) vs one-shot compute.
 //!
-//! Run with: cargo run --release --example precompute_benchmark
+//! Run with: cargo run --release --features imgref --example precompute_benchmark
 
-#![allow(deprecated)]
-
-use fast_ssim2::{Ssimulacra2Reference, compute_frame_ssimulacra2};
+use fast_ssim2::{Ssimulacra2Reference, compute_ssimulacra2};
 use std::time::Instant;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
@@ -14,13 +12,12 @@ fn main() {
 
     println!("SSIMULACRA2 Precompute Benchmark\n");
     println!(
-        "{:>12} {:>6} {:>14} {:>14} {:>14} {:>10} {:>10}",
-        "Size", "Iters", "Full", "compare", "compare_with", "vs_full", "vs_compare"
+        "{:>12} {:>6} {:>14} {:>14} {:>10}",
+        "Size", "Iters", "One-shot", "Cached-compare", "Speedup"
     );
-    println!("{:-<92}", "");
+    println!("{:-<64}", "");
 
     for (width, height) in sizes {
-        // Create reference and distorted test images
         let reference_data: Vec<[f32; 3]> = (0..width * height)
             .map(|i| {
                 let x = (i % width) as f32 / width as f32;
@@ -28,99 +25,50 @@ fn main() {
                 [x, y, 0.5]
             })
             .collect();
-
         let distorted_data: Vec<[f32; 3]> = reference_data
             .iter()
-            .map(|&[r, g, b]| [r * 0.9, g * 0.95, b * 1.05])
+            .map(|&[r, g, b]| [(r * 1.05).min(1.0), g, b])
             .collect();
 
-        // Benchmark full computation (both source and distorted processed each time)
+        let nz_width = std::num::NonZeroUsize::new(width).unwrap();
+        let nz_height = std::num::NonZeroUsize::new(height).unwrap();
+        let mk = |d: &Vec<[f32; 3]>| {
+            Rgb::new(
+                d.clone(),
+                nz_width,
+                nz_height,
+                TransferCharacteristic::SRGB,
+                ColorPrimaries::BT709,
+            )
+            .unwrap()
+        };
+
+        // One-shot
         let start = Instant::now();
         for _ in 0..iterations {
-            let nz_width = std::num::NonZeroUsize::new(width).unwrap();
-            let nz_height = std::num::NonZeroUsize::new(height).unwrap();
-            let source = Rgb::new(
-                reference_data.clone(),
-                nz_width,
-                nz_height,
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap();
-            let distorted = Rgb::new(
-                distorted_data.clone(),
-                nz_width,
-                nz_height,
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap();
-            let _ = compute_frame_ssimulacra2(source, distorted).unwrap();
+            let _ = compute_ssimulacra2(mk(&reference_data), mk(&distorted_data)).unwrap();
         }
         let full_time = start.elapsed() / iterations as u32;
 
-        // Benchmark precomputed (source processed once, distorted many times)
-        let nz_width = std::num::NonZeroUsize::new(width).unwrap();
-        let nz_height = std::num::NonZeroUsize::new(height).unwrap();
-        let reference = Rgb::new(
-            reference_data.clone(),
-            nz_width,
-            nz_height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
-
-        // Precompute reference once (not counted in benchmark)
+        let reference = mk(&reference_data);
         let precomputed = Ssimulacra2Reference::new(reference).unwrap();
 
-        // Benchmark compare() — allocates working buffers per call
         let start = Instant::now();
         for _ in 0..iterations {
-            let distorted = Rgb::new(
-                distorted_data.clone(),
-                nz_width,
-                nz_height,
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap();
-            let _ = precomputed.compare(distorted).unwrap();
+            let _ = precomputed.compare(mk(&distorted_data)).unwrap();
         }
-        let precompute_time = start.elapsed() / iterations as u32;
-
-        // Benchmark compare_with() — zero-alloc after first call
-        let mut ctx = precomputed.compare_context();
-        let start = Instant::now();
-        for _ in 0..iterations {
-            let distorted = Rgb::new(
-                distorted_data.clone(),
-                nz_width,
-                nz_height,
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap();
-            let _ = precomputed.compare_with(&mut ctx, distorted).unwrap();
-        }
-        let compare_with_time = start.elapsed() / iterations as u32;
-
-        let speedup_full = full_time.as_secs_f64() / compare_with_time.as_secs_f64();
-        let speedup_compare = precompute_time.as_secs_f64() / compare_with_time.as_secs_f64();
+        let compare_time = start.elapsed() / iterations as u32;
 
         println!(
-            "{:>5}x{:<5} {:>6} {:>11.2?} {:>11.2?} {:>11.2?} {:>9.2}x {:>9.2}x",
+            "{:>5}x{:<5} {:>6} {:>11.2?} {:>11.2?} {:>9.2}x",
             width,
             height,
             iterations,
             full_time,
-            precompute_time,
-            compare_with_time,
-            speedup_full,
-            speedup_compare
+            compare_time,
+            full_time.as_secs_f64() / compare_time.as_secs_f64(),
         );
     }
 
-    println!("\nNote: Precomputed benchmark excludes one-time reference preprocessing.");
-    println!("For simulated annealing with 1000+ iterations, speedup approaches 2x.");
+    println!("\n`compare` skips the reference-side pipeline (~36% of one-shot work).");
 }

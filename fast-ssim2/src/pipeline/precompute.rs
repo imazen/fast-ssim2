@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
 //! Precomputed reference for `MatchOfficial` — the official-semantics
 //! analogue of [`crate::Ssimulacra2Reference`].
 //!
@@ -10,7 +11,7 @@
 //! call.
 //!
 //! ```ignore
-//! let r = OfficialReference::new(&source)?;
+//! let r = ReferenceCache::new(&source)?;
 //! let score = r.compare(&distorted)?; // == compute_ssimulacra2 MatchOfficial
 //! ```
 //!
@@ -20,7 +21,7 @@
 use super::gauss::create_recursive_gaussian;
 use super::simd;
 use super::{
-    downsample_planes, final_score, official_linearize, EncodedSrgb, ScaleAggregates,
+    downsample_planes, final_score, linearize, EncodedSrgb, ScaleAggregates,
 };
 use crate::Ssimulacra2Error;
 #[cfg(feature = "rayon")]
@@ -49,7 +50,7 @@ pub(crate) struct RefScale {
 /// per batch loop). `Sync` — one reference can be shared across worker
 /// threads as long as each has its own distorted-side scratch.
 #[derive(Clone, Debug)]
-pub struct OfficialReference {
+pub struct ReferenceCache {
     /// Per-scale stacks — one for opaque inputs, two (`bg = 0.1`, `0.9`)
     /// when the source has alpha.
     stacks: Vec<Vec<RefScale>>,
@@ -135,7 +136,7 @@ fn ref_scales(mut lin1: [Vec<f32>; 3], mut w: usize, mut h: usize) -> Vec<RefSca
     out
 }
 
-impl OfficialReference {
+impl ReferenceCache {
     /// Precompute the official reference pipeline for `source`.
     ///
     /// # Errors
@@ -147,11 +148,11 @@ impl OfficialReference {
         }
         let stacks = if source.alpha.is_some() {
             vec![
-                ref_scales(official_linearize(source, 0.1), w, h),
-                ref_scales(official_linearize(source, 0.9), w, h),
+                ref_scales(linearize(source, 0.1), w, h),
+                ref_scales(linearize(source, 0.9), w, h),
             ]
         } else {
-            vec![ref_scales(official_linearize(source, 0.5), w, h)]
+            vec![ref_scales(linearize(source, 0.5), w, h)]
         };
         Ok(Self {
             stacks,
@@ -162,7 +163,7 @@ impl OfficialReference {
     }
 
     /// Build from already-linear RGB planes (non-encoded inputs — e.g.
-    /// `LinearRgb`, f32 arrays): skips `official_linearize`, opaque only
+    /// `LinearRgb`, f32 arrays): skips `linearize`, opaque only
     /// (alpha is an `EncodedSrgb` concept).
     ///
     /// # Errors
@@ -181,12 +182,15 @@ impl OfficialReference {
 
     /// [`Self::compare`] against already-linear planes — same
     /// distorted-side pipeline, no linearization step.
-    pub(crate) fn compare_linear(&self, lin2: [Vec<f32>; 3], w: usize, h: usize) -> Result<f64, Ssimulacra2Error> {
+    /// [`Self::compare_linear`] with cooperative cancellation — `stop` is
+    /// checked once per scale.
+    pub(crate) fn compare_linear_stop(&self, lin2: [Vec<f32>; 3], w: usize, h: usize, stop: &dyn enough::Stop) -> Result<f64, Ssimulacra2Error> {
         if w != self.width || h != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let rg = create_recursive_gaussian(1.5);
-        let scales = dist_scales(&rg, &self.stacks[0], lin2, w, h);
+        let scales = dist_scales(&rg, &self.stacks[0], lin2, w, h, stop)?;
         Ok(final_score(&scales))
     }
 
@@ -241,11 +245,11 @@ impl OfficialReference {
                 } else {
                     0.5
                 };
-                let lin2 = official_linearize(distorted, bg);
-                let scales = dist_scales(&rg, refstack, lin2, self.width, self.height);
-                final_score(&scales)
+                let lin2 = linearize(distorted, bg);
+                let scales = dist_scales(&rg, refstack, lin2, self.width, self.height, stop);
+                Ok(final_score(&scales?))
             })
-            .collect();
+            .collect::<Result<Vec<f64>, Ssimulacra2Error>>()?;
         Ok(scores.into_iter().fold(f64::INFINITY, f64::min))
     }
 }
@@ -258,9 +262,11 @@ fn dist_scales(
     mut lin2: [Vec<f32>; 3],
     mut w: usize,
     mut h: usize,
-) -> Vec<ScaleAggregates> {
+    stop: &dyn enough::Stop,
+) -> Result<Vec<ScaleAggregates>, Ssimulacra2Error> {
     let mut scales = Vec::with_capacity(refstack.len());
     for rs in refstack {
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let (lin2_next, _nw, _nh) = downsample_planes(&lin2, w, h);
         let npix = w * h;
         let mut xyb2 = lin2;
@@ -369,15 +375,15 @@ fn dist_scales(
         w = rs.width.div_ceil(2);
         h = rs.height.div_ceil(2);
     }
-    scales
+    Ok(scales)
 }
 
 
-impl OfficialReference {
+impl ReferenceCache {
     /// Bounded-memory `compare`: the distorted side is processed
     /// strip-by-strip against the cached reference planes (which are
     /// sliced per strip and re-blurred with the strip's IIR handling —
-    /// same boundary semantics as [`crate::official::strip::compute_encoded_strip`]).
+    /// same boundary semantics as [`crate::pipeline::strip::compute_encoded_strip`]).
     ///
     /// `strip_height`/`halo` follow the strip walker's semantics
     /// (32-aligned interior, halo covering the Gaussian tail). When
@@ -410,9 +416,8 @@ impl OfficialReference {
         if distorted.width != self.width || distorted.height != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
-        let opts = super::PermuteOpts {
-            blur: super::BlurSel::OfficialSimd,
-            ..super::PermuteOpts::OFFICIAL
+        let opts = super::Opts {
+            kernel: super::Kernel::Simd,
         };
         let mut accs = Vec::with_capacity(self.num_stacks());
         for stack in 0..self.num_stacks() {
@@ -423,17 +428,16 @@ impl OfficialReference {
                 0.5
             };
             let refstack = &self.stacks[stack];
-            super::strip::accumulate_strips_official_cached(
+            super::strip::accumulate_strips_cached(
                 self.width,
                 self.height,
                 strip_height,
                 halo,
                 refstack,
                 |y0, y1| {
-                    super::official_linearize_opts(
+                    super::linearize(
                         &distorted.strip_rows(y0, y1),
                         bg,
-                        opts.lin_poly,
                     )
                 },
                 opts,
@@ -461,12 +465,12 @@ impl OfficialReference {
         if lin2[0].len() != w * h {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
-        let opts = super::PermuteOpts {
-            blur: super::BlurSel::OfficialSimd,
-            ..super::PermuteOpts::OFFICIAL
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        let opts = super::Opts {
+            kernel: super::Kernel::Simd,
         };
         let mut acc = super::strip::StripAcc::new(w, h);
-        super::strip::accumulate_strips_official_cached(
+        super::strip::accumulate_strips_cached(
             w,
             h,
             strip_height,

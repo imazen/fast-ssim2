@@ -1,9 +1,9 @@
-//! Strip-bounded `match-official` pipeline.
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+//! Strip-bounded pipeline.
 //!
-//! Mirrors [`crate::strip`]'s walker — 32-aligned strip boundaries, 96-row
-//! halo, interior-only accumulation, per-scale bound halving — but runs
-//! the official-semantics kernels inside each strip and feeds the
-//! official [`score::final_score`] aggregation.
+//! The walker: 32-aligned strip boundaries, 96-row halo, interior-only
+//! accumulation, per-scale bound halving — feeding `score::score`
+//! aggregation.
 //!
 //! Fidelity note: strip processing is inherently approximate vs the
 //! full-image reference — the IIR blur warmup at strip edges differs
@@ -17,7 +17,7 @@ use super::precompute;
 use super::score::{score as final_score, ScaleAggregates};
 use super::simd;
 use super::{
-    planes_to_positive_xyb_opts, BlurSel, CbrtMode, EncodedSrgb, PermuteOpts,
+    planes_to_positive_xyb, EncodedSrgb, Kernel, Opts,
 };
 use crate::Ssimulacra2Error;
 
@@ -59,8 +59,7 @@ impl StripAcc {
         Self { per_scale, target_pixels }
     }
 
-    pub(crate) fn finalise(self, opts: PermuteOpts) -> f64 {
-        let _ = opts;
+    pub(crate) fn finalise(self, _opts: Opts) -> f64 {
         let mut scales = Vec::with_capacity(self.per_scale.len());
         for (scale, s) in self.per_scale.iter().enumerate() {
             if !s.initialised {
@@ -147,35 +146,23 @@ fn ssim_sums_ch(
     s11: &[f32],
     s22: &[f32],
     s12: &[f32],
-    sigma_f64: bool,
 ) -> (f64, f64) {
     let (mut sum0, mut sum1) = (0.0f64, 0.0f64);
     for y in ys..ye {
         let row = y * w;
         for x in 0..w {
             let i = row + x;
-            let d = if sigma_f64 {
-                let m1 = mu1[i] as f64;
-                let m2 = mu2[i] as f64;
-                let num_m = 1.0f64 - (m1 - m2) * (m1 - m2);
-                let num_s = 2.0f64 * (s12[i] as f64 - m1 * m2) + K_C2 as f64;
-                let denom_s = (s11[i] as f64 - m1 * m1)
-                    + (s22[i] as f64 - m2 * m2)
-                    + K_C2 as f64;
-                (1.0f64 - num_m * num_s / denom_s).max(0.0)
-            } else {
-                let m1 = mu1[i];
-                let m2 = mu2[i];
-                let mu11 = m1 * m1;
-                let mu22 = m2 * m2;
-                let mu12 = m1 * m2;
-                let dm = m1 - m2;
-                let num_m = (-dm).mul_add(dm, 1.0f32);
-                let num_s = 2.0f32 * (s12[i] - mu12) + K_C2;
-                let denom_s = (s11[i] - mu11) + (s22[i] - mu22) + K_C2;
-                let q = num_m * num_s / denom_s;
-                (1.0f64 - q as f64).max(0.0)
-            };
+            let m1 = mu1[i];
+            let m2 = mu2[i];
+            let mu11 = m1 * m1;
+            let mu22 = m2 * m2;
+            let mu12 = m1 * m2;
+            let dm = m1 - m2;
+            let num_m = (-dm).mul_add(dm, 1.0f32);
+            let num_s = 2.0f32 * (s12[i] - mu12) + K_C2;
+            let denom_s = (s11[i] - mu11) + (s22[i] - mu22) + K_C2;
+            let q = num_m * num_s / denom_s;
+            let d = (1.0f64 - q as f64).max(0.0);
             sum0 += d;
             sum1 += tothe4th(d);
         }
@@ -220,7 +207,7 @@ fn edge_sums_ch(
 #[allow(clippy::too_many_arguments)]
 fn blur_ch(
     rg: &RecursiveGaussian,
-    opts: PermuteOpts,
+    opts: Opts,
     w: usize,
     h: usize,
     npix: usize,
@@ -232,8 +219,8 @@ fn blur_ch(
 ) {
     dst.clear();
     dst.resize(npix, 0.0);
-    match opts.blur {
-        BlurSel::Official => {
+    match opts.kernel {
+        Kernel::Scalar => {
             // Scalar path mirrors the reference literally: materialize
             // the product plane (or the input itself) then blur it.
             let src: &[f32] = match b {
@@ -255,21 +242,8 @@ fn blur_ch(
                 &mut |row, x, v| dst[row * w + x] = v,
             );
         }
-        BlurSel::OfficialSimd => {
+        Kernel::Simd => {
             simd::fast_gaussian_simd(rg, p, b, w, h, dst, btmp);
-        }
-        _ => {
-            let impl_type = match opts.blur {
-                BlurSel::PreciseScalar => crate::SimdImpl::Scalar,
-                _ => crate::SimdImpl::Simd,
-            };
-            let pv: Vec<f32> = match b {
-                Some(bb) => p.iter().zip(bb).map(|(x, y)| x * y).collect(),
-                None => p.to_vec(),
-            };
-            let p3: [Vec<f32>; 3] = [pv, vec![], vec![]];
-            let r = crate::blur::Blur::with_simd_impl(w, h, impl_type).blur(&p3);
-            *dst = r[0].clone();
         }
     }
 }
@@ -285,7 +259,7 @@ fn process_strip(
     interior_start: usize,
     interior_end: usize,
     scales_hint: usize,
-    opts: PermuteOpts,
+    opts: Opts,
     scratch: &mut Scratch,
 ) -> Vec<ScaleSums> {
     let rg = create_recursive_gaussian(1.5);
@@ -314,12 +288,15 @@ fn process_strip(
         let npix = w * h;
         let mut xyb1 = lin1;
         let mut xyb2 = lin2;
-        if opts.blur == BlurSel::OfficialSimd && opts.cbrt == CbrtMode::Official {
-            simd::planes_to_positive_xyb_simd(&mut xyb1);
-            simd::planes_to_positive_xyb_simd(&mut xyb2);
-        } else {
-            super::planes_to_positive_xyb_opts(&mut xyb1, npix, opts.cbrt);
-            super::planes_to_positive_xyb_opts(&mut xyb2, npix, opts.cbrt);
+        match opts.kernel {
+            Kernel::Simd => {
+                simd::planes_to_positive_xyb_simd(&mut xyb1);
+                simd::planes_to_positive_xyb_simd(&mut xyb2);
+            }
+            Kernel::Scalar => {
+                planes_to_positive_xyb(&mut xyb1, npix);
+                planes_to_positive_xyb(&mut xyb2, npix);
+            }
         }
 
         // Per-channel blur into single-channel scratch planes — each
@@ -345,8 +322,8 @@ fn process_strip(
                 blur_ch(&rg, opts, w, h, npix, &xyb1[c], None, &mut sc.mul[c], &mut sc.mu1, &mut sc.btmp);
                 blur_ch(&rg, opts, w, h, npix, &xyb2[c], None, &mut sc.mul[c], &mut sc.mu2, &mut sc.btmp);
 
-                let (sd, sd4) = ssim_sums_ch(is, ie, w, &sc.mu1, &sc.mu2, &sc.s1, &sc.s2, &sc.s12, opts.sigma_f64);
-                let es = edge_sums_ch(is, ie, w, &xyb1[c], &sc.mu1, &xyb2[c], &sc.mu2, opts.blur == BlurSel::OfficialSimd);
+                let (sd, sd4) = ssim_sums_ch(is, ie, w, &sc.mu1, &sc.mu2, &sc.s1, &sc.s2, &sc.s12);
+                let es = edge_sums_ch(is, ie, w, &xyb1[c], &sc.mu1, &xyb2[c], &sc.mu2, opts.kernel == Kernel::Simd);
                 s.ssim_sums[c * 2] += sd;
                 s.ssim_sums[c * 2 + 1] += sd4;
                 for k in 0..4 {
@@ -374,7 +351,7 @@ fn process_strip(
 /// on the strip so both sides share the strip's IIR boundary handling),
 /// the dist side walks its own lin→xyb→blur chain per strip.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn process_strip_official_cached(
+pub(crate) fn process_strip_cached(
     lin2: [Vec<f32>; 3],
     refstack: &[precompute::RefScale],
     strip_y0_in_ref: usize,
@@ -383,7 +360,7 @@ pub(crate) fn process_strip_official_cached(
     interior_start: usize,
     interior_end: usize,
     scales_hint: usize,
-    opts: PermuteOpts,
+    opts: Opts,
     scratch: &mut Scratch,
 ) -> Vec<ScaleSums> {
     let rg = create_recursive_gaussian(1.5);
@@ -404,10 +381,9 @@ pub(crate) fn process_strip_official_cached(
         let (_nw, _nh) = downsample_into(&lin2, w, h, &mut scratch.lin2_next);
         let npix = w * h;
         let mut xyb2 = lin2;
-        if opts.blur == BlurSel::OfficialSimd && opts.cbrt == CbrtMode::Official {
-            simd::planes_to_positive_xyb_simd(&mut xyb2);
-        } else {
-            planes_to_positive_xyb_opts(&mut xyb2, npix, opts.cbrt);
+        match opts.kernel {
+            Kernel::Simd => simd::planes_to_positive_xyb_simd(&mut xyb2),
+            Kernel::Scalar => planes_to_positive_xyb(&mut xyb2, npix),
         }
 
         let rs = match refstack.get(scale) {
@@ -436,8 +412,8 @@ pub(crate) fn process_strip_official_cached(
                 blur_ch(&rg, opts, w, h, npix, xyb1, None, &mut sc.mul[c], &mut sc.mu1, &mut sc.btmp);
                 blur_ch(&rg, opts, w, h, npix, &xyb2[c], None, &mut sc.mul[c], &mut sc.mu2, &mut sc.btmp);
 
-                let (sd, sd4) = ssim_sums_ch(is, ie, w, &sc.mu1, &sc.mu2, &sc.s1, &sc.s2, &sc.s12, opts.sigma_f64);
-                let es = edge_sums_ch(is, ie, w, xyb1, &sc.mu1, &xyb2[c], &sc.mu2, opts.blur == BlurSel::OfficialSimd);
+                let (sd, sd4) = ssim_sums_ch(is, ie, w, &sc.mu1, &sc.mu2, &sc.s1, &sc.s2, &sc.s12);
+                let es = edge_sums_ch(is, ie, w, xyb1, &sc.mu1, &xyb2[c], &sc.mu2, opts.kernel == Kernel::Simd);
                 s.ssim_sums[c * 2] += sd;
                 s.ssim_sums[c * 2 + 1] += sd4;
                 for k in 0..4 {
@@ -464,14 +440,14 @@ pub(crate) fn process_strip_official_cached(
 /// `refstack` is the stored per-scale reference stack; per-strip ref
 /// planes are sliced from it (re-blurred on the strip).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn accumulate_strips_official_cached(
+pub(crate) fn accumulate_strips_cached(
     w: usize,
     h: usize,
     strip_height: usize,
     halo: usize,
     refstack: &[precompute::RefScale],
     strip_lin: impl Fn(usize, usize) -> [Vec<f32>; 3] + Sync,
-    opts: PermuteOpts,
+    opts: Opts,
     #[allow(unused_variables)]
     parallel: bool,
     stop: &dyn enough::Stop,
@@ -496,7 +472,7 @@ pub(crate) fn accumulate_strips_official_cached(
                      &(int_s, int_e, sy0, sy1): &(usize, usize, usize, usize)| {
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let lin2 = strip_lin(sy0, sy1);
-        Ok(process_strip_official_cached(
+        Ok(process_strip_cached(
             lin2, refstack, sy0, w, sy1 - sy0, int_s - sy0, int_e - sy0,
             n_scales, opts, scratch,
         ))
@@ -555,7 +531,7 @@ fn accumulate_strips(
     strip_height: usize,
     halo: usize,
     strip_lin: impl Fn(usize, usize, usize) -> [Vec<f32>; 3] + Sync,
-    opts: PermuteOpts,
+    opts: Opts,
     #[allow(unused_variables)]
     parallel: bool,
     stop: &dyn enough::Stop,
@@ -644,18 +620,18 @@ fn accumulate_strips(
     Ok(())
 }
 
-/// Strip-bounded match-official evaluation on encoded inputs.
+/// Strip-bounded evaluation on encoded inputs.
 ///
-/// Same semantics as [`compute_encoded_opts`] — including the
+/// Same semantics as [`super::compute_encoded`] — including the
 /// dual-background alpha min — but peaks at O((strip + 2·halo)·width)
 /// working set. Scores approximate the full-image result to within the
-/// halo-tail tolerance (~1e-3 relative), exactly like `strip.rs`.
+/// halo-tail tolerance (~1e-3 relative).
 pub fn compute_encoded_strip(
     enc1: &EncodedSrgb,
     enc2: &EncodedSrgb,
     strip_height: usize,
     halo: usize,
-    opts: PermuteOpts,
+    opts: Opts,
     parallel: bool,
 ) -> Result<f64, Ssimulacra2Error> {
     compute_encoded_strip_stop(enc1, enc2, strip_height, halo, opts, parallel, &enough::Unstoppable)
@@ -669,7 +645,7 @@ pub fn compute_encoded_strip_stop(
     enc2: &EncodedSrgb,
     strip_height: usize,
     halo: usize,
-    opts: PermuteOpts,
+    opts: Opts,
     parallel: bool,
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {
@@ -686,12 +662,12 @@ pub fn compute_encoded_strip_stop(
         accumulate_strips(enc1.width, enc1.height, strip_height, halo,
             |i: usize, y0: usize, y1: usize| {
                 let e = if i == 0 { e1 } else { e2 };
-                super::official_linearize_opts(&e.strip_rows(y0, y1), 0.1, opts.lin_poly)
+                super::linearize(&e.strip_rows(y0, y1), 0.1)
             }, opts, parallel, stop, &mut acc_lo)?;
         accumulate_strips(enc1.width, enc1.height, strip_height, halo,
             |i: usize, y0: usize, y1: usize| {
                 let e = if i == 0 { e1 } else { e2 };
-                super::official_linearize_opts(&e.strip_rows(y0, y1), 0.9, opts.lin_poly)
+                super::linearize(&e.strip_rows(y0, y1), 0.9)
             }, opts, parallel, stop, &mut acc_hi)?;
         return Ok(acc_lo.finalise(opts).min(acc_hi.finalise(opts)));
     }
@@ -700,7 +676,7 @@ pub fn compute_encoded_strip_stop(
     accumulate_strips(enc1.width, enc1.height, strip_height, halo,
         |i: usize, y0: usize, y1: usize| {
             let e = if i == 0 { e1 } else { e2 };
-            super::official_linearize_opts(&e.strip_rows(y0, y1), 0.5, opts.lin_poly)
+            super::linearize(&e.strip_rows(y0, y1), 0.5)
         }, opts, parallel, stop, &mut acc)?;
     Ok(acc.finalise(opts))
 }
@@ -715,7 +691,7 @@ pub fn compute_linear_strip(
     height: usize,
     strip_height: usize,
     halo: usize,
-    opts: PermuteOpts,
+    opts: Opts,
     parallel: bool,
 ) -> Result<f64, Ssimulacra2Error> {
     compute_linear_strip_stop(p1, p2, width, height, strip_height, halo, opts, parallel, &enough::Unstoppable)
@@ -731,7 +707,7 @@ pub fn compute_linear_strip_stop(
     height: usize,
     strip_height: usize,
     halo: usize,
-    opts: PermuteOpts,
+    opts: Opts,
     parallel: bool,
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {

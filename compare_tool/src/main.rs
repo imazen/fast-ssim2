@@ -37,11 +37,11 @@ fn main() {
     // rust-av ssimulacra2 v0.5.1 (uses its own scalar code path)
     let rustav = ssimulacra2::compute_frame_ssimulacra2(src.clone(), dst.clone()).unwrap();
 
-    // fast-ssim2 default (SIMD)
-    let fast_simd = fast_ssim2::compute_frame_ssimulacra2(src.clone(), dst.clone()).unwrap();
+    // fast-ssim2 default (SIMD kernels)
+    let fast_simd = fast_ssim2::compute_ssimulacra2(src.clone(), dst.clone()).unwrap();
 
-    // fast-ssim2 scalar path
-    let fast_scalar = fast_ssim2::compute_frame_ssimulacra2_with_config(
+    // fast-ssim2 scalar-kernel path (bit-identical output)
+    let fast_scalar = fast_ssim2::compute_ssimulacra2_with_config(
         src,
         dst,
         fast_ssim2::Ssimulacra2Config::scalar(),

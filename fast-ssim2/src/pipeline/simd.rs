@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
 //! Lane-wise SIMD versions of the match-official kernels.
 //!
 //! Every kernel computes *exactly the same scalar operation sequence per
@@ -154,7 +155,7 @@ use super::xyb::{self, BIAS, M00, M01, M02, M10, M11, M12, M20, M21, M22, NEG_CB
 // ===========================================================================
 
 /// `CubeRootAndAdd` for 8 lanes — identical instruction sequence to the
-/// scalar [`xyb::cube_root_and_add`].
+/// scalar `xyb::cube_root_and_add`.
 #[macro_export]
 macro_rules! cube_root_and_add_x8 {
     ($token:expr, $x:expr, $add:expr) => {{
@@ -749,7 +750,7 @@ fn edge_diff_map_inner(
     }
 }
 
-/// `ssim_map` via lanes — returns the same [f64;6] aggregates.
+/// `ssim_map` via lanes — returns the same `[f64; 6]` aggregates.
 pub fn ssim_map_simd(
     m1: &[Vec<f32>; 3],
     m2: &[Vec<f32>; 3],
@@ -863,7 +864,7 @@ fn maps_fused_inner(
 }
 
 /// Fused `ssim_map` + `edge_diff_map`, SIMD ssim lanes + scalar edge
-/// per-pixel — returns ([f64;6], [f64;12]) bit-exact vs separate calls.
+/// per-pixel — returns (`[f64; 6]`, `[f64; 12]`) bit-exact vs separate calls.
 pub fn maps_fused_simd(
     m1: &[Vec<f32>; 3],
     m2: &[Vec<f32>; 3],
@@ -894,7 +895,7 @@ pub fn maps_fused_simd(
     (so, eo)
 }
 
-/// `edge_diff_map` via lanes — returns the same [f64;12] aggregates.
+/// `edge_diff_map` via lanes — returns the same `[f64; 12]` aggregates.
 pub fn edge_diff_map_simd(
     img1: &[Vec<f32>; 3],
     mu1: &[Vec<f32>; 3],

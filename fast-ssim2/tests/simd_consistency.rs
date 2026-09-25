@@ -7,9 +7,10 @@
 //! single-operation tests.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
-use fast_ssim2::{Fidelity, LinearRgbImage, Ssimulacra2Config, ToLinearRgb, compute_ssimulacra2_with_config};
+use fast_ssim2::{LinearRgbImage, Ssimulacra2Config, ToLinearRgb, compute_ssimulacra2_with_config};
 
 /// Generate a deterministic test image of varied linear RGB pixels.
 fn generate_test_image(width: usize, height: usize) -> LinearRgbImage {
@@ -52,7 +53,7 @@ fn ssimulacra2_all_tiers_within_tolerance() {
         let s = source.to_linear_rgb();
         let d = distorted.to_linear_rgb();
         let score =
-            compute_ssimulacra2_with_config(s, d, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise)).expect("score");
+            compute_ssimulacra2_with_config(s, d, Ssimulacra2Config::simd()).expect("score");
 
         if let Some(ref_score) = reference_score {
             let diff = (score - ref_score).abs();
@@ -76,12 +77,12 @@ fn ssimulacra2_roundtrip_stability() {
         let s1 = source.to_linear_rgb();
         let d1 = distorted.to_linear_rgb();
         let score1 =
-            compute_ssimulacra2_with_config(s1, d1, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise)).expect("score1");
+            compute_ssimulacra2_with_config(s1, d1, Ssimulacra2Config::simd()).expect("score1");
 
         let s2 = source.to_linear_rgb();
         let d2 = distorted.to_linear_rgb();
         let score2 =
-            compute_ssimulacra2_with_config(s2, d2, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise)).expect("score2");
+            compute_ssimulacra2_with_config(s2, d2, Ssimulacra2Config::simd()).expect("score2");
 
         assert_eq!(
             score1.to_bits(),

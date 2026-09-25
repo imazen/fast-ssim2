@@ -11,6 +11,7 @@
 //! fires on the very first iteration.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 use almost_enough::Stopper;
 use enough::{StopReason, Unstoppable};

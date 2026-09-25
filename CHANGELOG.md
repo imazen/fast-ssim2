@@ -2,14 +2,15 @@
 
 ## [Unreleased]
 
-### QUEUED BREAKING CHANGES
-<!-- Breaking changes that will ship together in the next minor (0.x) release.
-     Do NOT ship these piecemeal — batch them. -->
-- Remove `compute_frame_ssimulacra2` / `compute_frame_ssimulacra2_with_config` (deprecated since 0.8.0; migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` with `ToLinearRgb` inputs). No 0.8.x consumer in the zen workspace uses them — pending user sign-off.
-- `Ssimulacra2Error` is now `#[non_exhaustive]` and gains a `Cancelled(enough::StopReason)` variant (for the new cooperative-cancellation API). Downstream `match` arms need a wildcard `_ =>`. Batched into the same 0.9.0 break as the deprecation removal above.
+### BREAKING CHANGES (landed — batch into the next minor release)
+- **Single-engine pipeline.** `Fidelity`, `Ssimulacra2Config::fidelity` / `with_fidelity` / `official` / `precise`, `Ssimulacra2Error::UnsupportedFidelity`, `Ssimulacra2Reference::{new_precise, new_official}` and `compare_context` / `compare_with` / `compare_with_and_stop` / `CompareContext` / `ScalePlanesView` / `is_official` are removed. There is one engine — the bit-exact port of the reference — and `SimdImpl` now selects scalar-vs-SIMD *kernels* (bit-identical outputs). `compute_ssimulacra2` / `compute_ssimulacra2_strip` / `Ssimulacra2Reference::new` / `compare*` semantics unchanged; scores are reference-exact by default and ~7× fewer instructions than the removed precise engine.
+- `compute_frame_ssimulacra2` / `compute_frame_ssimulacra2_with_config` removed (deprecated since 0.8.0). Migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` — `yuvxyb::Yuv` inputs now work via the new `ToLinearRgb` impl (the `ssimulacra2_bin` video path uses it).
+- `hdr-pu` feature removed — `compute_ssimulacra2_pu_nits` and the PU21 path lived on the removed precise engine. The UPIQ-HDR experiment shipped validated in 0.8.2; resurface via `git`/revived port if needed.
+- `Ssimulacra2Error` is `#[non_exhaustive]` and gains `Cancelled(enough::StopReason)`. Downstream `match` arms need a wildcard `_ =>`.
 
 ### Added
-- Cooperative cancellation across every slow path: `compute_ssimulacra2_with_stop` / `compute_ssimulacra2_strip_with_stop` (one-shot), and on `Ssimulacra2Reference` the warm-reference batch paths `compare_with_stop` / `compare_with_and_stop` (zero-alloc, reuses a `CompareContext`) and the cached-ref strip paths `compare_strip_with_stop` / `compare_strip_with_config_and_stop`. All take a `&dyn enough::Stop` token and return `Err(Ssimulacra2Error::Cancelled)` if cancelled; the token is checked at the per-scale / per-strip outer-loop boundary — never per-pixel. The existing non-`_stop` methods delegate with `enough::Unstoppable` (unchanged behavior).
+- `ToLinearRgb` impl for `yuvxyb::Yuv<T>` — YUV inputs convert through `LinearRgb::try_from` (the same conversion the removed frame API used) and score through the standard encoded/linear pipeline.
+- Cooperative cancellation across every slow path: `compute_ssimulacra2_with_stop` / `compute_ssimulacra2_strip_with_stop` (one-shot), and on `Ssimulacra2Reference` the warm-reference paths `compare_with_stop` and the cached-ref strip paths `compare_strip_with_stop` / `compare_strip_with_config_and_stop`. All take a `&dyn enough::Stop` token and return `Err(Ssimulacra2Error::Cancelled)` if cancelled; the token is checked at the per-scale / per-strip outer-loop boundary — never per-pixel.
 
 ### Documentation
 - README: documented the cooperative-cancellation API (the `*_with_stop` variants were shipped but never appeared in the README — found via an insulated external-developer usability test), the flat-`Vec<u8>` → `ImgVec` on-ramp in the Quick Start, the `f64` score type, the no-`[u8; 4]`/alpha note, and the strip API signatures + strip-height semantics.

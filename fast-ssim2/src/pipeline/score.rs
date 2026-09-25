@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
 //! `Msssim::Score` — 108-weight walk and final nonlinear transform.
 //!
 //! The reference binary evaluates this in plain f64 mulsd/addsd (verified by
@@ -16,8 +17,8 @@ pub struct ScaleAggregates {
 ///
 /// The weight walk is channel-major: for each channel c ∈ {X, Y, B}, each
 /// scale, each norm n ∈ {L1, L4}, it consumes the interleaved triple
-/// {ssim[c][n], artifact[c][n], detail_lost[c][n]} — i.e. the WEIGHT table's
-/// `((c * NUM_SCALES + scale) * 2 + n) * 3 + m` layout.
+/// `{ssim[c][n], artifact[c][n], detail_lost[c][n]}` — i.e. the WEIGHT
+/// table's `((c * NUM_SCALES + scale) * 2 + n) * 3 + m` layout.
 pub fn score(scales: &[ScaleAggregates]) -> f64 {
     let mut ssim = 0.0f64;
     let mut i = 0usize;

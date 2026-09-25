@@ -1,3 +1,4 @@
+#![allow(clippy::chunks_exact_to_as_chunks)]
 //! JPEG quality reference tests with C++ ssimulacra2 verified scores.
 //!
 //! These tests use real JPEG-compressed images at various quality levels
@@ -9,7 +10,7 @@
 //! C++ reference binary: libjxl/build/tools/ssimulacra2
 //! Captured: 2026-01-04
 
-use fast_ssim2::{Fidelity, Ssimulacra2Config, compute_ssimulacra2, compute_ssimulacra2_with_config};
+use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::Rgb;
@@ -170,8 +171,8 @@ fn test_jpeg_quality_with_configs() {
 
     // Test all configurations produce similar results
     let configs = [
-        ("scalar", Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise)),
-        ("simd", Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise)),
+        ("scalar", Ssimulacra2Config::scalar()),
+        ("simd", Ssimulacra2Config::simd()),
     ];
 
     for (name, config) in configs {

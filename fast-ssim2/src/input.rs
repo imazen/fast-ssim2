@@ -134,12 +134,12 @@ pub trait ToLinearRgb {
     /// Encoded sRGB pixel data, if this input type carries quantized or
     /// encoded sRGB values (u8/u16 rasters, `yuvxyb::Rgb`).
     ///
-    /// [`Fidelity::MatchOfficial`](crate::Fidelity::MatchOfficial) uses this
-    /// to apply the reference implementation's exact linearization instead
-    /// of [`to_linear_rgb`](ToLinearRgb::to_linear_rgb). The default `None`
-    /// means "already-linear / not an encoded sRGB container" — match-official
-    /// then falls back to the linearized data (documented approximation).
-    fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+    /// The pipeline uses this to apply the reference implementation's
+    /// exact linearization (captured lcms LUTs) instead of
+    /// [`to_linear_rgb`](ToLinearRgb::to_linear_rgb). The default `None`
+    /// means "already-linear / not an encoded sRGB container" — the
+    /// scorer then falls back to the linearized data.
+    fn to_encoded_srgb(&self) -> Option<crate::pipeline::EncodedSrgb> {
         None
     }
 }
@@ -253,11 +253,11 @@ mod imgref_impl {
             LinearRgbImage::new(data, self.width(), self.height())
         }
 
-        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
-            Some(crate::official::EncodedSrgb {
+        fn to_encoded_srgb(&self) -> Option<crate::pipeline::EncodedSrgb> {
+            Some(crate::pipeline::EncodedSrgb {
                 width: self.width(),
                 height: self.height(),
-                data: crate::official::EncodedData::U8(
+                data: crate::pipeline::EncodedData::U8(
                     self.pixels().flatten().collect(),
                 ),
                             alpha: None,
@@ -281,11 +281,11 @@ mod imgref_impl {
             LinearRgbImage::new(data, self.width(), self.height())
         }
 
-        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
-            Some(crate::official::EncodedSrgb {
+        fn to_encoded_srgb(&self) -> Option<crate::pipeline::EncodedSrgb> {
+            Some(crate::pipeline::EncodedSrgb {
                 width: self.width(),
                 height: self.height(),
-                data: crate::official::EncodedData::U16(
+                data: crate::pipeline::EncodedData::U16(
                     self.pixels().flatten().collect(),
                 ),
                             alpha: None,
@@ -314,17 +314,17 @@ mod imgref_impl {
             LinearRgbImage::new(data, self.width(), self.height())
         }
 
-        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+        fn to_encoded_srgb(&self) -> Option<crate::pipeline::EncodedSrgb> {
             let mut rgb = Vec::with_capacity(self.pixels().count() * 3);
             let mut alpha = Vec::with_capacity(self.pixels().count());
             for [r, g, b, a] in self.pixels() {
                 rgb.extend_from_slice(&[r, g, b]);
                 alpha.push(a as f32 * (1.0 / 255.0));
             }
-            Some(crate::official::EncodedSrgb {
+            Some(crate::pipeline::EncodedSrgb {
                 width: self.width(),
                 height: self.height(),
-                data: crate::official::EncodedData::U8(rgb),
+                data: crate::pipeline::EncodedData::U8(rgb),
                 alpha: Some(alpha),
             })
         }
@@ -347,17 +347,17 @@ mod imgref_impl {
             LinearRgbImage::new(data, self.width(), self.height())
         }
 
-        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+        fn to_encoded_srgb(&self) -> Option<crate::pipeline::EncodedSrgb> {
             let mut rgb = Vec::with_capacity(self.pixels().count() * 3);
             let mut alpha = Vec::with_capacity(self.pixels().count());
             for [r, g, b, a] in self.pixels() {
                 rgb.extend_from_slice(&[r, g, b]);
                 alpha.push(a as f32 * (1.0 / 65535.0));
             }
-            Some(crate::official::EncodedSrgb {
+            Some(crate::pipeline::EncodedSrgb {
                 width: self.width(),
                 height: self.height(),
-                data: crate::official::EncodedData::U16(rgb),
+                data: crate::pipeline::EncodedData::U16(rgb),
                 alpha: Some(alpha),
             })
         }
@@ -384,13 +384,13 @@ mod imgref_impl {
             LinearRgbImage::new(data, self.width(), self.height())
         }
 
-        fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+        fn to_encoded_srgb(&self) -> Option<crate::pipeline::EncodedSrgb> {
             // The reference expands grayscale to RGB before the metric.
             let data: Vec<u8> = self.pixels().flat_map(|v| [v, v, v]).collect();
-            Some(crate::official::EncodedSrgb {
+            Some(crate::pipeline::EncodedSrgb {
                 width: self.width(),
                 height: self.height(),
-                data: crate::official::EncodedData::U8(data),
+                data: crate::pipeline::EncodedData::U8(data),
                             alpha: None,
             })
         }
@@ -425,6 +425,22 @@ impl ToLinearRgb for yuvxyb::LinearRgb {
     }
 }
 
+// YUV inputs — decoded via `yuvxyb::LinearRgb::try_from` (same conversion
+// the removed `compute_frame_ssimulacra2` used). YUV is not encoded sRGB,
+// so `to_encoded_srgb` falls back to `None` and the pair scores through
+// the linear-planes path.
+impl<T> ToLinearRgb for yuvxyb::Yuv<T>
+where
+    T: yuvxyb::Pixel,
+    yuvxyb::LinearRgb: for<'a> TryFrom<&'a yuvxyb::Yuv<T>>,
+{
+    fn to_linear_rgb(&self) -> LinearRgbImage {
+        let linear = yuvxyb::LinearRgb::try_from(self)
+            .unwrap_or_else(|_| panic!("Yuv to LinearRgb conversion failed"));
+        linear.to_linear_rgb()
+    }
+}
+
 // =============================================================================
 // Conversion to yuvxyb::LinearRgb (for internal pipeline)
 // =============================================================================
@@ -452,12 +468,12 @@ impl From<LinearRgbImage> for yuvxyb::LinearRgb {
 }
 
 impl ToLinearRgb for yuvxyb::Rgb {
-    fn to_encoded_srgb(&self) -> Option<crate::official::EncodedSrgb> {
+    fn to_encoded_srgb(&self) -> Option<crate::pipeline::EncodedSrgb> {
         if self.transfer() == yuvxyb::TransferCharacteristic::SRGB {
-            Some(crate::official::EncodedSrgb {
+            Some(crate::pipeline::EncodedSrgb {
                 width: self.width().get(),
                 height: self.height().get(),
-                data: crate::official::EncodedData::F32(self.data().to_vec().concat()),
+                data: crate::pipeline::EncodedData::F32(self.data().to_vec().concat()),
                             alpha: None,
             })
         } else {

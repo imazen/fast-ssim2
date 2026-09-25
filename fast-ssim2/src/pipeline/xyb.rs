@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
 //! Bit-exact port of the reference `LinearRGBToXYB` + `MakePositiveXYB`.
 //!
 //! The opsin absorbance FMA chain and `StoreXYB` layout match our fast path
@@ -55,31 +56,19 @@ fn cube_root_and_add(x: f32, add: f32) -> f32 {
     r2.mul_add(x, add)
 }
 
-/// `LinearRGBToXYB` + `MakePositiveXYB` for one pixel triple.
+/// `LinearRGBToXYB` + `MakePositiveXYB` for one pixel triple — uses the
+/// reference's `CubeRootAndAdd` bit-hack + Newton chain (not `f32::cbrt`),
+/// which is part of the bit-exactness contract.
 /// Input is linear sRGB (already EOTF-decoded) in [0, ~1.05].
 #[inline]
 pub fn linear_rgb_to_xyb_pixel(px: [f32; 3]) -> [f32; 3] {
-    linear_rgb_to_xyb_pixel_opts(px, crate::official::CbrtMode::Official)
-}
-
-/// Variant-selectable version — `CbrtMode::Official` is the reference's
-/// `CubeRootAndAdd`; `Std` is correctly-rounded libm cbrt;
-/// `MagetypesMidp` is magetypes' ~3-ulp Halley cbrt.
-#[inline]
-pub fn linear_rgb_to_xyb_pixel_opts(px: [f32; 3], mode: crate::official::CbrtMode) -> [f32; 3] {
-    use crate::official::CbrtMode;
     let (r, g, b) = (px[0], px[1], px[2]);
     let mixed0 = M00.mul_add(r, M01.mul_add(g, M02.mul_add(b, BIAS)));
     let mixed1 = M10.mul_add(r, M11.mul_add(g, M12.mul_add(b, BIAS)));
     let mixed2 = M20.mul_add(r, M21.mul_add(g, M22.mul_add(b, BIAS)));
 
     let root = |v: f32| -> f32 {
-        let v = v.max(0.0);
-        match mode {
-            CbrtMode::Official => cube_root_and_add(v, NEG_CBRT_BIAS),
-            CbrtMode::Std => v.cbrt() + NEG_CBRT_BIAS,
-            CbrtMode::MagetypesMidp => magetypes::nostd_math::cbrt_midp_f32(v) + NEG_CBRT_BIAS,
-        }
+        cube_root_and_add(v.max(0.0), NEG_CBRT_BIAS)
     };
     let m0 = root(mixed0);
     let m1 = root(mixed1);

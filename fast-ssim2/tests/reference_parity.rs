@@ -1,3 +1,4 @@
+#![allow(clippy::chunks_exact_to_as_chunks)]
 //! Tests that verify ssimulacra2 scores against C++ reference values.
 //!
 //! These tests use pre-captured C++ ssimulacra2 scores for synthetic test images,

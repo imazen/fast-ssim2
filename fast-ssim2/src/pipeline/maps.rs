@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+
 //! Bit-exact ports of `SSIMMap` and `EdgeDiffMap` from `ssimulacra2.cc`.
 //!
 //! The reference computes per-pixel quotients in f32 but the final

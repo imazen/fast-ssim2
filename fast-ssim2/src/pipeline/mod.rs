@@ -1,5 +1,7 @@
-//! `Fidelity::MatchOfficial` — bit-exact reimplementation of the reference
-//! SSIMULACRA2 pipeline (`ssimulacra2.cc` + vendored libjxl primitives).
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+
+//! The SSIMULACRA2.1 pipeline — a bit-exact reimplementation of the
+//! reference (`ssimulacra2.cc` + vendored libjxl primitives).
 //!
 //! Cloudinary's standalone `ssimulacra2` and the `ssimulacra2` tool shipped
 //! in libjxl v0.12.0 produce identical scores (verified on 400+ image pairs
@@ -34,7 +36,7 @@ pub(crate) use score::score as final_score;
 use gauss::{create_recursive_gaussian, multiply_planes, RecursiveGaussian};
 use score::ScaleAggregates;
 
-/// Encoded sRGB pixel data for the match-official input path.
+/// Encoded sRGB pixel data fed to the pipeline.
 ///
 /// Returned by [`crate::input::ToLinearRgb::to_encoded_srgb`] for inputs
 /// that carry quantized/encoded sRGB values rather than linear data.
@@ -47,7 +49,7 @@ pub enum EncodedData {
     F32(Vec<f32>),
 }
 
-/// Encoded sRGB image handed to the match-official pipeline.
+/// Encoded sRGB image handed to the pipeline.
 pub struct EncodedSrgb {
     pub width: usize,
     pub height: usize,
@@ -170,13 +172,7 @@ fn pad_scalars(w: usize, h: usize, pw: usize, ph: usize, data: &[f32]) -> Vec<f3
 /// (`a * v + (1 - a) * bg` in encoded space). The standalone binary calls
 /// the metric twice — `bg = 0.1` and `bg = 0.9` — and keeps the worse
 /// score. `bg` is ignored when `enc.alpha` is `None`.
-pub fn official_linearize(enc: &EncodedSrgb, bg: f32) -> [Vec<f32>; 3] {
-    official_linearize_opts(enc, bg, false)
-}
-
-/// `lin_poly`: use the polynomial `srgb_to_linear` for u8 inputs instead of
-/// the captured reference LUT (ablation axis — breaks bit-exactness).
-pub fn official_linearize_opts(enc: &EncodedSrgb, bg: f32, lin_poly: bool) -> [Vec<f32>; 3] {
+pub fn linearize(enc: &EncodedSrgb, bg: f32) -> [Vec<f32>; 3] {
     let n = enc.width * enc.height;
     let mut out = [Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n)];
     if let Some(alpha) = &enc.alpha {
@@ -211,18 +207,10 @@ pub fn official_linearize_opts(enc: &EncodedSrgb, bg: f32, lin_poly: bool) -> [V
     }
     match &enc.data {
         EncodedData::U8(data) => {
-            if lin_poly {
-                for px in data.chunks_exact(3) {
-                    out[0].push(encoded_f32_to_linear(px[0] as f32 * (1.0 / 255.0)));
-                    out[1].push(encoded_f32_to_linear(px[1] as f32 * (1.0 / 255.0)));
-                    out[2].push(encoded_f32_to_linear(px[2] as f32 * (1.0 / 255.0)));
-                }
-            } else {
-                for px in data.chunks_exact(3) {
-                    out[0].push(lut8::LINEAR_LUT_U8[px[0] as usize]);
-                    out[1].push(lut8::LINEAR_LUT_U8[px[1] as usize]);
-                    out[2].push(lut8::LINEAR_LUT_U8[px[2] as usize]);
-                }
+            for px in data.chunks_exact(3) {
+                out[0].push(lut8::LINEAR_LUT_U8[px[0] as usize]);
+                out[1].push(lut8::LINEAR_LUT_U8[px[1] as usize]);
+                out[2].push(lut8::LINEAR_LUT_U8[px[2] as usize]);
             }
         }
         EncodedData::U16(data) => {
@@ -234,9 +222,9 @@ pub fn official_linearize_opts(enc: &EncodedSrgb, bg: f32, lin_poly: bool) -> [V
         }
         EncodedData::F32(data) => {
             for px in data.chunks_exact(3) {
-                out[0].push(encoded_f32_to_linear_grid(px[0], !lin_poly));
-                out[1].push(encoded_f32_to_linear_grid(px[1], !lin_poly));
-                out[2].push(encoded_f32_to_linear_grid(px[2], !lin_poly));
+                out[0].push(encoded_f32_to_linear_grid(px[0], true));
+                out[1].push(encoded_f32_to_linear_grid(px[1], true));
+                out[2].push(encoded_f32_to_linear_grid(px[2], true));
             }
         }
     }
@@ -372,160 +360,123 @@ pub fn blur_planes_into(
 /// Convert linear-RGB planes to positive-XYB planes in place
 /// (`LinearRGBToXYB` + `MakePositiveXYB` per pixel).
 pub fn planes_to_positive_xyb(p: &mut [Vec<f32>; 3], npix: usize) {
-    planes_to_positive_xyb_opts(p, npix, CbrtMode::Official)
-}
-
-fn planes_to_positive_xyb_opts(p: &mut [Vec<f32>; 3], npix: usize, cbrt: CbrtMode) {
     for i in 0..npix {
-        let px = xyb::linear_rgb_to_xyb_pixel_opts([p[0][i], p[1][i], p[2][i]], cbrt);
+        let px = xyb::linear_rgb_to_xyb_pixel([p[0][i], p[1][i], p[2][i]]);
         p[0][i] = px[0];
         p[1][i] = px[1];
         p[2][i] = px[2];
     }
 }
 
-/// Run the metric on encoded inputs, including the reference binary's
-/// alpha handling: when the source has an alpha channel it is evaluated
-/// twice — blended against `bg = 0.1` and `bg = 0.9` in encoded space —
-/// and the worse (lower) score is returned, matching `ssimulacra2_main.cc`.
-/// A distorted-side alpha without a source-side alpha is blended at the
-/// single default `bg = 0.5`, as in `ComputeSSIMULACRA2`'s default arg.
-#[allow(dead_code)]
-pub(crate) fn compute_encoded(
+/// The full pipeline on encoded sRGB inputs — `kernel` selects the
+/// scalar or SIMD kernel family (bit-identical outputs).
+pub fn compute_encoded(
     enc1: &EncodedSrgb,
     enc2: &EncodedSrgb,
+    kernel: Kernel,
 ) -> Result<f64, crate::Ssimulacra2Error> {
-    compute_encoded_opts(enc1, enc2, PermuteOpts::OFFICIAL)
+    compute_encoded_stop(enc1, enc2, kernel, &enough::Unstoppable)
 }
 
-/// Variant-selectable [`compute_encoded`] — the permutation-study entry.
-pub fn compute_encoded_opts(
+/// [`compute_encoded`] with cooperative cancellation — `stop` is
+/// checked once per scale (never per-pixel).
+pub fn compute_encoded_stop(
     enc1: &EncodedSrgb,
     enc2: &EncodedSrgb,
-    opts: PermuteOpts,
-) -> Result<f64, crate::Ssimulacra2Error> {
-    compute_encoded_opts_stop(enc1, enc2, opts, &enough::Unstoppable)
-}
-
-/// [`compute_encoded_opts`] with cooperative cancellation — `stop` is
-/// checked once per scale (never per-pixel), same semantics as the
-/// precise path.
-pub fn compute_encoded_opts_stop(
-    enc1: &EncodedSrgb,
-    enc2: &EncodedSrgb,
-    opts: PermuteOpts,
+    kernel: Kernel,
     stop: &dyn enough::Stop,
 ) -> Result<f64, crate::Ssimulacra2Error> {
     let (w, h) = (enc1.width, enc1.height);
     if w != enc2.width || h != enc2.height {
         return Err(crate::Ssimulacra2Error::NonMatchingImageDimensions);
     }
-    let lin = |e: &EncodedSrgb, bg| official_linearize_opts(e, bg, opts.lin_poly);
+    let lin = |e: &EncodedSrgb, bg| linearize(e, bg);
+    let opts = Opts { kernel };
     if enc1.alpha.is_some() {
-        let lo = compute_opts_stop(lin(enc1, 0.1), lin(enc2, 0.1), w, h, opts, stop)?;
-        let hi = compute_opts_stop(lin(enc1, 0.9), lin(enc2, 0.9), w, h, opts, stop)?;
+        let lo = compute_planar_stop(lin(enc1, 0.1), lin(enc2, 0.1), w, h, opts, stop)?;
+        let hi = compute_planar_stop(lin(enc1, 0.9), lin(enc2, 0.9), w, h, opts, stop)?;
         return Ok(lo.min(hi));
     }
-    compute_opts_stop(lin(enc1, 0.5), lin(enc2, 0.5), w, h, opts, stop)
+    compute_planar_stop(lin(enc1, 0.5), lin(enc2, 0.5), w, h, opts, stop)
 }
 
-/// Cube-root implementation used inside `linear_rgb_to_xyb` +
-/// `MakePositiveXYB`.
+/// Kernel family — the lane-wise SIMD implementations
+/// ([`simd`]) are bit-identical to the scalar port ([`gauss`],
+/// [`maps`]); `Scalar` remains as the audit oracle and the fallback for
+/// architectures without a lane implementation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CbrtMode {
-    /// Reference `CubeRootAndAdd` bit-hack (bit-exact match to official).
-    Official,
-    /// Standard `f32::cbrt` (correctly rounded).
-    Std,
-    /// `magetypes::cbrt_midp_f32` (~3 ulp, Halley).
-    MagetypesMidp,
+pub enum Kernel {
+    Scalar,
+    Simd,
 }
 
-/// Gaussian blur implementation variant.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BlurSel {
-    /// Scalar port of the reference `FastGaussian` (bit-exact ordering).
-    Official,
-    /// Lane-wise SIMD of the same sequence — bit-identical to `Official`.
-    OfficialSimd,
-    /// The crate's fast path, scalar tier.
-    PreciseScalar,
-    /// The crate's fast path, SIMD tier.
-    PreciseSimd,
+impl Kernel {
+    /// The SIMD kernels are bit-identical to scalar — this is purely a
+    /// speed selector.
+    pub fn from_impl(impl_type: crate::SimdImpl) -> Self {
+        match impl_type {
+            crate::SimdImpl::Scalar => Kernel::Scalar,
+            crate::SimdImpl::Simd => Kernel::Simd,
+        }
+    }
+    /// The default public-path kernel.
+    pub const SIMD: Self = Self::Simd;
 }
 
-/// Per-axis toggles for ablation experiments. `PermuteOpts::OFFICIAL`
-/// reproduces the reference binary bit-for-bit (for u8-encoded inputs).
+/// Per-call pipeline options — only the kernel family survives; the
+/// reference's FP behavior (LUT linearization, `CubeRootAndAdd`, f32 σ,
+/// reference FMA ordering) is fixed.
 #[derive(Clone, Copy, Debug)]
-pub struct PermuteOpts {
-    pub cbrt: CbrtMode,
-    /// σ cross-terms in f64 (removes the reference's f32 cancellation
-    /// noise) instead of the official f32 computation.
-    pub sigma_f64: bool,
-    pub blur: BlurSel,
-    /// u8 linearization: polynomial `srgb_to_linear` instead of the
-    /// captured lcms LUT.
-    pub lin_poly: bool,
+pub struct Opts {
+    pub kernel: Kernel,
 }
 
-impl PermuteOpts {
-    /// All-official configuration — bit-exact reproduction.
-    pub const OFFICIAL: Self = Self {
-        cbrt: CbrtMode::Official,
-        sigma_f64: false,
-        blur: BlurSel::Official,
-        lin_poly: false,
-    };
-    /// "More precise" configuration — correctly-rounded cbrt, f64 σ
-    /// cancellation-free math, fast SIMD blur, polynomial linearization.
-    pub const PRECISE_LEAN: Self = Self {
-        cbrt: CbrtMode::Std,
-        sigma_f64: true,
-        blur: BlurSel::PreciseSimd,
-        lin_poly: true,
-    };
+impl Opts {
+    /// Scalar oracle — used by tests/ports comparing SIMD against the
+    /// reference-order scalar computation.
+    pub const SCALAR: Self = Self { kernel: Kernel::Scalar };
+    /// Default: the SIMD kernels.
+    pub const SIMD: Self = Self { kernel: Kernel::Simd };
 }
 
-/// The complete match-official metric. Takes already-linear planes
-/// (from [`official_linearize`] or equivalent).
-///
-/// Uses the lane-wise SIMD kernels (bit-identical to the scalar port);
-/// `PermuteOpts::OFFICIAL` (scalar) remains the reference oracle.
+/// The complete metric on already-linear planes (from [`linearize`] or
+/// equivalent). Uses the SIMD kernels (bit-identical to the scalar
+/// port, which remains the audit oracle).
 ///
 /// Returns `Err(Ssimulacra2Error::InvalidImageSize)` below 8×8, matching
 /// the reference binary's minimum-size behavior.
-pub fn compute(
+pub fn compute_planar(
     lin1: [Vec<f32>; 3],
     lin2: [Vec<f32>; 3],
     width: usize,
     height: usize,
 ) -> Result<f64, crate::Ssimulacra2Error> {
-    compute_opts_stop(
+    compute_planar_stop(
         lin1, lin2, width, height,
-        PermuteOpts { blur: BlurSel::OfficialSimd, ..PermuteOpts::OFFICIAL },
+        Opts::SIMD,
         &enough::Unstoppable,
     )
 }
 
-/// The complete pipeline with per-axis implementation selection.
-pub fn compute_opts(
+/// [`compute_planar`] with explicit kernel selection.
+pub fn compute_planar_with(
     lin1: [Vec<f32>; 3],
     lin2: [Vec<f32>; 3],
     width: usize,
     height: usize,
-    opts: PermuteOpts,
+    kernel: Kernel,
 ) -> Result<f64, crate::Ssimulacra2Error> {
-    compute_opts_stop(lin1, lin2, width, height, opts, &enough::Unstoppable)
+    compute_planar_stop(lin1, lin2, width, height, Opts { kernel }, &enough::Unstoppable)
 }
 
-/// [`compute_opts`] with cooperative cancellation — `stop` is checked
+/// [`compute_planar`] with cooperative cancellation — `stop` is checked
 /// once per scale (never per-pixel).
-pub fn compute_opts_stop(
+pub fn compute_planar_stop(
     lin1: [Vec<f32>; 3],
     lin2: [Vec<f32>; 3],
     width: usize,
     height: usize,
-    opts: PermuteOpts,
+    opts: Opts,
     stop: &dyn enough::Stop,
 ) -> Result<f64, crate::Ssimulacra2Error> {
     if width < 8 || height < 8 {
@@ -561,25 +512,21 @@ pub fn compute_opts_stop(
         let npix = w * h;
         let mut xyb1 = lin1;
         let mut xyb2 = lin2;
-        if opts.blur == BlurSel::OfficialSimd && opts.cbrt == CbrtMode::Official {
-            simd::planes_to_positive_xyb_simd(&mut xyb1);
-            simd::planes_to_positive_xyb_simd(&mut xyb2);
-        } else {
-            planes_to_positive_xyb_opts(&mut xyb1, npix, opts.cbrt);
-            planes_to_positive_xyb_opts(&mut xyb2, npix, opts.cbrt);
+        match opts.kernel {
+            Kernel::Simd => {
+                simd::planes_to_positive_xyb_simd(&mut xyb1);
+                simd::planes_to_positive_xyb_simd(&mut xyb2);
+            }
+            Kernel::Scalar => {
+                planes_to_positive_xyb(&mut xyb1, npix);
+                planes_to_positive_xyb(&mut xyb2, npix);
+            }
         }
 
         let blur_sel = |p: &[Vec<f32>; 3]| -> [Vec<f32>; 3] {
-            match opts.blur {
-                BlurSel::Official => blur_planes(&rg, p, w, h),
-                BlurSel::OfficialSimd => simd::blur_planes_simd(&rg, p, w, h),
-                sel => {
-                    let impl_type = match sel {
-                        BlurSel::PreciseScalar => crate::SimdImpl::Scalar,
-                        _ => crate::SimdImpl::Simd,
-                    };
-                    crate::blur::Blur::with_simd_impl(w, h, impl_type).blur(p)
-                }
+            match opts.kernel {
+                Kernel::Scalar => blur_planes(&rg, p, w, h),
+                Kernel::Simd => simd::blur_planes_simd(&rg, p, w, h),
             }
         };
 
@@ -590,7 +537,7 @@ pub fn compute_opts_stop(
         // planes are materialized at all. Scalar path keeps the
         // reference's literal mul-then-blur sequence.
         let (sigma1_sq, sigma2_sq, sigma12, mu1, mu2);
-        if opts.blur == BlurSel::OfficialSimd {
+        if opts.kernel == Kernel::Simd {
             // jobs: (a, b) — b present → blur of the product a·b.
             let jobs: [(&[Vec<f32>; 3], Option<&[Vec<f32>; 3]>); 5] = [
                 (&xyb1, Some(&xyb1)),
@@ -663,7 +610,7 @@ pub fn compute_opts_stop(
         // ssim (lanes) + edge_diff (scalar f64) run per channel — the
         // per-channel accumulation order is unchanged → bit-exact. The
         // six channel-tasks are independent → parallel under rayon.
-        let (avg_ssim, avg_edgediff) = if opts.blur == BlurSel::OfficialSimd && !opts.sigma_f64 {
+        let (avg_ssim, avg_edgediff) = if opts.kernel == Kernel::Simd {
             #[cfg(feature = "rayon")]
             {
                 let (mut so, mut eo) = ([0f64; 6], [0f64; 12]);

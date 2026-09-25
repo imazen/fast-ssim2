@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
 //! Bit-exact port of libjxl's `FastGaussian` (Charalampidis IIR Gaussian,
 //! sigma = 1.5) as used by the reference SSIMULACRA2 implementation.
 //!
@@ -17,9 +18,9 @@
 /// recurrence term j steps back (JXL_GAUSS_MAX_LANES = 4).
 pub struct RecursiveGaussian {
     pub radius: i32,
-    /// n2[i] for i in {0,1,2} (oscillator terms 1,3,5).
+    /// `n2[i]` for i in {0,1,2} (oscillator terms 1,3,5).
     pub n2: [f32; 3],
-    /// d1[i] for i in {0,1,2}.
+    /// `d1[i]` for i in {0,1,2}.
     pub d1: [f32; 3],
     pub mul_in: [[f32; 4]; 3],
     pub mul_prev: [[f32; 4]; 3],
@@ -28,6 +29,8 @@ pub struct RecursiveGaussian {
 
 /// Port of `CreateRecursiveGaussian` — all f64 math in identical order.
 pub fn create_recursive_gaussian(sigma: f64) -> RecursiveGaussian {
+    /// `M_PI` as transcribed in the C++ source (equals `f64::consts::PI`).
+    #[allow(clippy::approx_constant, clippy::excessive_precision)]
     const K_PI: f64 = 3.141592653589793238;
 
     // `roundf` in C++ rounds half away from zero; f64::round matches.

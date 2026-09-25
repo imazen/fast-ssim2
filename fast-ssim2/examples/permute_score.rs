@@ -1,13 +1,10 @@
-// Batch scorer for the permutation study.
-// Usage: permute_score <manifest.csv> <lin> <cbrt> <sigma> <blur>
+// Batch scorer over a manifest of image pairs — corpus-parity tool.
+// Usage: permute_score <manifest.csv> [simd|scalar]
 //   manifest lines: source.png,distorted.png[,tag]
-//   lin: lut | poly
-//   cbrt: official | std | magetypes
-//   sigma: f32 | f64
-//   blur: official | pscalar | psimd
+// Output CSV: tag,score
 use enough::Unstoppable;
 use fast_ssim2::ToLinearRgb;
-use fast_ssim2::official::{BlurSel, CbrtMode, EncodedData, EncodedSrgb, PermuteOpts};
+use fast_ssim2::pipeline::{self, EncodedData, EncodedSrgb, Kernel};
 use imgref::ImgVec;
 use std::fmt::Write as _;
 use zenjpeg::decoder::Decoder;
@@ -24,11 +21,10 @@ fn load_jpeg(path: &str) -> EncodedSrgb {
         .unwrap();
     let (w, h) = (r.width() as usize, r.height() as usize);
     let px: Vec<u8> = r.pixels_u8().unwrap().to_vec();
-    let rgb: Vec<[u8; 3]> = px.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
     EncodedSrgb {
         width: w,
         height: h,
-        data: EncodedData::U8(rgb.into_iter().flat_map(|p| p).collect()),
+        data: EncodedData::U8(px),
         alpha: None,
     }
 }
@@ -59,20 +55,9 @@ fn load(path: &str) -> EncodedSrgb {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let manifest = &args[1];
-    let opts = PermuteOpts {
-        lin_poly: args[2] == "poly",
-        cbrt: match args[3].as_str() {
-            "std" => CbrtMode::Std,
-            "magetypes" => CbrtMode::MagetypesMidp,
-            _ => CbrtMode::Official,
-        },
-        sigma_f64: args[4] == "f64",
-        blur: match args[5].as_str() {
-            "pscalar" => BlurSel::PreciseScalar,
-            "psimd" => BlurSel::PreciseSimd,
-            "osimd" => BlurSel::OfficialSimd,
-            _ => BlurSel::Official,
-        },
+    let kernel = match args.get(2).map(|s| s.as_str()) {
+        Some("scalar") => Kernel::Scalar,
+        _ => Kernel::Simd,
     };
     let mut out = String::new();
     for line in std::fs::read_to_string(manifest).unwrap().lines() {
@@ -81,7 +66,7 @@ fn main() {
         let f: Vec<&str> = line.split(',').collect();
         let e1 = load(f[0]);
         let e2 = load(f[1]);
-        let s = fast_ssim2::official::compute_encoded_opts(&e1, &e2, opts).unwrap_or(f64::NAN);
+        let s = pipeline::compute_encoded(&e1, &e2, kernel).unwrap_or(f64::NAN);
         let tag = if f.len() > 2 { f[2] } else { f[1] };
         let _ = writeln!(out, "{tag},{s}");
         eprintln!("{tag} done");

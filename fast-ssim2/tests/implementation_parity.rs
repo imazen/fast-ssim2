@@ -1,8 +1,9 @@
+#![allow(clippy::chunks_exact_to_as_chunks)]
 //! Tests that verify all SIMD implementations produce matching scores.
 //!
 //! This ensures Scalar and Simd (archmage) backends compute the same results.
 
-use fast_ssim2::{Fidelity, Ssimulacra2Config, compute_ssimulacra2_with_config};
+use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
 use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
@@ -15,11 +16,24 @@ fn test_data_path() -> PathBuf {
 
 fn load_image(filename: &str) -> Rgb {
     let path = test_data_path().join(filename);
-    let img = ImageReader::open(&path)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {}", path.display(), e))
-        .decode()
-        .unwrap_or_else(|e| panic!("Failed to decode {}: {}", path.display(), e))
-        .to_rgb8();
+    let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
+        // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
+        // libjpeg-turbo — matches the C++ reference binary's decode,
+        // unlike image-rs's own IDCT (±1-3 levels at high quality).
+        let data = std::fs::read(&path).expect("read jpeg");
+        let r = zenjpeg::decoder::Decoder::new()
+            .output_format(zenjpeg::decoder::PixelFormat::Rgb)
+            .decode(&data, enough::Unstoppable)
+            .expect("zenjpeg decode");
+        let px = r.pixels_u8().unwrap();
+        image::RgbImage::from_raw(r.width(), r.height(), px.to_vec()).unwrap()
+    } else {
+        ImageReader::open(&path)
+            .unwrap_or_else(|e| panic!("Failed to open {}: {}", path.display(), e))
+            .decode()
+            .unwrap_or_else(|e| panic!("Failed to decode {}: {}", path.display(), e))
+            .to_rgb8()
+    };
 
     let (width, height) = img.dimensions();
     let data: Vec<[f32; 3]> = img
@@ -99,7 +113,7 @@ fn compute_score_from_data(
 fn test_identical_images_exact_score_scalar() {
     let source = load_image("source.png");
     let score =
-        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise))
+        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::scalar())
             .unwrap();
     assert_eq!(
         score, 100.0,
@@ -112,7 +126,7 @@ fn test_identical_images_exact_score_scalar() {
 fn test_identical_images_exact_score_simd() {
     let source = load_image("source.png");
     let score =
-        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise)).unwrap();
+        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::simd()).unwrap();
     assert_eq!(
         score, 100.0,
         "SIMD: identical images must score exactly 100.0, got {}",
@@ -139,22 +153,22 @@ const REAL_IMAGE_CASES: &[RealImageTestCase] = &[
     RealImageTestCase {
         name: "JPEG Q20",
         distorted_file: "q20.jpg",
-        expected_simd: 57.093473, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 57.145590, // C++ reference binary on zenjpeg-decoded pixels
     },
     RealImageTestCase {
         name: "JPEG Q45",
         distorted_file: "q45.jpg",
-        expected_simd: 68.675775, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 68.627476, // C++ reference binary on zenjpeg-decoded pixels
     },
     RealImageTestCase {
         name: "JPEG Q70",
         distorted_file: "q70.jpg",
-        expected_simd: 79.491173, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 79.388050, // C++ reference binary on zenjpeg-decoded pixels
     },
     RealImageTestCase {
         name: "JPEG Q90",
         distorted_file: "q90.jpg",
-        expected_simd: 90.834538, // Pinned SIMD value (f32 Halley cbrt, captured 2026-04-04)
+        expected_simd: 90.851525, // C++ reference binary on zenjpeg-decoded pixels
     },
 ];
 
@@ -168,7 +182,7 @@ fn test_simd_scores_pinned_real_images() {
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
         let score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise))
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
                 .unwrap();
 
         // Exact match - any deviation indicates a regression
@@ -193,12 +207,12 @@ fn test_scalar_vs_simd_real_images() {
         let scalar_score = compute_ssimulacra2_with_config(
             source.clone(),
             distorted.clone(),
-            Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise),
+            Ssimulacra2Config::scalar(),
         )
         .unwrap();
 
         let simd_score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise))
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
                 .unwrap();
 
         let diff = (scalar_score - simd_score).abs();
@@ -233,14 +247,14 @@ fn test_scalar_vs_simd_synthetic() {
             &distorted_data,
             width,
             height,
-            Ssimulacra2Config::scalar().with_fidelity(Fidelity::Precise),
+            Ssimulacra2Config::scalar(),
         );
         let simd_score = compute_score_from_data(
             &source_data,
             &distorted_data,
             width,
             height,
-            Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise),
+            Ssimulacra2Config::simd(),
         );
 
         let diff = (scalar_score - simd_score).abs();
@@ -272,7 +286,7 @@ fn test_jpeg_quality_ordering_preserved() {
     for file in files {
         let distorted = load_image(file);
         let score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd().with_fidelity(Fidelity::Precise))
+            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
                 .unwrap();
 
         assert!(

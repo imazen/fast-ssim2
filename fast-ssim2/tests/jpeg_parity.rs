@@ -1,3 +1,4 @@
+#![allow(clippy::chunks_exact_to_as_chunks)]
 //! JPEG-input parity for `MatchOfficial`.
 //!
 //! The reference `ssimulacra2` binary decodes JPEGs with libjpeg(-turbo).
@@ -13,7 +14,7 @@
 #![cfg(all(feature = "imgref", not(target_arch = "wasm32")))]
 
 use enough::Unstoppable;
-use fast_ssim2::official::{self, BlurSel, EncodedData, EncodedSrgb, PermuteOpts};
+use fast_ssim2::pipeline::{self, EncodedData, EncodedSrgb};
 use zenjpeg::decoder::{Decoder, PixelFormat};
 use zenjpeg::encoder::{ChromaSubsampling, EncoderConfig, PixelLayout};
 
@@ -64,11 +65,7 @@ fn jpeg_chain_official_score_pinned() {
     }
     let e1 = decode_zenjpeg(&encode(&src, w, h, 90.0));
     let e2 = decode_zenjpeg(&encode(&dst, w, h, 90.0));
-    let s = official::compute_encoded_opts(&e1, &e2, PermuteOpts {
-        blur: BlurSel::OfficialSimd,
-        ..PermuteOpts::OFFICIAL
-    })
-    .unwrap();
+    let s = pipeline::compute_encoded(&e1, &e2, pipeline::Kernel::Simd).unwrap();
     assert!(
         (s - 74.1141044413).abs() < 1e-9,
         "official score via zenjpeg decode chain = {s:.10}, expected 74.1141044413"

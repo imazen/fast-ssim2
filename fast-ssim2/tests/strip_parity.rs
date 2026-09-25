@@ -12,6 +12,7 @@
 //! corpus at and above 256x256.
 
 #![forbid(unsafe_code)]
+#![allow(clippy::chunks_exact_to_as_chunks)]
 
 use fast_ssim2::{
     LinearRgbImage, Ssimulacra2Reference, compute_ssimulacra2, compute_ssimulacra2_strip,
@@ -198,7 +199,7 @@ fn strip_parity_official_512x512() {
     };
     let source = generate_encoded_rgb(512, 512, 7);
     let distorted = generate_encoded_rgb(512, 512, 8);
-    let official = Ssimulacra2Config::official();
+    let official = Ssimulacra2Config::default();
     let full = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), official).unwrap();
     for strip_h in [64u32, 128, 256] {
         let cfg = Ssimulacra2StripConfig::default().with_inner(official);
@@ -243,7 +244,7 @@ fn strip_parallel_deterministic() {
             "strip_h={strip_h}: parallel {par} != serial {serial} — ordered merge is broken",
         );
         // And the official-fidelity path (encoded input → MatchOfficial).
-        let official = Ssimulacra2Config::official();
+        let official = Ssimulacra2Config::default();
         let serial_o = compute_ssimulacra2_strip_with_config(
             source.clone(),
             distorted.clone(),

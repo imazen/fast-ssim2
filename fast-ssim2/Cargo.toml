@@ -64,17 +64,33 @@ archmage = { version = "0.9.17", features = ["std", "macros", "testable_dispatch
 default = []
 imgref = ["dep:imgref"]  # Support for imgref image types
 rayon = ["dep:rayon"]
-# Experimental HDR scoring: PU21 (banding_glare) replaces the cube-root opsin
-# nonlinearity; input is absolute-luminance linear RGB (cd/m²). See pu_xyb.rs
-# + imazen/zenmetrics#25. Off by default; no effect on the standard pipeline.
-hdr-pu = []
 
 [[example]]
-name = "upiq_pu_score"
-required-features = ["hdr-pu"]
+name = "mem_strip"
+required-features = ["imgref"]
+
+[[example]]
+name = "obench"
+required-features = ["imgref"]
+
+[[example]]
+name = "orfcmp"
+required-features = ["imgref"]
+
+[[example]]
+name = "permute_score"
+required-features = ["imgref"]
+
+[[example]]
+name = "precompute_benchmark"
+required-features = ["imgref"]
+
+[[example]]
+name = "sweep_bench"
+required-features = ["imgref"]
 
 [[bench]]
-name = "official_iai"
+name = "pipeline_iai"
 harness = false
 
 [[bench]]
@@ -91,6 +107,3 @@ uninlined_format_args = "allow"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("avx512"))'] }
 
-[[bench]]
-name = "kernel_tiers"
-harness = false

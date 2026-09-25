@@ -235,7 +235,6 @@ for tiny inputs.
 |---------|---------|-------------|
 | `imgref` | No | Support for `imgref` image types |
 | `rayon` | No | Parallel computation |
-| `hdr-pu` | No | Experimental: HDR scoring via the PU21 (banding_glare) encoding; input is absolute-luminance linear RGB in cd/m² (`compute_ssimulacra2_pu_nits`) |
 
 SIMD is always available — runtime CPU detection via [archmage](https://crates.io/crates/archmage) selects the best backend automatically (AVX2+FMA on x86_64, NEON on aarch64, SIMD128 on wasm32, scalar fallback elsewhere).
 
