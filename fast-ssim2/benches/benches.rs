@@ -2,11 +2,11 @@ use fast_ssim2::compute_ssimulacra2;
 use num_traits::clamp;
 use rand::RngExt;
 use std::hint::black_box;
-use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::SrgbF32Image;
 use zenbench::criterion_compat::*;
 use zenbench::{criterion_group, criterion_main};
 
-fn make_rgb_pair(width: usize, height: usize) -> (Rgb, Rgb) {
+fn make_rgb_pair(width: usize, height: usize) -> (SrgbF32Image, SrgbF32Image) {
     let mut rng = rand::rng();
     let source_data: Vec<[f32; 3]> = (0..width * height)
         .map(|_| {
@@ -29,25 +29,9 @@ fn make_rgb_pair(width: usize, height: usize) -> (Rgb, Rgb) {
         })
         .collect();
 
-    let nz_width = std::num::NonZeroUsize::new(width).unwrap();
-    let nz_height = std::num::NonZeroUsize::new(height).unwrap();
-    let source = Rgb::new(
-        source_data,
-        nz_width,
-        nz_height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
+    let source = SrgbF32Image::new(source_data, width, height);
 
-    let distorted = Rgb::new(
-        distorted_data,
-        nz_width,
-        nz_height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
+    let distorted = SrgbF32Image::new(distorted_data, width, height);
 
     (source, distorted)
 }

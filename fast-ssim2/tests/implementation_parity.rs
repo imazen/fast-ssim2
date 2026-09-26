@@ -6,7 +6,7 @@
 use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
-use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::SrgbF32Image;
 
 fn test_data_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,7 +14,7 @@ fn test_data_path() -> PathBuf {
         .join("jpeg_quality")
 }
 
-fn load_image(filename: &str) -> Rgb {
+fn load_image(filename: &str) -> SrgbF32Image {
     let path = test_data_path().join(filename);
     let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
         // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
@@ -47,14 +47,7 @@ fn load_image(filename: &str) -> Rgb {
         })
         .collect();
 
-    Rgb::new(
-        data,
-        std::num::NonZeroUsize::new(width as usize).unwrap(),
-        std::num::NonZeroUsize::new(height as usize).unwrap(),
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .expect("Failed to create Rgb")
+    SrgbF32Image::new(data, width as usize, height as usize)
 }
 
 /// Create synthetic gradient test images
@@ -84,23 +77,9 @@ fn compute_score_from_data(
 ) -> f64 {
     let nz_width = std::num::NonZeroUsize::new(width).unwrap();
     let nz_height = std::num::NonZeroUsize::new(height).unwrap();
-    let source = Rgb::new(
-        source_data.to_vec(),
-        nz_width,
-        nz_height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
+    let source = SrgbF32Image::new(source_data.to_vec(), nz_width.get(), nz_height.get());
 
-    let distorted = Rgb::new(
-        distorted_data.to_vec(),
-        nz_width,
-        nz_height,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .unwrap();
+    let distorted = SrgbF32Image::new(distorted_data.to_vec(), nz_width.get(), nz_height.get());
 
     compute_ssimulacra2_with_config(source, distorted, config).unwrap()
 }

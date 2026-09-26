@@ -169,7 +169,7 @@ fn strip_mismatched_dimensions_errors() {
 // Match-official strip parity
 // ============================================================================
 
-fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> yuvxyb::Rgb {
+fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> fast_ssim2::SrgbF32Image {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -179,14 +179,7 @@ fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> yuvxyb::Rgb {
             data.push([v, g, b]);
         }
     }
-    yuvxyb::Rgb::new(
-        data,
-        std::num::NonZeroUsize::new(width).unwrap(),
-        std::num::NonZeroUsize::new(height).unwrap(),
-        yuvxyb::TransferCharacteristic::SRGB,
-        yuvxyb::ColorPrimaries::BT709,
-    )
-    .unwrap()
+    fast_ssim2::SrgbF32Image::new(data, width, height)
 }
 
 /// Match-official strip mode must approximate the full-image official

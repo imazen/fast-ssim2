@@ -95,7 +95,17 @@ If alpha is meaningful to your comparison (e.g. transparent regions), composite
 both images over the same opaque background first, then drop alpha — comparing
 straight (un-premultiplied) RGB ignores how transparency would actually render.
 
-Without `imgref`, use `yuvxyb::Rgb` or `yuvxyb::LinearRgb` (add `yuvxyb` to your own dependencies), or implement [`ToLinearRgb`](https://docs.rs/fast-ssim2/latest/fast_ssim2/trait.ToLinearRgb.html) for custom types.
+Without `imgref`, wrap raw pixels in the built-in adapters —
+[`RgbSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.RgbSlice.html) /
+[`RgbaSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.RgbaSlice.html) /
+[`GraySlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.GraySlice.html) /
+[`StridedBytes`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.StridedBytes.html) /
+[`SrgbF32Image`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.SrgbF32Image.html) —
+or implement [`ImageSource`](https://docs.rs/fast-ssim2/latest/fast_ssim2/trait.ImageSource.html)
+for custom types. `zenpixels` `PixelSlice`/`PixelBuffer` bridge in via
+[`ZenpixelsSource`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.ZenpixelsSource.html)
+with the `zenpixels` feature. Non-sRGB sources (YUV video, wide-gamut, HDR)
+should be converted upstream — e.g. with `zenpixels-convert` — before scoring.
 
 ## Batch Comparisons
 
@@ -211,11 +221,11 @@ Signatures:
 ```rust
 pub fn compute_ssimulacra2_strip<S, D>(source: S, distorted: D, strip_height: u32)
     -> Result<f64, Ssimulacra2Error>
-where S: ToLinearRgb, D: ToLinearRgb;
+where S: ImageSource, D: ImageSource;
 
 // On a precomputed reference (batch):
 impl Ssimulacra2Reference {
-    pub fn compare_strip<T: ToLinearRgb>(&self, distorted: T, strip_height: u32)
+    pub fn compare_strip<T: ImageSource>(&self, distorted: T, strip_height: u32)
         -> Result<f64, Ssimulacra2Error>;
 }
 ```
@@ -223,11 +233,8 @@ impl Ssimulacra2Reference {
 `strip_height` is the interior row count at scale 0; the working strip is
 `strip_height + 2 * halo_rows` tall (`halo_rows` defaults to `HALO_ROWS_DEFAULT`,
 configurable via `Ssimulacra2StripConfig`). Strip scores match the full-image
-path to within ~1e-5 on the 0–100 scale. **Unlike the one-shot path, the strip
-APIs do not reflect-pad** — they target very large images and return
-`InvalidImageSize` for inputs below 8×8 or `strip_height < 8`; use
-[`compute_ssimulacra2`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2.html)
-for tiny inputs.
+path to within ~1e-3 on the 0–100 scale. Like the one-shot path, strip APIs
+reflect-pad inputs below the 8×8 floor; `strip_height < 8` still errors.
 
 ## Features
 
@@ -289,20 +296,20 @@ cd compare_tool && cargo run --release -- source.png distorted.png
 ### Custom Input Types
 
 ```rust
-use fast_ssim2::{ToLinearRgb, LinearRgbImage, srgb_u8_to_linear};
+use fast_ssim2::{ImageSource, PixelFormat};
 
-struct MyImage { /* ... */ }
+struct MyImage {
+    pixels: Vec<[u8; 3]>,
+    width: usize,
+    height: usize,
+}
 
-impl ToLinearRgb for MyImage {
-    fn to_linear_rgb(&self) -> LinearRgbImage {
-        let data: Vec<[f32; 3]> = self.pixels.iter()
-            .map(|[r, g, b]| [
-                srgb_u8_to_linear(*r),
-                srgb_u8_to_linear(*g),
-                srgb_u8_to_linear(*b),
-            ])
-            .collect();
-        LinearRgbImage::new(data, self.width, self.height)
+impl ImageSource for MyImage {
+    fn width(&self) -> usize { self.width }
+    fn height(&self) -> usize { self.height }
+    fn pixel_format(&self) -> PixelFormat { PixelFormat::Srgb8Rgb }
+    fn row_bytes(&self, y: usize) -> &[u8] {
+        self.pixels[y * self.width..(y + 1) * self.width].as_flattened()
     }
 }
 ```
@@ -319,21 +326,16 @@ let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config
 let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::simd())?;
 ```
 
-### Using yuvxyb Types Directly
+### From Raw Buffers
 
 ```rust
-use fast_ssim2::compute_ssimulacra2;
-use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
+use fast_ssim2::{compute_ssimulacra2, RgbSlice};
 
-let source = Rgb::new(
-    pixel_data,
-    width,
-    height,
-    TransferCharacteristic::SRGB,
-    ColorPrimaries::BT709,
-)?;
+// pixels: Vec<[u8; 3]> — sRGB u8 RGB
+let source = RgbSlice::new(&pixels, width, height);
 let score = compute_ssimulacra2(source, distorted)?;
 ```
+
 
 ## Requirements
 

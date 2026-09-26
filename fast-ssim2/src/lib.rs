@@ -43,23 +43,17 @@
 //!
 //! **Convention:** Integer types assume sRGB gamma encoding. Float types assume linear RGB.
 //!
-//! ### Without features (using `yuvxyb` types)
+//! ### Without features (built-in slice adapters)
 //!
 //! ```
-//! use fast_ssim2::compute_ssimulacra2;
-//! use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
-//! use std::num::NonZeroUsize;
+//! use fast_ssim2::{compute_ssimulacra2, RgbSlice};
 //!
-//! let data: Vec<[f32; 3]> = vec![[0.5, 0.5, 0.5]; 64 * 64];
-//! let w = NonZeroUsize::new(64).unwrap();
-//! let h = NonZeroUsize::new(64).unwrap();
-//! let source = Rgb::new(data.clone(), w, h,
-//!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
-//! let distorted = Rgb::new(data, w, h,
-//!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
+//! // Plain u8 sRGB pixels, 64×64 mid-gray.
+//! let data: Vec<[u8; 3]> = vec![[128, 128, 128]; 64 * 64];
+//! let source = RgbSlice::new(&data, 64, 64);
+//! let distorted = RgbSlice::new(&data, 64, 64);
 //!
 //! let score = compute_ssimulacra2(source, distorted)?;
-//! // compute_ssimulacra2 accepts yuvxyb::Rgb, yuvxyb::LinearRgb, and more
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -69,33 +63,27 @@
 //! different compression levels), precompute the reference data once:
 //!
 //! ```
-//! use fast_ssim2::Ssimulacra2Reference;
-//! use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
-//! use std::num::NonZeroUsize;
+//! use fast_ssim2::{Ssimulacra2Reference, RgbSlice};
 //!
 //! // Create test data
-//! let data: Vec<[f32; 3]> = vec![[0.5, 0.5, 0.5]; 64 * 64];
-//! let w = NonZeroUsize::new(64).unwrap();
-//! let h = NonZeroUsize::new(64).unwrap();
-//! let source = Rgb::new(data.clone(), w, h,
-//!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
+//! let data: Vec<[u8; 3]> = vec![[128, 128, 128]; 64 * 64];
+//! let source = RgbSlice::new(&data, 64, 64);
 //!
 //! // Precompute reference data (~50% of the work)
 //! let reference = Ssimulacra2Reference::new(source)?;
 //!
 //! // Compare multiple distorted versions efficiently
-//! let distorted = Rgb::new(data, w, h,
-//!     TransferCharacteristic::SRGB, ColorPrimaries::BT709)?;
+//! let distorted = RgbSlice::new(&data, 64, 64);
 //! let score = reference.compare(distorted)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Custom Input Types
 //!
-//! Implement [`ToLinearRgb`] to support your own image types:
+//! Implement [`ImageSource`] to support your own image types:
 //!
 //! ```
-//! use fast_ssim2::{ToLinearRgb, LinearRgbImage, srgb_u8_to_linear};
+//! use fast_ssim2::{ImageSource, PixelFormat};
 //!
 //! struct MyImage {
 //!     pixels: Vec<[u8; 3]>,
@@ -103,16 +91,12 @@
 //!     height: usize,
 //! }
 //!
-//! impl ToLinearRgb for MyImage {
-//!     fn to_linear_rgb(&self) -> LinearRgbImage {
-//!         let data: Vec<[f32; 3]> = self.pixels.iter()
-//!             .map(|[r, g, b]| [
-//!                 srgb_u8_to_linear(*r),
-//!                 srgb_u8_to_linear(*g),
-//!                 srgb_u8_to_linear(*b),
-//!             ])
-//!             .collect();
-//!         LinearRgbImage::new(data, self.width, self.height)
+//! impl ImageSource for MyImage {
+//!     fn width(&self) -> usize { self.width }
+//!     fn height(&self) -> usize { self.height }
+//!     fn pixel_format(&self) -> PixelFormat { PixelFormat::Srgb8Rgb }
+//!     fn row_bytes(&self, y: usize) -> &[u8] {
+//!         self.pixels[y * self.width..(y + 1) * self.width].as_flattened()
 //!     }
 //! }
 //! ```
@@ -168,6 +152,9 @@
 mod input;
 #[doc(hidden)]
 pub mod pipeline;
+mod source;
+#[cfg(feature = "zenpixels")]
+mod zenpixels_compat;
 mod precompute;
 // Reference data for parity testing (hidden from docs but accessible for tests)
 #[doc(hidden)]
@@ -175,7 +162,13 @@ pub mod reference_data;
 mod strip;
 mod weights;
 
-pub use input::{LinearRgbImage, LinearRgbImageError, ToLinearRgb};
+pub use input::{LinearRgbImage, LinearRgbImageError};
+pub use source::{
+    AlphaMode, GraySlice, ImageSource, PixelFormat, Rgb16Slice, RgbSlice, RgbaSlice,
+    SrgbF32Image, SrgbF32Slice, StridedBytes, SubsetView,
+};
+#[cfg(feature = "zenpixels")]
+pub use zenpixels_compat::{UnsupportedFormat, ZenpixelsSource};
 pub use precompute::Ssimulacra2Reference;
 pub use strip::{
     HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, Ssimulacra2StripConfig, compute_ssimulacra2_strip,
@@ -242,9 +235,13 @@ impl Ssimulacra2Config {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Ssimulacra2Error {
-    /// The conversion from input image to [`yuvxyb::LinearRgb`] (via [TryFrom]) returned an [Err].
-    #[error("Failed to convert input image to linear RGB")]
-    LinearRgbConversionFailed,
+    /// An input source's byte buffer was shorter than its declared
+    /// dimensions and [`PixelFormat`](crate::PixelFormat) require.
+    #[error("Input data is {actual} bytes but the declared dimensions and format require more")]
+    InvalidInputData {
+        /// Byte length the source provided.
+        actual: usize,
+    },
 
     /// The two input images do not have the same width and height.
     #[error("Source and distorted image width and height must be equal")]
@@ -305,12 +302,13 @@ pub enum Ssimulacra2Error {
 pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 
 
-/// Computes the SSIMULACRA2 score from any input type implementing [`ToLinearRgb`].
+/// Computes the SSIMULACRA2 score from any [`ImageSource`].
 ///
-/// This is the recommended API for new code. It supports:
-/// - `imgref` types (with the `imgref` feature): `ImgRef<[u8; 3]>`, `ImgRef<[f32; 3]>`, etc.
-/// - `yuvxyb` types: `Rgb`, `LinearRgb`
-/// - Custom types implementing [`ToLinearRgb`]
+/// This is the recommended API. Any [`ImageSource`] works — the
+/// built-in [`RgbSlice`]/[`RgbaSlice`]/[`GraySlice`]/[`StridedBytes`]
+/// adapters cover raw buffers; `imgref` types need the `imgref`
+/// feature; `zenpixels` `PixelSlice`/`PixelBuffer` bridge via the
+/// `zenpixels` feature. Custom inputs implement [`ImageSource`].
 ///
 /// # Color space conventions
 /// - Integer types (`u8`, `u16`) are assumed to be sRGB (gamma-encoded)
@@ -328,8 +326,8 @@ pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 /// ```
 pub fn compute_ssimulacra2<S, D>(source: S, distorted: D) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
     compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::default())
 }
@@ -351,27 +349,27 @@ pub fn compute_ssimulacra2_with_stop<S, D>(
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
     compute_ssimulacra2_with_config_and_stop(source, distorted, Ssimulacra2Config::default(), stop)
 }
 
-/// Computes the SSIMULACRA2 score with custom configuration from [`ToLinearRgb`] inputs.
+/// Computes the SSIMULACRA2 score with custom configuration.
 pub fn compute_ssimulacra2_with_config<S, D>(
     source: S,
     distorted: D,
     config: Ssimulacra2Config,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
     compute_ssimulacra2_with_config_and_stop(source, distorted, config, &enough::Unstoppable)
 }
 
 /// Computes the SSIMULACRA2 score with custom configuration and
-/// cooperative cancellation from [`ToLinearRgb`] inputs.
+/// cooperative cancellation.
 ///
 /// See [`compute_ssimulacra2_with_stop`] for the cancellation semantics.
 fn compute_ssimulacra2_with_config_and_stop<S, D>(
@@ -381,8 +379,8 @@ fn compute_ssimulacra2_with_config_and_stop<S, D>(
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
     let kernel = pipeline::Kernel::from_impl(config.impl_type);
     compute_pair(source, distorted, kernel, stop)
@@ -391,10 +389,9 @@ where
 /// Core pair-scoring entry: the reference SSIMULACRA2.1 pipeline
 /// reproduced bit-for-bit.
 ///
-/// Inputs that carry encoded sRGB data (`to_encoded_srgb`) are
-/// linearized through the captured reference LUTs; already-linear
-/// inputs are used as-is (the reference binary never sees such inputs,
-/// so bit-exactness there is undefined).
+/// Encoded sRGB inputs are linearized through the captured reference
+/// LUTs; already-linear inputs are used as-is (the reference binary
+/// never sees such inputs, so bit-exactness there is undefined).
 fn compute_pair<S, D>(
     source: S,
     distorted: D,
@@ -402,77 +399,104 @@ fn compute_pair<S, D>(
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
-    let enc1 = source.to_encoded_srgb();
-    let enc2 = distorted.to_encoded_srgb();
-    if let (Some(e1), Some(e2)) = (&enc1, &enc2) {
+    use source::PreparedInput;
+
+    let p1 = source::funnel(&source)?;
+    let p2 = source::funnel(&distorted)?;
+
+    if let (PreparedInput::Encoded(e1), PreparedInput::Encoded(e2)) = (&p1, &p2) {
         // Sub-8px inputs: the reference binary refuses them, but the
         // crate's `compute_ssimulacra2` contract scores down to 1×1 via
         // mirror padding — apply it on encoded planes (per-pixel LUT ⇒
         // identical to padding post-linearization, and stays U8-exact).
-        let p1 = e1.reflect_padded(8);
-        let p2 = e2.reflect_padded(8);
-        return pipeline::compute_encoded_stop(&p1, &p2, kernel, stop);
+        let q1 = e1.reflect_padded(8);
+        let q2 = e2.reflect_padded(8);
+        return pipeline::compute_encoded_stop(&q1, &q2, kernel, stop);
     }
 
-    fn planes<T: ToLinearRgb>(t: &T) -> ([Vec<f32>; 3], usize, usize) {
-        let img = t.to_linear_rgb();
-        let (w, h) = (img.width(), img.height());
-        let mut p = [
-            Vec::with_capacity(w * h),
-            Vec::with_capacity(w * h),
-            Vec::with_capacity(w * h),
-        ];
-        for px in img.data() {
-            p[0].push(px[0]);
-            p[1].push(px[1]);
-            p[2].push(px[2]);
-        }
-        (p, w, h)
-    }
-
-    let (lin1, w1, h1) = planes(&source);
-    let (lin2, w2, h2) = planes(&distorted);
+    let (w1, h1) = p1.dims();
+    let (w2, h2) = p2.dims();
     if w1 != w2 || h1 != h2 {
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
     }
-    // Same sub-8px crate contract for the linear-input fallback: pad
-    // planes via the encoded-pad equivalent on linear data (per-pixel
-    // semantics already applied by to_linear_rgb).
-    if w1 < 8 || h1 < 8 {
-        let pw = w1.max(8);
-        let ph = h1.max(8);
-        let pad = |p: [Vec<f32>; 3]| {
-            p.map(|data| {
-                let mut out = Vec::with_capacity(pw * ph);
-                for y in 0..ph {
-                    let row = reflect_index(y, h1) * w1;
-                    for x in 0..pw {
-                        out.push(data[row + reflect_index(x, w1)]);
-                    }
-                }
-                out
-            })
+
+    let has_alpha = prepared_has_alpha(&p1) || prepared_has_alpha(&p2);
+
+    // Linear-side mirror padding to the 8px pyramid floor (crate contract;
+    // the reference binary refuses such inputs — padding is our extension).
+    let (pw, ph) = (w1.max(8), h1.max(8));
+    let opts = pipeline::Opts { kernel };
+
+    // Reference alpha compositing: min over two backgrounds (0.1 / 0.9
+    // encoded). Linear inputs replicate it with the linearized bg.
+    let eval = |bg: f32, p1: &PreparedInput, p2: &PreparedInput| -> Result<f64, Ssimulacra2Error> {
+        let l1 = linearize_prepared(p1, w1, bg);
+        let l2 = linearize_prepared(p2, w2, bg);
+        let (l1, l2) = if pw != w1 || ph != h1 {
+            (pad_planes(l1, w1, h1, pw, ph), pad_planes(l2, w2, h2, pw, ph))
+        } else {
+            (l1, l2)
         };
-        return pipeline::compute_planar_stop(
-            pad(lin1),
-            pad(lin2),
-            pw,
-            ph,
-            pipeline::Opts { kernel },
-            stop,
-        );
+        pipeline::compute_planar_stop(l1, l2, pw, ph, opts, stop)
+    };
+
+    if has_alpha {
+        Ok(eval(0.1, &p1, &p2)?.min(eval(0.9, &p1, &p2)?))
+    } else {
+        eval(0.5, &p1, &p2)
     }
-    pipeline::compute_planar_stop(
-        lin1,
-        lin2,
-        w1,
-        h1,
-        pipeline::Opts { kernel: pipeline::Kernel::Simd },
-        stop,
-    )
+}
+
+pub(crate) fn prepared_has_alpha(p: &source::PreparedInput) -> bool {
+    match p {
+        source::PreparedInput::Encoded(e) => e.alpha.is_some(),
+        source::PreparedInput::Linear { alpha, .. } => alpha.is_some(),
+    }
+}
+
+
+/// Linearize a funnelled input: encoded data goes through the reference
+/// LUTs (alpha premultiplied onto `bg` in encoded space), linear planes
+/// premultiply alpha onto `srgb_to_linear(bg)` for parity.
+pub(crate) fn linearize_prepared(p: &source::PreparedInput, _w: usize, bg: f32) -> [Vec<f32>; 3] {
+    match p {
+        source::PreparedInput::Encoded(e) => pipeline::linearize(e, bg),
+        source::PreparedInput::Linear { planes, alpha, .. } => match alpha {
+            None => planes.clone(),
+            Some(a) => {
+                let bg_lin = input::srgb_to_linear(bg);
+                planes.clone().map(|ch| {
+                    ch.iter()
+                        .zip(a.iter())
+                        .map(|(&v, &af)| af * v + (1.0 - af) * bg_lin)
+                        .collect()
+                })
+            }
+        },
+    }
+}
+
+/// Reflect-101 pad linear planes to `pw × ph` (original at top-left).
+pub(crate) fn pad_planes(
+    planes: [Vec<f32>; 3],
+    w: usize,
+    h: usize,
+    pw: usize,
+    ph: usize,
+) -> [Vec<f32>; 3] {
+    planes.map(|data| {
+        let mut out = Vec::with_capacity(pw * ph);
+        for y in 0..ph {
+            let row = reflect_index(y, h) * w;
+            for x in 0..pw {
+                out.push(data[row + reflect_index(x, w)]);
+            }
+        }
+        out
+    })
 }
 
 /// Reflect-101 index map (OpenCV `BORDER_REFLECT_101`): fold an
@@ -492,40 +516,15 @@ pub(crate) fn reflect_index(i: usize, n: usize) -> usize {
     k
 }
 
-/// Reflect(mirror)-pad a [`LinearRgbImage`] up to `min` px on each axis
-/// so SSIMULACRA2's multi-scale pyramid can form on images below the 8px
-/// floor. Returns the input unchanged when already ≥ `min` on both axes
-/// (or empty — that falls through to the `InvalidImageSize` check). The
-/// original pixels occupy the top-left `w × h` region of the result.
-pub(crate) fn reflect_pad_linear(img: LinearRgbImage, min: usize) -> LinearRgbImage {
-    let (w, h) = (img.width(), img.height());
-    if w == 0 || h == 0 {
-        return img;
-    }
-    let (pw, ph) = (w.max(min), h.max(min));
-    if pw == w && ph == h {
-        return img;
-    }
-    let src = img.data();
-    let mut out = Vec::with_capacity(pw * ph);
-    for y in 0..ph {
-        let row = reflect_index(y, h) * w;
-        for x in 0..pw {
-            out.push(src[row + reflect_index(x, w)]);
-        }
-    }
-    LinearRgbImage::new(out, pw, ph)
-}
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
     use std::path::PathBuf;
 
     use super::*;
-    use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
-    fn tank_rgb() -> (Rgb, Rgb) {
+    /// sRGB-encoded f32 raster — the on-grid encoded-input path.
+    fn tank_rgb() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, u32, u32) {
         let mk = |name: &str| {
             let img = image::open(
                 PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -533,27 +532,22 @@ mod tests {
                     .join(name),
             )
             .unwrap();
-            let data = img
-                .to_rgb32f()
-                .as_chunks::<3>()
-                .0
-                .to_vec();
-            Rgb::new(
-                data,
-                NonZeroUsize::new(img.width() as usize).unwrap(),
-                NonZeroUsize::new(img.height() as usize).unwrap(),
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap()
+            (img.to_rgb32f().as_chunks::<3>().0.to_vec(), img.width(), img.height())
         };
-        (mk("tank_source.png"), mk("tank_distorted.png"))
+        let (d1, w1, h1) = mk("tank_source.png");
+        let (d2, w2, h2) = mk("tank_distorted.png");
+        assert_eq!((w1, h1), (w2, h2));
+        (d1, d2, w1, h1)
     }
 
     #[test]
     fn test_ssimulacra2() {
-        let (source, distorted) = tank_rgb();
-        let score = compute_ssimulacra2(source, distorted).unwrap();
+        let (s, d, w, h) = tank_rgb();
+        let score = compute_ssimulacra2(
+            SrgbF32Slice::new(&s, w as usize, h as usize),
+            SrgbF32Slice::new(&d, w as usize, h as usize),
+        )
+        .unwrap();
         assert!(
             (17.0..=18.0).contains(&score),
             "tank score {score} outside expected band (ref-decoder ~17.4)"
@@ -587,37 +581,26 @@ mod tests {
         };
         let (a8, b8) = (mk(&s), mk(&d));
         let mkr = |img: &image::RgbImage| {
-            let data: Vec<[f32; 3]> = img
-                .pixels()
+            img.pixels()
                 .map(|p| [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0])
-                .collect();
-            Rgb::new(
-                data,
-                NonZeroUsize::new(w as usize).unwrap(),
-                NonZeroUsize::new(h as usize).unwrap(),
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap()
+                .collect::<Vec<[f32; 3]>>()
         };
+        let (af, bf) = (mkr(&s), mkr(&d));
         let score_u8 = compute_ssimulacra2(a8.as_ref(), b8.as_ref()).unwrap();
-        let score_f32 = compute_ssimulacra2(mkr(&s), mkr(&d)).unwrap();
+        let score_f32 = compute_ssimulacra2(
+            SrgbF32Slice::new(&af, w as usize, h as usize),
+            SrgbF32Slice::new(&bf, w as usize, h as usize),
+        )
+        .unwrap();
         assert_eq!(
             score_u8, score_f32,
             "u8 {score_u8} vs on-grid f32 {score_f32} differ — grid snap broken"
         );
     }
 
-    /// Construct a `yuvxyb::LinearRgb` of the requested dimensions filled
-    /// with mid-gray.
-    fn make_linear_rgb(width: usize, height: usize) -> yuvxyb::LinearRgb {
-        let data = vec![[0.5f32, 0.5, 0.5]; width * height];
-        yuvxyb::LinearRgb::new(
-            data,
-            NonZeroUsize::new(width).unwrap(),
-            NonZeroUsize::new(height).unwrap(),
-        )
-        .unwrap()
+    /// Construct a mid-gray linear image.
+    fn make_linear_rgb(width: usize, height: usize) -> LinearRgbImage {
+        LinearRgbImage::new(vec![[0.5f32, 0.5, 0.5]; width * height], width, height)
     }
 
     #[test]
@@ -664,12 +647,7 @@ mod tests {
         }
         // A real sub-8 difference yields a finite score below 100.
         let a = make_linear_rgb(5, 5);
-        let b = yuvxyb::LinearRgb::new(
-            vec![[0.9f32, 0.1, 0.2]; 25],
-            NonZeroUsize::new(5).unwrap(),
-            NonZeroUsize::new(5).unwrap(),
-        )
-        .unwrap();
+        let b = LinearRgbImage::new(vec![[0.9f32, 0.1, 0.2]; 25], 5, 5);
         let s = compute_ssimulacra2_with_config(a, b, Ssimulacra2Config::default())
             .expect("5x5 differing pair must score");
         assert!(s.is_finite() && s < 100.0, "5x5 differing score {s}");
@@ -677,14 +655,20 @@ mod tests {
 
     #[test]
     fn test_scalar_kernels_bit_identical() {
-        let (a, b) = tank_rgb();
+        let (sa, sb, w, h) = tank_rgb();
+        let (w, h) = (w as usize, h as usize);
         let simd = compute_ssimulacra2_with_config(
-            a.clone(),
-            b.clone(),
+            SrgbF32Slice::new(&sa, w, h),
+            SrgbF32Slice::new(&sb, w, h),
             Ssimulacra2Config::simd(),
         )
         .unwrap();
-        let scalar = compute_ssimulacra2_with_config(a, b, Ssimulacra2Config::scalar()).unwrap();
+        let scalar = compute_ssimulacra2_with_config(
+            SrgbF32Slice::new(&sa, w, h),
+            SrgbF32Slice::new(&sb, w, h),
+            Ssimulacra2Config::scalar(),
+        )
+        .unwrap();
         assert_eq!(simd, scalar, "scalar vs simd kernel mismatch");
     }
 }

@@ -45,17 +45,11 @@
 //! ## Example
 //!
 //! ```
-//! use fast_ssim2::compute_ssimulacra2_strip;
-//! use yuvxyb::{Rgb, TransferCharacteristic, ColorPrimaries};
-//! use std::num::NonZeroUsize;
+//! use fast_ssim2::{compute_ssimulacra2_strip, RgbSlice};
 //!
-//! let data: Vec<[f32; 3]> = vec![[0.5, 0.5, 0.5]; 256 * 256];
-//! let w = NonZeroUsize::new(256).unwrap();
-//! let h = NonZeroUsize::new(256).unwrap();
-//! let source = Rgb::new(data.clone(), w, h,
-//!     TransferCharacteristic::SRGB, ColorPrimaries::BT709).unwrap();
-//! let distorted = Rgb::new(data, w, h,
-//!     TransferCharacteristic::SRGB, ColorPrimaries::BT709).unwrap();
+//! let data: Vec<[u8; 3]> = vec![[128, 128, 128]; 256 * 256];
+//! let source = RgbSlice::new(&data, 256, 256);
+//! let distorted = RgbSlice::new(&data, 256, 256);
 //!
 //! // Process in strips of 64 rows each.
 //! let score = compute_ssimulacra2_strip(source, distorted, 64).unwrap();
@@ -81,10 +75,10 @@
 //! For full strip mode on both sides, use [`compute_ssimulacra2_strip`]
 //! directly.
 
-use crate::input::ToLinearRgb;
+use crate::ImageSource;
 use crate::pipeline::{Kernel, Opts};
 use crate::precompute::Ssimulacra2Reference;
-use crate::{LinearRgbImage, Ssimulacra2Config, Ssimulacra2Error};
+use crate::{Ssimulacra2Config, Ssimulacra2Error};
 
 /// Default number of halo rows above and below each strip.
 ///
@@ -188,8 +182,8 @@ pub fn compute_ssimulacra2_strip<S, D>(
     strip_height: u32,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
     compute_ssimulacra2_strip_with_config_and_stop(
         source,
@@ -214,8 +208,8 @@ pub fn compute_ssimulacra2_strip_with_stop<S, D>(
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
     compute_ssimulacra2_strip_with_config_and_stop(
         source,
@@ -237,8 +231,8 @@ pub fn compute_ssimulacra2_strip_with_config<S, D>(
     config: Ssimulacra2StripConfig,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
     compute_ssimulacra2_strip_with_config_and_stop(
         source,
@@ -251,10 +245,10 @@ where
 
 /// Strip entry point.
 ///
-/// Inputs with an encoded form (`to_encoded_srgb`) are sliced per strip
+/// Inputs with an encoded sRGB pixel format are sliced per strip
 /// in encoded space and linearized through the reference-captured LUT —
-/// the same bit-exact path as [`crate::compute_ssimulacra2`]. Inputs
-/// without an encoded form take the linear-planes variant.
+/// the same bit-exact path as [`crate::compute_ssimulacra2`]. `LinearF32*`
+/// inputs take the linear-planes variant.
 fn compute_ssimulacra2_strip_with_config_and_stop<S, D>(
     source: S,
     distorted: D,
@@ -263,18 +257,20 @@ fn compute_ssimulacra2_strip_with_config_and_stop<S, D>(
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error>
 where
-    S: ToLinearRgb,
-    D: ToLinearRgb,
+    S: ImageSource,
+    D: ImageSource,
 {
+    use crate::source::PreparedInput;
+
     if strip_height < MIN_STRIP_HEIGHT as u32 {
         return Err(Ssimulacra2Error::InvalidImageSize);
     }
     let opts = Opts {
         kernel: Kernel::from_impl(config.inner.impl_type),
     };
-    let e1 = source.to_encoded_srgb();
-    let e2 = distorted.to_encoded_srgb();
-    if let (Some(e1), Some(e2)) = (&e1, &e2) {
+    let p1 = crate::source::funnel(&source)?;
+    let p2 = crate::source::funnel(&distorted)?;
+    if let (PreparedInput::Encoded(e1), PreparedInput::Encoded(e2)) = (&p1, &p2) {
         // Same sub-8px crate contract as the pair path — pad encoded
         // planes (per-pixel LUT ⇒ U8-exact, identical to padding
         // post-linearization).
@@ -290,63 +286,42 @@ where
             stop,
         );
     }
-    let img1: LinearRgbImage = source.into_linear_rgb();
-    let img2: LinearRgbImage = distorted.into_linear_rgb();
-    let (w1, h1) = (img1.width(), img1.height());
-    let (w2, h2) = (img2.width(), img2.height());
+    let (w1, h1) = p1.dims();
+    let (w2, h2) = p2.dims();
     if w1 != w2 || h1 != h2 {
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
     }
-    let mut p1 = linear_strip_planes(&img1);
-    let mut p2 = linear_strip_planes(&img2);
-    let (w, h) = if w1 < 8 || h1 < 8 {
-        let (pw, ph) = (w1.max(8), h1.max(8));
-        let pad = |p: [Vec<f32>; 3]| {
-            p.map(|data| {
-                let mut out = Vec::with_capacity(pw * ph);
-                for y in 0..ph {
-                    let row = crate::reflect_index(y, h1) * w1;
-                    for x in 0..pw {
-                        out.push(data[row + crate::reflect_index(x, w1)]);
-                    }
-                }
-                out
-            })
+    let has_alpha = crate::prepared_has_alpha(&p1) || crate::prepared_has_alpha(&p2);
+    let strip_once = |bg: f32| -> Result<f64, Ssimulacra2Error> {
+        let mut a = crate::linearize_prepared(&p1, w1, bg);
+        let mut b = crate::linearize_prepared(&p2, w2, bg);
+        let (w, h) = if w1 < 8 || h1 < 8 {
+            let (pw, ph) = (w1.max(8), h1.max(8));
+            a = crate::pad_planes(a, w1, h1, pw, ph);
+            b = crate::pad_planes(b, w2, h2, pw, ph);
+            (pw, ph)
+        } else {
+            (w1, h1)
         };
-        p1 = pad(p1);
-        p2 = pad(p2);
-        (pw, ph)
-    } else {
-        (w1, h1)
+        crate::pipeline::strip::compute_linear_strip_stop(
+            &a,
+            &b,
+            w,
+            h,
+            strip_height as usize,
+            config.halo_rows,
+            opts,
+            config.parallel_strips,
+            stop,
+        )
     };
-    crate::pipeline::strip::compute_linear_strip_stop(
-        &p1,
-        &p2,
-        w,
-        h,
-        strip_height as usize,
-        config.halo_rows,
-        opts,
-        config.parallel_strips,
-        stop,
-    )
+    if has_alpha {
+        Ok(strip_once(0.1)?.min(strip_once(0.9)?))
+    } else {
+        strip_once(0.5)
+    }
 }
 
-/// Deinterleave a [`LinearRgbImage`] into `[r, g, b]` planes.
-fn linear_strip_planes(img: &LinearRgbImage) -> [Vec<f32>; 3] {
-    let n = img.width() * img.height();
-    let mut p = [
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-        Vec::with_capacity(n),
-    ];
-    for px in img.data() {
-        p[0].push(px[0]);
-        p[1].push(px[1]);
-        p[2].push(px[2]);
-    }
-    p
-}
 
 impl Ssimulacra2Reference {
     /// Compare a distorted image against the precomputed reference
@@ -365,7 +340,7 @@ impl Ssimulacra2Reference {
     /// # Errors
     /// - If the distorted image dimensions don't match the reference
     /// - If `strip_height < 8`
-    pub fn compare_strip<T: ToLinearRgb>(
+    pub fn compare_strip<T: ImageSource>(
         &self,
         distorted: T,
         strip_height: u32,
@@ -381,7 +356,7 @@ impl Ssimulacra2Reference {
     ///
     /// # Errors
     /// As [`Ssimulacra2Reference::compare_strip`], plus `Cancelled`.
-    pub fn compare_strip_with_stop<T: ToLinearRgb>(
+    pub fn compare_strip_with_stop<T: ImageSource>(
         &self,
         distorted: T,
         strip_height: u32,
@@ -399,7 +374,7 @@ impl Ssimulacra2Reference {
     ///
     /// # Errors
     /// As [`Ssimulacra2Reference::compare_strip`].
-    pub fn compare_strip_with_config<T: ToLinearRgb>(
+    pub fn compare_strip_with_config<T: ImageSource>(
         &self,
         distorted: T,
         strip_height: u32,
@@ -417,7 +392,7 @@ impl Ssimulacra2Reference {
     ///
     /// # Errors
     /// As [`Ssimulacra2Reference::compare_strip_with_config`], plus `Cancelled`.
-    pub fn compare_strip_with_config_and_stop<T: ToLinearRgb>(
+    pub fn compare_strip_with_config_and_stop<T: ImageSource>(
         &self,
         distorted: T,
         strip_height: u32,
@@ -428,31 +403,45 @@ impl Ssimulacra2Reference {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
         let cache = self.cache();
-        if let Some(e2) = distorted.to_encoded_srgb() {
-            let p2 = e2.reflect_padded(8);
-            if p2.width != cache.width() || p2.height != cache.height() {
-                return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+        let p = crate::source::funnel(&distorted)?;
+        match p {
+            crate::source::PreparedInput::Encoded(e2) => {
+                let p2 = e2.reflect_padded(8);
+                if p2.width != cache.width() || p2.height != cache.height() {
+                    return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+                }
+                cache.compare_strip_stop(
+                    &p2,
+                    strip_height as usize,
+                    config.halo_rows,
+                    config.parallel_strips,
+                    stop,
+                )
             }
-            return cache.compare_strip_stop(
-                &p2,
-                strip_height as usize,
-                config.halo_rows,
-                config.parallel_strips,
-                stop,
-            );
+            crate::source::PreparedInput::Linear { .. } => {
+                // Linear side — compare against every ref stack; the
+                // stack's bg drives the dist-side premultiply.
+                let bgs: &[f32] = if cache.has_alpha() { &[0.1, 0.9] } else { &[0.5] };
+                let mut best = f64::INFINITY;
+                for (si, &bg) in bgs.iter().enumerate() {
+                    let planes = crate::linearize_prepared(&p, cache.width(), bg);
+                    let (pw, ph) = (cache.width(), cache.height());
+                    let planes = if p.dims() != (pw, ph) {
+                        crate::pad_planes(planes, p.dims().0, p.dims().1, pw, ph)
+                    } else {
+                        planes
+                    };
+                    best = best.min(cache.compare_strip_linear_stack(
+                        si,
+                        &planes,
+                        strip_height as usize,
+                        config.halo_rows,
+                        config.parallel_strips,
+                        stop,
+                    )?);
+                }
+                Ok(best)
+            }
         }
-        // Linear-input fallback — same rules as the non-strip path.
-        let padded = crate::reflect_pad_linear(distorted.into_linear_rgb(), 8);
-        let (pw, ph) = (padded.width(), padded.height());
-        if (pw, ph) != (cache.width(), cache.height()) {
-            return Err(Ssimulacra2Error::NonMatchingImageDimensions);
-        }
-        cache.compare_strip_linear(
-            &linear_strip_planes(&padded),
-            strip_height as usize,
-            config.halo_rows,
-            config.parallel_strips,
-            stop,
-        )
     }
 }

@@ -10,7 +10,7 @@ use fast_ssim2::compute_ssimulacra2;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "video")]
 use yuvxyb::MatrixCoefficients;
-use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
+
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -177,14 +177,11 @@ fn compare_images(source: &Path, distorted: &Path) {
         .map(|chunk| [chunk[0], chunk[1], chunk[2]])
         .collect::<Vec<_>>();
 
-    let source_data = Rgb::new(
+    let source_data = fast_ssim2::SrgbF32Image::new(
         source_data,
-        std::num::NonZeroUsize::new(source.width() as usize).unwrap(),
-        std::num::NonZeroUsize::new(source.height() as usize).unwrap(),
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .expect("Failed to process source_data into RGB");
+        source.width() as usize,
+        source.height() as usize,
+    );
 
     let distorted_data = distorted
         .to_rgb32f()
@@ -192,14 +189,11 @@ fn compare_images(source: &Path, distorted: &Path) {
         .map(|chunk| [chunk[0], chunk[1], chunk[2]])
         .collect::<Vec<_>>();
 
-    let distorted_data = Rgb::new(
+    let distorted_data = fast_ssim2::SrgbF32Image::new(
         distorted_data,
-        std::num::NonZeroUsize::new(distorted.width() as usize).unwrap(),
-        std::num::NonZeroUsize::new(distorted.height() as usize).unwrap(),
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .expect("Failed to process distorted_data into RGB");
+        distorted.width() as usize,
+        distorted.height() as usize,
+    );
 
     let result = compute_ssimulacra2(source_data, distorted_data)
         .expect("Failed to calculate ssimulacra2");

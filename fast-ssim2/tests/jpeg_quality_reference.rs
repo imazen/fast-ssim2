@@ -13,7 +13,7 @@
 use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
-use yuvxyb::Rgb;
+use fast_ssim2::SrgbF32Image;
 
 /// JPEG quality test case with C++ verified score
 struct JpegQualityCase {
@@ -57,7 +57,7 @@ fn test_data_path() -> PathBuf {
         .join("jpeg_quality")
 }
 
-fn load_image(filename: &str) -> Rgb {
+fn load_image(filename: &str) -> SrgbF32Image {
     let path = test_data_path().join(filename);
     let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
         // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
@@ -90,14 +90,7 @@ fn load_image(filename: &str) -> Rgb {
         })
         .collect();
 
-    Rgb::new(
-        data,
-        std::num::NonZeroUsize::new(width as usize).unwrap(),
-        std::num::NonZeroUsize::new(height as usize).unwrap(),
-        yuvxyb::TransferCharacteristic::SRGB,
-        yuvxyb::ColorPrimaries::BT709,
-    )
-    .expect("Failed to create Rgb")
+    SrgbF32Image::new(data, width as usize, height as usize)
 }
 
 #[test]

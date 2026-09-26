@@ -4,7 +4,7 @@
 
 use fast_ssim2::{Ssimulacra2Reference, compute_ssimulacra2};
 use std::time::Instant;
-use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::SrgbF32Image;
 
 fn main() {
     let sizes = [(256, 256), (512, 512), (1024, 1024), (1920, 1080)];
@@ -33,14 +33,7 @@ fn main() {
         let nz_width = std::num::NonZeroUsize::new(width).unwrap();
         let nz_height = std::num::NonZeroUsize::new(height).unwrap();
         let mk = |d: &Vec<[f32; 3]>| {
-            Rgb::new(
-                d.clone(),
-                nz_width,
-                nz_height,
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap()
+            SrgbF32Image::new(d.clone(), nz_width.get(), nz_height.get())
         };
 
         // One-shot

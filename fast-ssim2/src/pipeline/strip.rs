@@ -472,7 +472,7 @@ pub(crate) fn accumulate_strips_cached(
                      &(int_s, int_e, sy0, sy1): &(usize, usize, usize, usize)| {
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let lin2 = strip_lin(sy0, sy1);
-        Ok(process_strip_cached(
+        Ok::<_, Ssimulacra2Error>(process_strip_cached(
             lin2, refstack, sy0, w, sy1 - sy0, int_s - sy0, int_e - sy0,
             n_scales, opts, scratch,
         ))
@@ -565,7 +565,7 @@ fn accumulate_strips(
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let lin1 = strip_lin(0, sy0, sy1);
         let lin2 = strip_lin(1, sy0, sy1);
-        Ok(process_strip(
+        Ok::<_, Ssimulacra2Error>(process_strip(
             lin1, lin2, w, sy1 - sy0, int_s - sy0, int_e - sy0, n_scales, opts, scratch,
         ))
     };

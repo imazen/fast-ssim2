@@ -3,9 +3,7 @@
 //   manifest lines: source.png,distorted.png[,tag]
 // Output CSV: tag,score
 use enough::Unstoppable;
-use fast_ssim2::ToLinearRgb;
 use fast_ssim2::pipeline::{self, EncodedData, EncodedSrgb, Kernel};
-use imgref::ImgVec;
 use std::fmt::Write as _;
 use zenjpeg::decoder::Decoder;
 use zenjpeg::decoder::PixelFormat;
@@ -37,19 +35,27 @@ fn load(path: &str) -> EncodedSrgb {
     if img.color().has_alpha() {
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
-        let a = ImgVec::new(
-            rgba.pixels().map(|p| [p[0], p[1], p[2], p[3]]).collect::<Vec<_>>(),
-            w as usize, h as usize,
-        );
-        return a.as_ref().to_encoded_srgb().unwrap();
+        let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
+        let mut alpha = Vec::with_capacity(rgba.len() / 4);
+        for px in rgba.as_raw().as_chunks::<4>().0 {
+            rgb.extend_from_slice(&px[..3]);
+            alpha.push(px[3] as f32 * (1.0 / 255.0));
+        }
+        return EncodedSrgb {
+            width: w as usize,
+            height: h as usize,
+            data: EncodedData::U8(rgb),
+            alpha: Some(alpha),
+        };
     }
     let rgb = img.to_rgb8();
     let (w, h) = rgb.dimensions();
-    let a = ImgVec::new(
-        rgb.pixels().map(|p| [p[0], p[1], p[2]]).collect::<Vec<_>>(),
-        w as usize, h as usize,
-    );
-    a.as_ref().to_encoded_srgb().unwrap()
+    EncodedSrgb {
+        width: w as usize,
+        height: h as usize,
+        data: EncodedData::U8(rgb.into_raw()),
+        alpha: None,
+    }
 }
 
 fn main() {

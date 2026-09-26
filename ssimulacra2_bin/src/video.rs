@@ -168,9 +168,20 @@ fn calc_score<S: Pixel, D: Pixel, E: Decoder, F: Decoder>(
     let src_yuv = Yuv::new(src_frame, *src_yuvcfg).unwrap();
     let dst_yuv = Yuv::new(dst_frame, *dst_yuvcfg).unwrap();
 
+    // YUV → linear RGB via yuvxyb (matrix+transfer+ranging), then the
+    // metric's linear-input path — same semantics as the removed
+    // compute_frame_ssimulacra2.
+    let conv = |y: &Yuv<u8>| -> fast_ssim2::LinearRgbImage {
+        let lin = yuvxyb::LinearRgb::try_from(y.clone())
+            .expect("Yuv to LinearRgb conversion failed");
+        let (w, h) = (lin.width().get(), lin.height().get());
+        fast_ssim2::LinearRgbImage::new(lin.into_data(), w, h)
+    };
+    let (src_lin, dst_lin) = (conv(&src_yuv), conv(&dst_yuv));
+
     Some((
         frame_idx,
-        compute_ssimulacra2(src_yuv, dst_yuv).expect("Failed to calculate ssimulacra2"),
+        compute_ssimulacra2(src_lin, dst_lin).expect("Failed to calculate ssimulacra2"),
     ))
 }
 

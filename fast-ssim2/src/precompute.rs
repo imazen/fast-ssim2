@@ -12,7 +12,7 @@
 //! Strip variants ([`Ssimulacra2Reference::compare_strip`]) bound the
 //! distorted side's memory the same way as [`crate::compute_ssimulacra2_strip`].
 
-use crate::input::ToLinearRgb;
+use crate::ImageSource;
 use crate::pipeline::precompute::ReferenceCache;
 use crate::{MAX_IMAGE_PIXELS, Ssimulacra2Config, Ssimulacra2Error};
 
@@ -40,57 +40,67 @@ pub struct Ssimulacra2Reference {
 impl Ssimulacra2Reference {
     /// Precompute the reference pipeline for `source`.
     ///
-    /// `to_encoded_srgb` inputs (u8/u16/f32 sRGB) take the encoded path
-    /// — bit-identical to [`crate::compute_ssimulacra2`]; inputs without
-    /// an encoded form build the cache from their linear planes.
+    /// Encoded sRGB inputs (`Srgb*` pixel formats) take the LUT-exact
+    /// encoded path — bit-identical to [`crate::compute_ssimulacra2`];
+    /// `LinearF32*` inputs build the cache from their linear planes.
     ///
     /// # Errors
     /// - [`Ssimulacra2Error::InvalidImageSize`] if the image is empty
     ///   (0×0).
     /// - [`Ssimulacra2Error::ImageTooLarge`] if the (padded) image
     ///   exceeds [`MAX_IMAGE_PIXELS`].
-    pub fn new<T: ToLinearRgb>(source: T) -> Result<Self, Ssimulacra2Error> {
+    pub fn new<T: ImageSource>(source: T) -> Result<Self, Ssimulacra2Error> {
         Self::new_with_config(source, Ssimulacra2Config::default())
     }
 
     /// [`Self::new`] with explicit kernel selection — `impl_type`
     /// chooses the scalar-oracle or SIMD kernels (bit-identical output).
-    pub fn new_with_config<T: ToLinearRgb>(
+    pub fn new_with_config<T: ImageSource>(
         source: T,
         config: Ssimulacra2Config,
     ) -> Result<Self, Ssimulacra2Error> {
         let _ = config; // kernel selection is internal; all kernels are bit-identical
-        if let Some(e) = source.to_encoded_srgb() {
-            let ow = e.width;
-            let oh = e.height;
-            let padded = e.reflect_padded(8);
-            if padded.width * padded.height > MAX_IMAGE_PIXELS {
-                return Err(Ssimulacra2Error::ImageTooLarge {
-                    actual: padded.width * padded.height,
-                });
+        use crate::source::PreparedInput;
+        match crate::source::funnel(&source)? {
+            PreparedInput::Encoded(e) => {
+                let ow = e.width;
+                let oh = e.height;
+                let padded = e.reflect_padded(8);
+                if padded.width * padded.height > MAX_IMAGE_PIXELS {
+                    return Err(Ssimulacra2Error::ImageTooLarge {
+                        actual: padded.width * padded.height,
+                    });
+                }
+                Ok(Self {
+                    cache: ReferenceCache::new(&padded)?,
+                    original_width: ow,
+                    original_height: oh,
+                })
             }
-            return Ok(Self {
-                cache: ReferenceCache::new(&padded)?,
-                original_width: ow,
-                original_height: oh,
-            });
+            p @ PreparedInput::Linear { .. } => {
+                let (ow, oh) = p.dims();
+                let (w, h) = (ow.max(8), oh.max(8));
+                if w * h > MAX_IMAGE_PIXELS {
+                    return Err(Ssimulacra2Error::ImageTooLarge { actual: w * h });
+                }
+                // Reference alpha compositing — two backgrounds on the ref
+                // side; linear premult uses the linearized bg.
+                let has_alpha = crate::prepared_has_alpha(&p);
+                let sets = if has_alpha {
+                    vec![
+                        pad_or_pass(crate::linearize_prepared(&p, w, 0.1), ow, oh, w, h),
+                        pad_or_pass(crate::linearize_prepared(&p, w, 0.9), ow, oh, w, h),
+                    ]
+                } else {
+                    vec![pad_or_pass(crate::linearize_prepared(&p, w, 0.5), ow, oh, w, h)]
+                };
+                Ok(Self {
+                    cache: ReferenceCache::new_linear_sets(sets, w, h, has_alpha)?,
+                    original_width: ow,
+                    original_height: oh,
+                })
+            }
         }
-        let img = source.into_linear_rgb();
-        let (ow, oh) = (img.width(), img.height());
-        let img = crate::reflect_pad_linear(img, 8);
-        let (w, h) = (img.width(), img.height());
-        if w == 0 || h == 0 {
-            return Err(Ssimulacra2Error::InvalidImageSize);
-        }
-        if w * h > MAX_IMAGE_PIXELS {
-            return Err(Ssimulacra2Error::ImageTooLarge { actual: w * h });
-        }
-        let lin = linear_planes(&img);
-        Ok(Self {
-            cache: ReferenceCache::new_linear(lin, w, h)?,
-            original_width: ow,
-            original_height: oh,
-        })
     }
 
     /// Compare a distorted image against the precomputed reference.
@@ -101,7 +111,7 @@ impl Ssimulacra2Reference {
     /// # Errors
     /// - [`Ssimulacra2Error::NonMatchingImageDimensions`] if dimensions
     ///   differ from the source used at construction.
-    pub fn compare<T: ToLinearRgb>(&self, distorted: T) -> Result<f64, Ssimulacra2Error> {
+    pub fn compare<T: ImageSource>(&self, distorted: T) -> Result<f64, Ssimulacra2Error> {
         self.compare_with_stop(distorted, &enough::Unstoppable)
     }
 
@@ -110,25 +120,41 @@ impl Ssimulacra2Reference {
     ///
     /// # Errors
     /// As [`Self::compare`], plus [`Ssimulacra2Error::Cancelled`].
-    pub fn compare_with_stop<T: ToLinearRgb>(
+    pub fn compare_with_stop<T: ImageSource>(
         &self,
         distorted: T,
         stop: &dyn enough::Stop,
     ) -> Result<f64, Ssimulacra2Error> {
-        if let Some(e) = distorted.to_encoded_srgb() {
-            if e.width != self.original_width || e.height != self.original_height {
-                return Err(Ssimulacra2Error::NonMatchingImageDimensions);
-            }
-            let padded = e.reflect_padded(8);
-            return self.cache.compare_stop(&padded, stop);
-        }
-        let img = distorted.into_linear_rgb();
-        if img.width() != self.original_width || img.height() != self.original_height {
+        use crate::source::PreparedInput;
+        let p = crate::source::funnel(&distorted)?;
+        if p.dims() != (self.original_width, self.original_height) {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
-        let img = crate::reflect_pad_linear(img, 8);
-        self.cache
-            .compare_linear_stop(linear_planes(&img), img.width(), img.height(), stop)
+        match p {
+            PreparedInput::Encoded(e) => {
+                let padded = e.reflect_padded(8);
+                self.cache.compare_stop(&padded, stop)
+            }
+            p @ PreparedInput::Linear { .. } => {
+                let (w, h) = (self.cache.width(), self.cache.height());
+                // Evaluate dist against each ref stack; the stack's bg
+                // (0.1/0.9 for alpha caches, 0.5 otherwise) drives the
+                // dist-side premultiply — same pairing as compare_stop.
+                let bgs: &[f32] = if self.cache.has_alpha() { &[0.1, 0.9] } else { &[0.5] };
+                let mut best = f64::INFINITY;
+                for (si, &bg) in bgs.iter().enumerate() {
+                    let planes = pad_or_pass(
+                        crate::linearize_prepared(&p, w, bg),
+                        self.original_width,
+                        self.original_height,
+                        w,
+                        h,
+                    );
+                    best = best.min(self.cache.compare_linear_stack_stop(si, planes, w, h, stop)?);
+                }
+                Ok(best)
+            }
+        }
     }
 
     /// Source width in pixels (as supplied at construction).
@@ -155,78 +181,80 @@ impl Ssimulacra2Reference {
     }
 }
 
-/// Deinterleave a `LinearRgbImage` into `[r, g, b]` planes.
-fn linear_planes(img: &crate::LinearRgbImage) -> [Vec<f32>; 3] {
-    let mut out = [
-        Vec::with_capacity(img.width() * img.height()),
-        Vec::with_capacity(img.width() * img.height()),
-        Vec::with_capacity(img.width() * img.height()),
-    ];
-    for px in img.data() {
-        out[0].push(px[0]);
-        out[1].push(px[1]);
-        out[2].push(px[2]);
+/// Mirror-pad linear planes to the 8px pyramid floor when needed.
+fn pad_or_pass(
+    planes: [Vec<f32>; 3],
+    w: usize,
+    h: usize,
+    pw: usize,
+    ph: usize,
+) -> [Vec<f32>; 3] {
+    if pw == w && ph == h {
+        planes
+    } else {
+        crate::pad_planes(planes, w, h, pw, ph)
     }
-    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LinearRgbImage, compute_ssimulacra2, compute_ssimulacra2_with_config};
-    use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
+    use crate::{
+        LinearRgbImage, SrgbF32Slice, compute_ssimulacra2, compute_ssimulacra2_with_config,
+    };
 
-    fn rgb8(img: &image::RgbImage) -> Rgb {
+    /// sRGB-encoded f32 raster (values k/255 — on the u8 grid).
+    fn rgb8(img: &image::RgbImage) -> (Vec<[f32; 3]>, usize, usize) {
         let (w, h) = img.dimensions();
         let px: Vec<[f32; 3]> = img
             .pixels()
             .map(|p| [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0])
             .collect();
-        Rgb::new(
-            px,
-            std::num::NonZeroUsize::new(w as usize).unwrap(),
-            std::num::NonZeroUsize::new(h as usize).unwrap(),
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap()
+        (px, w as usize, h as usize)
     }
 
-    fn tank() -> (Rgb, Rgb) {
+    fn tank() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, usize, usize) {
         let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test_data");
         let mk = |name: &str| rgb8(&image::open(base.join(name)).unwrap().to_rgb8());
-        (mk("tank_source.png"), mk("tank_distorted.png"))
+        let (a, wa, ha) = mk("tank_source.png");
+        let (b, wb, hb) = mk("tank_distorted.png");
+        assert_eq!((wa, ha), (wb, hb));
+        (a, b, wa, ha)
     }
 
     #[test]
     fn test_precompute_matches_full_compute() {
-        let (a, b) = tank();
-        let full = compute_ssimulacra2(a.clone(), b.clone()).unwrap();
-        let ref_ = Ssimulacra2Reference::new(a).unwrap();
-        let cached = ref_.compare(b).unwrap();
+        let (a, b, w, h) = tank();
+        let full = compute_ssimulacra2(
+            SrgbF32Slice::new(&a, w, h),
+            SrgbF32Slice::new(&b, w, h),
+        )
+        .unwrap();
+        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
+        let cached = ref_.compare(SrgbF32Slice::new(&b, w, h)).unwrap();
         // bit-identical — same kernel family on both paths
         assert_eq!(full, cached, "one-shot {full} != cached {cached}");
     }
 
     #[test]
     fn test_precompute_scalar_matches_default() {
-        let (a, b) = tank();
+        let (a, b, w, h) = tank();
         let scalar = Ssimulacra2Reference::new_with_config(
-            a.clone(),
+            SrgbF32Slice::new(&a, w, h),
             Ssimulacra2Config::scalar(),
         )
         .unwrap();
-        let simd = Ssimulacra2Reference::new(a).unwrap();
+        let simd = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
         assert_eq!(
-            scalar.compare(b.clone()).unwrap(),
-            simd.compare(b).unwrap(),
+            scalar.compare(SrgbF32Slice::new(&b, w, h)).unwrap(),
+            simd.compare(SrgbF32Slice::new(&b, w, h)).unwrap(),
         );
     }
 
     #[test]
     fn test_precompute_dimension_mismatch() {
-        let (a, _b) = tank();
-        let ref_ = Ssimulacra2Reference::new(a.clone()).unwrap();
+        let (a, _b, w, h) = tank();
+        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
         // 1×1 — smaller than the reference; still mismatched vs the
         // 512² source.
         let tiny = LinearRgbImage::new(vec![[0.5; 3]], 1, 1);
@@ -247,20 +275,17 @@ mod tests {
                     [v as f32 / 255.0, v as f32 / 510.0, 1.0 - v as f32 / 255.0]
                 })
                 .collect();
-            Rgb::new(
-                px,
-                std::num::NonZeroUsize::new(7).unwrap(),
-                std::num::NonZeroUsize::new(5).unwrap(),
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap()
+            px
         };
         let a = mk(0xabcdef);
         let b = mk(0x123456);
-        let full = compute_ssimulacra2(a.clone(), b.clone()).unwrap();
-        let ref_ = Ssimulacra2Reference::new(a).unwrap();
-        assert_eq!(full, ref_.compare(b).unwrap());
+        let full = compute_ssimulacra2(
+            SrgbF32Slice::new(&a, 7, 5),
+            SrgbF32Slice::new(&b, 7, 5),
+        )
+        .unwrap();
+        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, 7, 5)).unwrap();
+        assert_eq!(full, ref_.compare(SrgbF32Slice::new(&b, 7, 5)).unwrap());
         assert_eq!(ref_.width(), 7);
         assert_eq!(ref_.height(), 5);
     }
@@ -278,10 +303,10 @@ mod tests {
 
     #[test]
     fn test_precompute_metadata() {
-        let (a, _b) = tank();
-        let ref_ = Ssimulacra2Reference::new(a.clone()).unwrap();
-        assert_eq!(ref_.width(), a.width().get());
-        assert_eq!(ref_.height(), a.height().get());
+        let (a, _b, w, h) = tank();
+        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
+        assert_eq!(ref_.width(), w);
+        assert_eq!(ref_.height(), h);
         assert!((1..=6).contains(&ref_.num_scales()));
     }
 

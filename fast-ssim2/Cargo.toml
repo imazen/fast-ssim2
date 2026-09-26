@@ -36,10 +36,9 @@ magetypes = { version = "0.9.17" }
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
 thiserror = "2.0.18"
-yuvxyb = "0.5.0"
-
-[build-dependencies.yuvxyb-math]
-version = "0.1"
+linear-srgb = { version = "0.6.7", default-features = false, features = ["transfer"] }
+bytemuck = { version = "1.25", default-features = false }
+zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"], optional = true }
 
 [dev-dependencies]
 almost-enough = "0.4.4"
@@ -63,6 +62,7 @@ archmage = { version = "0.9.17", features = ["std", "macros", "testable_dispatch
 [features]
 default = []
 imgref = ["dep:imgref"]  # Support for imgref image types
+zenpixels = ["dep:zenpixels"]  # PixelSlice/PixelBuffer inputs via ZenpixelsSource
 rayon = ["dep:rayon"]
 
 [[example]]

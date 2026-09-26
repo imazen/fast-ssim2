@@ -12,7 +12,7 @@
 use fast_ssim2::compute_ssimulacra2;
 use fast_ssim2::reference_data::{REFERENCE_CASES, ReferenceCase};
 use sha2::{Digest, Sha256};
-use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
+use fast_ssim2::SrgbF32Image;
 
 // ============================================================================
 // Image Generation Functions (must match capture_cpp_reference.rs exactly)
@@ -393,23 +393,9 @@ fn test_reference_parity() {
 
         let nz_width = std::num::NonZeroUsize::new(case.width).unwrap();
         let nz_height = std::num::NonZeroUsize::new(case.height).unwrap();
-        let source = Rgb::new(
-            source_rgb,
-            nz_width,
-            nz_height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
+        let source = SrgbF32Image::new(source_rgb, nz_width.get(), nz_height.get());
 
-        let distorted = Rgb::new(
-            distorted_rgb,
-            nz_width,
-            nz_height,
-            TransferCharacteristic::SRGB,
-            ColorPrimaries::BT709,
-        )
-        .unwrap();
+        let distorted = SrgbF32Image::new(distorted_rgb, nz_width.get(), nz_height.get());
 
         let score = compute_ssimulacra2(source, distorted).unwrap();
         let error = (score - case.expected_score).abs();
@@ -500,22 +486,8 @@ fn test_reference_parity() {
                 .collect();
             let nz_width = std::num::NonZeroUsize::new(case.width).unwrap();
             let nz_height = std::num::NonZeroUsize::new(case.height).unwrap();
-            let source = Rgb::new(
-                source_rgb,
-                nz_width,
-                nz_height,
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap();
-            let distorted = Rgb::new(
-                distorted_rgb,
-                nz_width,
-                nz_height,
-                TransferCharacteristic::SRGB,
-                ColorPrimaries::BT709,
-            )
-            .unwrap();
+            let source = SrgbF32Image::new(source_rgb, nz_width.get(), nz_height.get());
+            let distorted = SrgbF32Image::new(distorted_rgb, nz_width.get(), nz_height.get());
             let score = compute_ssimulacra2(source, distorted).unwrap();
             ErrorCase {
                 name: case.name,

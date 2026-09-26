@@ -162,41 +162,46 @@ impl ReferenceCache {
         })
     }
 
-    /// Build from already-linear RGB planes (non-encoded inputs — e.g.
-    /// `LinearRgb`, f32 arrays): skips `linearize`, opaque only
-    /// (alpha is an `EncodedSrgb` concept).
+    /// Build from already-linear RGB planes (non-encoded inputs — f32
+    /// linear sources): skips `linearize`. `lin_sets` holds one entry per
+    /// compositing background (1 opaque / 2 alpha, matching [`Self::new`]'s
+    /// dual-bg convention); premultiply alpha upstream.
     ///
     /// # Errors
     /// - [`Ssimulacra2Error::InvalidImageSize`] if `width`/`height` < 8.
-    pub fn new_linear(lin1: [Vec<f32>; 3], width: usize, height: usize) -> Result<Self, Ssimulacra2Error> {
+    pub fn new_linear_sets(lin_sets: Vec<[Vec<f32>; 3]>, width: usize, height: usize, has_alpha: bool) -> Result<Self, Ssimulacra2Error> {
         if width < 8 || height < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
         Ok(Self {
-            stacks: vec![ref_scales(lin1, width, height)],
+            stacks: lin_sets.into_iter().map(|l| ref_scales(l, width, height)).collect(),
             width,
             height,
-            has_alpha: false,
+            has_alpha,
         })
     }
 
-    /// [`Self::compare`] against already-linear planes — same
+    /// Compare already-linear planes against stack `si` — same
     /// distorted-side pipeline, no linearization step.
-    /// [`Self::compare_linear`] with cooperative cancellation — `stop` is
-    /// checked once per scale.
-    pub(crate) fn compare_linear_stop(&self, lin2: [Vec<f32>; 3], w: usize, h: usize, stop: &dyn enough::Stop) -> Result<f64, Ssimulacra2Error> {
+    /// `stop` is checked once per scale.
+    pub(crate) fn compare_linear_stack_stop(&self, si: usize, lin2: [Vec<f32>; 3], w: usize, h: usize, stop: &dyn enough::Stop) -> Result<f64, Ssimulacra2Error> {
         if w != self.width || h != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let rg = create_recursive_gaussian(1.5);
-        let scales = dist_scales(&rg, &self.stacks[0], lin2, w, h, stop)?;
+        let scales = dist_scales(&rg, &self.stacks[si], lin2, w, h, stop)?;
         Ok(final_score(&scales))
     }
 
     /// Number of stacks (1 opaque / 2 alpha).
     pub(crate) fn num_stacks(&self) -> usize {
         self.stacks.len()
+    }
+
+    /// Whether the source carried alpha (dual-bg stacks).
+    pub(crate) fn has_alpha(&self) -> bool {
+        self.has_alpha
     }
 
     /// Source width in pixels.
@@ -452,9 +457,11 @@ impl ReferenceCache {
 
     /// [`Self::compare_strip`] against already-linear planes — the
     /// distorted side streams row-slices of `lin2` without the
-    /// encoded-space linearization step (opaque sources only).
-    pub(crate) fn compare_strip_linear(
+    /// encoded-space linearization step. `si` selects the ref stack
+    /// (alpha caches have two, one per background).
+    pub(crate) fn compare_strip_linear_stack(
         &self,
+        si: usize,
         lin2: &[Vec<f32>; 3],
         strip_height: usize,
         halo: usize,
@@ -475,7 +482,7 @@ impl ReferenceCache {
             h,
             strip_height,
             halo,
-            &self.stacks[0],
+            &self.stacks[si],
             |y0, y1| {
                 let (a, b) = (y0 * w, y1 * w);
                 [
