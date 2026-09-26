@@ -13,7 +13,17 @@
 use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
-use fast_ssim2::SrgbF32Image;
+
+/// Owned sRGB u8 raster (the bit-exact input path).
+fn rgb8_owned(data: Vec<u8>, w: usize, h: usize) -> zenpixels::PixelBuffer {
+    zenpixels::PixelBuffer::from_vec(
+        data,
+        w as u32,
+        h as u32,
+        zenpixels::PixelDescriptor::RGB8_SRGB,
+    )
+    .unwrap()
+}
 
 /// JPEG quality test case with C++ verified score
 struct JpegQualityCase {
@@ -57,7 +67,7 @@ fn test_data_path() -> PathBuf {
         .join("jpeg_quality")
 }
 
-fn load_image(filename: &str) -> SrgbF32Image {
+fn load_image(filename: &str) -> zenpixels::PixelBuffer {
     let path = test_data_path().join(filename);
     let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
         // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
@@ -79,18 +89,7 @@ fn load_image(filename: &str) -> SrgbF32Image {
     };
 
     let (width, height) = img.dimensions();
-    let data: Vec<[f32; 3]> = img
-        .pixels()
-        .map(|p| {
-            [
-                f32::from(p[0]) / 255.0,
-                f32::from(p[1]) / 255.0,
-                f32::from(p[2]) / 255.0,
-            ]
-        })
-        .collect();
-
-    SrgbF32Image::new(data, width as usize, height as usize)
+    rgb8_owned(img.into_raw(), width as usize, height as usize)
 }
 
 #[test]
@@ -108,7 +107,7 @@ fn test_jpeg_quality_vs_cpp_reference() {
         let distorted = load_image(case.filename);
 
         let score =
-            compute_ssimulacra2(source.clone(), distorted).expect("SSIMULACRA2 computation failed");
+            compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).expect("SSIMULACRA2 computation failed");
 
         let error = (score - case.cpp_score).abs();
 
@@ -140,7 +139,7 @@ fn test_jpeg_quality_ordering() {
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
         let score =
-            compute_ssimulacra2(source.clone(), distorted).expect("SSIMULACRA2 computation failed");
+            compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).expect("SSIMULACRA2 computation failed");
 
         assert!(
             score > prev_score,
@@ -169,7 +168,7 @@ fn test_jpeg_quality_with_configs() {
     ];
 
     for (name, config) in configs {
-        let score = compute_ssimulacra2_with_config(source.clone(), distorted.clone(), config)
+        let score = compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &config)
             .expect("SSIMULACRA2 computation failed");
 
         let error = (score - cpp_score).abs();

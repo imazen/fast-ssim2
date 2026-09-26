@@ -11,7 +11,7 @@
 //! Expected values were captured against the same chain; a zenjpeg
 //! decode-output change will show up here as a score change.
 
-#![cfg(all(feature = "imgref", not(target_arch = "wasm32")))]
+#![cfg(not(target_arch = "wasm32"))]
 
 use enough::Unstoppable;
 use fast_ssim2::pipeline::{self, EncodedData, EncodedSrgb};

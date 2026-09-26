@@ -64,48 +64,48 @@ All comparison functions return `Result<f64, `[`Ssimulacra2Error`](https://docs.
 |----------|----------|
 | [`compute_ssimulacra2`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2.html) | Compare two images (recommended) |
 | [`Ssimulacra2Reference::new`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.Ssimulacra2Reference.html) | Precompute for batch comparisons (~2x faster) |
-| [`Ssimulacra2Reference::compare_with`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.Ssimulacra2Reference.html#method.compare_with) | Batch comparisons with a reusable [`CompareContext`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.CompareContext.html) — zero allocations after the first call |
 | [`compute_ssimulacra2_strip`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2_strip.html) | Very large images with bounded peak memory (horizontal strips) — see [Bounded-Memory Strips](#bounded-memory-strips-very-large-images) |
 | [`compute_ssimulacra2_with_stop`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2_with_stop.html) | Cancellable comparison for servers (and the `*_strip_with_stop` / `compare_with_stop` variants) — see [Cooperative Cancellation](#cooperative-cancellation) |
 
 ### Input Types
 
-With the `imgref` feature:
+The input is a [`PixelSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.PixelSlice.html)
+(re-exported `zenpixels::PixelSlice`) — a borrowed view: `bytes + w + h +
+stride + PixelDescriptor`. The descriptor's transfer function picks the path:
 
-| Type | Color Space |
-|------|-------------|
-| `ImgRef<[u8; 3]>` | sRGB (8-bit) |
-| `ImgRef<[u16; 3]>` | sRGB (16-bit) |
-| `ImgRef<[f32; 3]>` | Linear RGB |
-| `ImgRef<u8>`, `ImgRef<f32>` | Grayscale |
+| Descriptor | Data | Path |
+|------------|------|------|
+| `*_SRGB` (u8/u16) | gamma-encoded | **LUT-exact** — captured lcms table |
+| `RGBF32`/`RGBAF32` + `TransferFunction::Srgb` | f32 encoded | on-grid values snap to the u8 LUT |
+| `*_LINEAR` (f32) | linear | used as-is |
 
-**Convention:** Integer types = sRGB gamma. Float types = linear RGB.
+**Conformance lane:** only the `*_8_SRGB` descriptors are *bit-exact*
+against the `ssimulacra2` reference binary — it decodes everything to
+8-bit sRGB. u16/f32/linear inputs take the sane path (poly/direct) —
+approximate parity, no reference behavior exists to match.
 
-**RGBA / alpha:** there is no `[u8; 4]` (or `[u16; 4]` / `[f32; 4]`) input —
-SSIMULACRA2 scores three color channels only. Drop the alpha channel to RGB
-before wrapping:
+`Rgb`/`Rgba`/`Bgra`/`Rgbx`/`Bgrx`/`Gray`/`GrayA` layouts are all mapped; BGR
+is swapped on ingest. **Alpha** channels composite onto the reference's two
+backgrounds (0.1 / 0.9) — matching the reference binary's behavior — and
+premultiplied alpha is un-multiplied first. HDR transfers (PQ/HLG), narrow
+signal range, and non-BT.709 primaries error with `UnsupportedInput` —
+convert upstream (e.g. `zenpixels-convert`) before scoring.
 
-```rust
-// rgba: flat Vec<u8> of R,G,B,A,R,G,B,A, ...
-let rgb: Vec<[u8; 3]> = rgba.chunks_exact(4).map(|c| [c[0], c[1], c[2]]).collect();
-let img = imgref::ImgVec::new(rgb, width, height);
-```
-
-If alpha is meaningful to your comparison (e.g. transparent regions), composite
-both images over the same opaque background first, then drop alpha — comparing
-straight (un-premultiplied) RGB ignores how transparency would actually render.
-
-Without `imgref`, wrap raw pixels in the built-in adapters —
-[`RgbSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.RgbSlice.html) /
-[`RgbaSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.RgbaSlice.html) /
-[`GraySlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.GraySlice.html) /
-[`StridedBytes`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.StridedBytes.html) /
-[`SrgbF32Image`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.SrgbF32Image.html) —
-or implement [`ImageSource`](https://docs.rs/fast-ssim2/latest/fast_ssim2/trait.ImageSource.html)
-for custom types. `zenpixels` `PixelSlice`/`PixelBuffer` bridge in via
-[`ZenpixelsSource`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.ZenpixelsSource.html)
-with the `zenpixels` feature. Non-sRGB sources (YUV video, wide-gamut, HDR)
-should be converted upstream — e.g. with `zenpixels-convert` — before scoring.
+The input type is [`PixelSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.PixelSlice.html)
+(re-exported `zenpixels::PixelSlice`) — a borrowed, self-describing view:
+bytes + width/height/stride + a
+[`PixelDescriptor`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.PixelDescriptor.html)
+carrying layout, transfer, primaries, alpha mode, and signal range.
+`PixelBuffer` callers pass `&buf.as_slice()`; `imgref`/`rgb`-crate images
+convert via `PixelSlice::from` (the `imgref` feature forwards to
+`zenpixels/imgref`). Non-sRGB sources (YUV video, wide-gamut, HDR) should
+be converted upstream — e.g. with `zenpixels-convert` — before scoring;
+unsupported descriptors error with
+[`Ssimulacra2Error::UnsupportedInput`](https://docs.rs/fast-ssim2/latest/fast_ssim2/enum.Ssimulacra2Error.html)
+rather than silently mis-scoring. The `hdr-pu` feature adds
+`compute_ssimulacra2_pu` — the same pipeline with PU21 encoding of
+absolute luminance (accepts Linear-f32 nits, PQ, and HLG inputs;
+scores are a different regime and not comparable to SDR scores).
 
 ## Batch Comparisons
 
@@ -221,11 +221,11 @@ Signatures:
 ```rust
 pub fn compute_ssimulacra2_strip<S, D>(source: S, distorted: D, strip_height: u32)
     -> Result<f64, Ssimulacra2Error>
-where S: ImageSource, D: ImageSource;
+// source/distorted are &PixelSlice (re-exported zenpixels::PixelSlice)
 
 // On a precomputed reference (batch):
 impl Ssimulacra2Reference {
-    pub fn compare_strip<T: ImageSource>(&self, distorted: T, strip_height: u32)
+    pub fn compare_strip(&self, distorted: &PixelSlice, strip_height: u32)
         -> Result<f64, Ssimulacra2Error>;
 }
 ```
@@ -296,22 +296,11 @@ cd compare_tool && cargo run --release -- source.png distorted.png
 ### Custom Input Types
 
 ```rust
-use fast_ssim2::{ImageSource, PixelFormat};
+use fast_ssim2::{PixelDescriptor, PixelSlice};
 
-struct MyImage {
-    pixels: Vec<[u8; 3]>,
-    width: usize,
-    height: usize,
-}
-
-impl ImageSource for MyImage {
-    fn width(&self) -> usize { self.width }
-    fn height(&self) -> usize { self.height }
-    fn pixel_format(&self) -> PixelFormat { PixelFormat::Srgb8Rgb }
-    fn row_bytes(&self, y: usize) -> &[u8] {
-        self.pixels[y * self.width..(y + 1) * self.width].as_flattened()
-    }
-}
+// A borrowed view over any contiguous u8 sRGB buffer:
+let slice = PixelSlice::new(&rgb_bytes, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
+// Non-standard stride or other formats — same constructor, other descriptors.
 ```
 
 ### Explicit SIMD Backend
@@ -329,11 +318,11 @@ let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config
 ### From Raw Buffers
 
 ```rust
-use fast_ssim2::{compute_ssimulacra2, RgbSlice};
+use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
 
-// pixels: Vec<[u8; 3]> — sRGB u8 RGB
-let source = RgbSlice::new(&pixels, width, height);
-let score = compute_ssimulacra2(source, distorted)?;
+// pixels: &[u8] — flat sRGB u8 RGB rows
+let source = PixelSlice::new(&pixels, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
+let score = compute_ssimulacra2(&source, &distorted)?;
 ```
 
 

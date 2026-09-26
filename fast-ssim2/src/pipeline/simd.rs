@@ -254,6 +254,117 @@ fn planes_to_positive_xyb_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2
     let _ = off;
 }
 
+/// `CubeRootLo` SIMD inner — `cbrt_lowp` (1 Halley, ~259 ulp).
+#[magetypes(v3, neon, wasm128, scalar)]
+fn planes_to_positive_xyb_lo_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2: &mut [f32]) {
+    type f32x8 = GenericF32x8<Token>;
+    let (p0c, p0r) = f32x8::partition_slice_mut(token, p0);
+    let (p1c, p1r) = f32x8::partition_slice_mut(token, p1);
+    let (p2c, p2r) = f32x8::partition_slice_mut(token, p2);
+
+    let m00 = f32x8::splat(token, M00);
+    let m01 = f32x8::splat(token, M01);
+    let m02 = f32x8::splat(token, M02);
+    let m10 = f32x8::splat(token, M10);
+    let m11 = f32x8::splat(token, M11);
+    let m12 = f32x8::splat(token, M12);
+    let m20 = f32x8::splat(token, M20);
+    let m21 = f32x8::splat(token, M21);
+    let m22 = f32x8::splat(token, M22);
+    let bias = f32x8::splat(token, BIAS);
+    let zero = f32x8::zero(token);
+    let half = f32x8::splat(token, 0.5);
+    let add_bias = f32x8::splat(token, NEG_CBRT_BIAS);
+    let c055 = f32x8::splat(token, 0.55);
+    let c14 = f32x8::splat(token, 14.0);
+    let c042 = f32x8::splat(token, 0.42);
+    let c001 = f32x8::splat(token, 0.01);
+
+    for i in 0..p0c.len() {
+        let r = f32x8::load(token, &p0c[i]);
+        let g = f32x8::load(token, &p1c[i]);
+        let b = f32x8::load(token, &p2c[i]);
+
+        let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
+        let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
+        let mx2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias)));
+
+        let m0 = mx0.max(zero).cbrt_lowp() + add_bias;
+        let m1 = mx1.max(zero).cbrt_lowp() + add_bias;
+        let m2 = mx2.max(zero).cbrt_lowp() + add_bias;
+
+        let x = half * (m0 - m1);
+        let y = half * (m0 + m1);
+        p0c[i] = (x * c14 + c042).to_array();
+        p1c[i] = (y + c001).to_array();
+        p2c[i] = ((m2 - y) + c055).to_array();
+    }
+
+    // Scalar tail — same scalar sequence as `linear_rgb_to_xyb_pixel_hi`.
+    for i in 0..p0r.len() {
+        let px = xyb::linear_rgb_to_xyb_pixel_lo([p0r[i], p1r[i], p2r[i]]);
+        p0r[i] = px[0];
+        p1r[i] = px[1];
+        p2r[i] = px[2];
+    }
+}
+
+/// `CubeRootHi` SIMD inner — identical opsin mix; `cbrt_midp` (Kahan
+/// seed + 2 Halley, max ~3 ulp) replaces the hwy Newton chain.
+#[magetypes(v3, neon, wasm128, scalar)]
+fn planes_to_positive_xyb_hi_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2: &mut [f32]) {
+    type f32x8 = GenericF32x8<Token>;
+    let (p0c, p0r) = f32x8::partition_slice_mut(token, p0);
+    let (p1c, p1r) = f32x8::partition_slice_mut(token, p1);
+    let (p2c, p2r) = f32x8::partition_slice_mut(token, p2);
+
+    let m00 = f32x8::splat(token, M00);
+    let m01 = f32x8::splat(token, M01);
+    let m02 = f32x8::splat(token, M02);
+    let m10 = f32x8::splat(token, M10);
+    let m11 = f32x8::splat(token, M11);
+    let m12 = f32x8::splat(token, M12);
+    let m20 = f32x8::splat(token, M20);
+    let m21 = f32x8::splat(token, M21);
+    let m22 = f32x8::splat(token, M22);
+    let bias = f32x8::splat(token, BIAS);
+    let zero = f32x8::zero(token);
+    let half = f32x8::splat(token, 0.5);
+    let add_bias = f32x8::splat(token, NEG_CBRT_BIAS);
+    let c055 = f32x8::splat(token, 0.55);
+    let c14 = f32x8::splat(token, 14.0);
+    let c042 = f32x8::splat(token, 0.42);
+    let c001 = f32x8::splat(token, 0.01);
+
+    for i in 0..p0c.len() {
+        let r = f32x8::load(token, &p0c[i]);
+        let g = f32x8::load(token, &p1c[i]);
+        let b = f32x8::load(token, &p2c[i]);
+
+        let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
+        let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
+        let mx2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias)));
+
+        let m0 = mx0.max(zero).cbrt_midp() + add_bias;
+        let m1 = mx1.max(zero).cbrt_midp() + add_bias;
+        let m2 = mx2.max(zero).cbrt_midp() + add_bias;
+
+        let x = half * (m0 - m1);
+        let y = half * (m0 + m1);
+        p0c[i] = (x * c14 + c042).to_array();
+        p1c[i] = (y + c001).to_array();
+        p2c[i] = ((m2 - y) + c055).to_array();
+    }
+
+    // Scalar tail — same scalar sequence as `linear_rgb_to_xyb_pixel_hi`.
+    for i in 0..p0r.len() {
+        let px = xyb::linear_rgb_to_xyb_pixel_hi([p0r[i], p1r[i], p2r[i]]);
+        p0r[i] = px[0];
+        p1r[i] = px[1];
+        p2r[i] = px[2];
+    }
+}
+
 /// SIMD `planes_to_positive_xyb` — bit-identical to the scalar version.
 pub fn planes_to_positive_xyb_simd(p: &mut [Vec<f32>; 3]) {
     let [p0, p1, p2] = &mut *p;
@@ -262,6 +373,26 @@ pub fn planes_to_positive_xyb_simd(p: &mut [Vec<f32>; 3]) {
         [v3, neon, wasm128, scalar]
     );
 }
+
+/// `CubeRootHi` SIMD — `cbrt_midp` cube root (≤ ~3 ulp); NOT bit-exact
+/// vs the reference recipe.
+pub fn planes_to_positive_xyb_hi_simd(p: &mut [Vec<f32>; 3]) {
+    let [p0, p1, p2] = &mut *p;
+    incant!(
+        planes_to_positive_xyb_hi_inner(p0, p1, p2),
+        [v3, neon, wasm128, scalar]
+    );
+}
+
+/// `CubeRootLo` SIMD — `cbrt_lowp` (1 Halley, ~259 ulp); experiment knob.
+pub fn planes_to_positive_xyb_lo_simd(p: &mut [Vec<f32>; 3]) {
+    let [p0, p1, p2] = &mut *p;
+    incant!(
+        planes_to_positive_xyb_lo_inner(p0, p1, p2),
+        [v3, neon, wasm128, scalar]
+    );
+}
+
 
 // ===========================================================================
 // FastGaussian — lane-wise across rows (horizontal) and columns (vertical)

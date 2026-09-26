@@ -1,6 +1,6 @@
 [package]
 name = "fast-ssim2"
-version = "0.8.2"
+version = "0.9.0"
 edition = "2024"
 description = "Fast SSIMULACRA2 image quality metric with SIMD acceleration"
 repository = "https://github.com/imazen/fast-ssim2"
@@ -31,14 +31,13 @@ rust-version = "1.89.0"
 [dependencies]
 archmage = { version = "0.9.17", features = ["macros"] }
 enough = "0.4.4"
-imgref = { version = "1.12", optional = true }
 magetypes = { version = "0.9.17" }
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
 thiserror = "2.0.18"
 linear-srgb = { version = "0.6.7", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.25", default-features = false }
-zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false, features = ["imgref"], optional = true }
+zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false }
 
 [dev-dependencies]
 almost-enough = "0.4.4"
@@ -59,35 +58,38 @@ iai-callgrind = "0.16.1"
 # measurement of the SIMD path.
 archmage = { version = "0.9.17", features = ["std", "macros", "testable_dispatch"] }
 
+[package.metadata.docs.rs]
+features = ["imgref", "rayon", "hdr-pu"]
+
 [features]
 default = []
-imgref = ["dep:imgref"]  # Support for imgref image types
-zenpixels = ["dep:zenpixels"]  # PixelSlice/PixelBuffer inputs via ZenpixelsSource
+imgref = ["zenpixels/imgref"]  # ImgRef/ImgVec → PixelSlice conversions (rgb-crate pixel types)
 rayon = ["dep:rayon"]
+hdr-pu = []  # PU21-integrated HDR scoring (absolute-nits / PQ / HLG inputs)
 
 [[example]]
 name = "mem_strip"
-required-features = ["imgref"]
+
 
 [[example]]
 name = "obench"
-required-features = ["imgref"]
+
 
 [[example]]
 name = "orfcmp"
-required-features = ["imgref"]
+
 
 [[example]]
 name = "permute_score"
-required-features = ["imgref"]
+
 
 [[example]]
 name = "precompute_benchmark"
-required-features = ["imgref"]
+
 
 [[example]]
 name = "sweep_bench"
-required-features = ["imgref"]
+
 
 [[bench]]
 name = "pipeline_iai"

@@ -6,7 +6,28 @@
 use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 use image::ImageReader;
 use std::path::PathBuf;
-use fast_ssim2::SrgbF32Image;
+
+/// Owned sRGB u8 raster (the bit-exact input path).
+fn rgb8_owned(data: Vec<u8>, w: usize, h: usize) -> zenpixels::PixelBuffer {
+    zenpixels::PixelBuffer::from_vec(
+        data,
+        w as u32,
+        h as u32,
+        zenpixels::PixelDescriptor::RGB8_SRGB,
+    )
+    .unwrap()
+}
+
+/// Owned sRGB-encoded f32 raster — the general (poly) input path.
+fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
+    zenpixels::PixelBuffer::from_vec(
+        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+        w as u32,
+        h as u32,
+        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+    )
+    .unwrap()
+}
 
 fn test_data_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -14,7 +35,7 @@ fn test_data_path() -> PathBuf {
         .join("jpeg_quality")
 }
 
-fn load_image(filename: &str) -> SrgbF32Image {
+fn load_image(filename: &str) -> zenpixels::PixelBuffer {
     let path = test_data_path().join(filename);
     let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
         // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
@@ -36,18 +57,7 @@ fn load_image(filename: &str) -> SrgbF32Image {
     };
 
     let (width, height) = img.dimensions();
-    let data: Vec<[f32; 3]> = img
-        .pixels()
-        .map(|p| {
-            [
-                f32::from(p[0]) / 255.0,
-                f32::from(p[1]) / 255.0,
-                f32::from(p[2]) / 255.0,
-            ]
-        })
-        .collect();
-
-    SrgbF32Image::new(data, width as usize, height as usize)
+    rgb8_owned(img.into_raw(), width as usize, height as usize)
 }
 
 /// Create synthetic gradient test images
@@ -73,15 +83,15 @@ fn compute_score_from_data(
     distorted_data: &[[f32; 3]],
     width: usize,
     height: usize,
-    config: Ssimulacra2Config,
+    config: &Ssimulacra2Config<'_>,
 ) -> f64 {
     let nz_width = std::num::NonZeroUsize::new(width).unwrap();
     let nz_height = std::num::NonZeroUsize::new(height).unwrap();
-    let source = SrgbF32Image::new(source_data.to_vec(), nz_width.get(), nz_height.get());
+    let source = srgb_f32_owned(source_data.to_vec(), nz_width.get(), nz_height.get());
 
-    let distorted = SrgbF32Image::new(distorted_data.to_vec(), nz_width.get(), nz_height.get());
+    let distorted = srgb_f32_owned(distorted_data.to_vec(), nz_width.get(), nz_height.get());
 
-    compute_ssimulacra2_with_config(source, distorted, config).unwrap()
+    compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), config).unwrap()
 }
 
 // ============================================================================
@@ -92,7 +102,7 @@ fn compute_score_from_data(
 fn test_identical_images_exact_score_scalar() {
     let source = load_image("source.png");
     let score =
-        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::scalar())
+        compute_ssimulacra2_with_config(&source.as_slice(), &source.as_slice(), &Ssimulacra2Config::scalar())
             .unwrap();
     assert_eq!(
         score, 100.0,
@@ -105,7 +115,7 @@ fn test_identical_images_exact_score_scalar() {
 fn test_identical_images_exact_score_simd() {
     let source = load_image("source.png");
     let score =
-        compute_ssimulacra2_with_config(source.clone(), source, Ssimulacra2Config::simd()).unwrap();
+        compute_ssimulacra2_with_config(&source.as_slice(), &source.as_slice(), &Ssimulacra2Config::simd()).unwrap();
     assert_eq!(
         score, 100.0,
         "SIMD: identical images must score exactly 100.0, got {}",
@@ -161,7 +171,7 @@ fn test_simd_scores_pinned_real_images() {
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
         let score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd())
                 .unwrap();
 
         // Exact match - any deviation indicates a regression
@@ -184,14 +194,14 @@ fn test_scalar_vs_simd_real_images() {
         let distorted = load_image(case.distorted_file);
 
         let scalar_score = compute_ssimulacra2_with_config(
-            source.clone(),
-            distorted.clone(),
-            Ssimulacra2Config::scalar(),
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::scalar(),
         )
         .unwrap();
 
         let simd_score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd())
                 .unwrap();
 
         let diff = (scalar_score - simd_score).abs();
@@ -226,14 +236,14 @@ fn test_scalar_vs_simd_synthetic() {
             &distorted_data,
             width,
             height,
-            Ssimulacra2Config::scalar(),
+            &Ssimulacra2Config::scalar(),
         );
         let simd_score = compute_score_from_data(
             &source_data,
             &distorted_data,
             width,
             height,
-            Ssimulacra2Config::simd(),
+            &Ssimulacra2Config::simd(),
         );
 
         let diff = (scalar_score - simd_score).abs();
@@ -265,7 +275,7 @@ fn test_jpeg_quality_ordering_preserved() {
     for file in files {
         let distorted = load_image(file);
         let score =
-            compute_ssimulacra2_with_config(source.clone(), distorted, Ssimulacra2Config::simd())
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd())
                 .unwrap();
 
         assert!(

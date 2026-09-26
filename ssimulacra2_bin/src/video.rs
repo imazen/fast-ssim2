@@ -15,6 +15,7 @@ use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, P
 use num_traits::FromPrimitive;
 use statrs::statistics::{Data, Distribution, Median, OrderStatistics};
 use yuvxyb::{ColorPrimaries, MatrixCoefficients, Pixel, TransferCharacteristic, Yuv, YuvConfig};
+use zenpixels;
 
 const PROGRESS_CHARS: &str = "█▉▊▋▌▍▎▏  ";
 const INDICATIF_PROGRESS_TEMPLATE: &str = if cfg!(windows) {
@@ -169,19 +170,26 @@ fn calc_score<S: Pixel, D: Pixel, E: Decoder, F: Decoder>(
     let dst_yuv = Yuv::new(dst_frame, *dst_yuvcfg).unwrap();
 
     // YUV → linear RGB via yuvxyb (matrix+transfer+ranging), then the
-    // metric's linear-input path — same semantics as the removed
-    // compute_frame_ssimulacra2.
-    let conv = |y: &Yuv<u8>| -> fast_ssim2::LinearRgbImage {
+    // metric's linear-input path.
+    let conv = |y: &Yuv<u8>| -> zenpixels::PixelBuffer {
         let lin = yuvxyb::LinearRgb::try_from(y.clone())
             .expect("Yuv to LinearRgb conversion failed");
         let (w, h) = (lin.width().get(), lin.height().get());
-        fast_ssim2::LinearRgbImage::new(lin.into_data(), w, h)
+        let data = lin.into_data();
+        zenpixels::PixelBuffer::from_vec(
+            bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+            w as u32,
+            h as u32,
+            zenpixels::PixelDescriptor::RGBF32_LINEAR,
+        )
+        .unwrap()
     };
     let (src_lin, dst_lin) = (conv(&src_yuv), conv(&dst_yuv));
 
     Some((
         frame_idx,
-        compute_ssimulacra2(src_lin, dst_lin).expect("Failed to calculate ssimulacra2"),
+        compute_ssimulacra2(&src_lin.as_slice(), &dst_lin.as_slice())
+            .expect("Failed to calculate ssimulacra2"),
     ))
 }
 

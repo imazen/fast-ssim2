@@ -2,23 +2,46 @@
 
 ## [Unreleased]
 
-### BREAKING CHANGES (landed — batch into the next minor release)
-- **Single-engine pipeline.** `Fidelity`, `Ssimulacra2Config::fidelity` / `with_fidelity` / `official` / `precise`, `Ssimulacra2Error::UnsupportedFidelity`, `Ssimulacra2Reference::{new_precise, new_official}` and `compare_context` / `compare_with` / `compare_with_and_stop` / `CompareContext` / `ScalePlanesView` / `is_official` are removed. There is one engine — the bit-exact port of the reference — and `SimdImpl` now selects scalar-vs-SIMD *kernels* (bit-identical outputs). `compute_ssimulacra2` / `compute_ssimulacra2_strip` / `Ssimulacra2Reference::new` / `compare*` semantics unchanged; scores are reference-exact by default and ~7× fewer instructions than the removed precise engine.
-- `compute_frame_ssimulacra2` / `compute_frame_ssimulacra2_with_config` removed (deprecated since 0.8.0). Migration: `compute_ssimulacra2` / `compute_ssimulacra2_with_config` — `yuvxyb::Yuv` inputs now work via the new `ToLinearRgb` impl (the `ssimulacra2_bin` video path uses it).
-- `hdr-pu` feature removed — `compute_ssimulacra2_pu_nits` and the PU21 path lived on the removed precise engine. The UPIQ-HDR experiment shipped validated in 0.8.2; resurface via `git`/revived port if needed.
-- `Ssimulacra2Error` is `#[non_exhaustive]` and gains `Cancelled(enough::StopReason)` and `InvalidInputData`. Downstream `match` arms need a wildcard `_ =>`.
-- **Input surface: `ToLinearRgb`/`yuvxyb` → `ImageSource`.** `compute_ssimulacra2*` / `compute_ssimulacra2_strip*` / `Ssimulacra2Reference::{new, compare*}` now take `impl ImageSource` — a zero-copy row-pull trait (`width`/`height`/`pixel_format`/`alpha_mode`/`row_bytes`), same shape as zensim's. `yuvxyb` and `yuvxyb-math` are gone; `ToLinearRgb`, `LinearRgbConversionFailed`, and the yuvxyb `Rgb`/`LinearRgb`/`Yuv` impls are removed. Migration: `Rgb<f32>` → `SrgbF32Image`/`SrgbF32Slice` (same encoded-f32 semantics), `LinearRgb` → `LinearRgbImage`, `ImgVec`/`ImgRef` unchanged (imgref feature), `zenpixels::PixelSlice`/`PixelBuffer` → `ZenpixelsSource` (new `zenpixels` feature), arbitrary buffers → `RgbSlice`/`StridedBytes`. Bit-identical scores on all previously-supported inputs.
+### BREAKING CHANGES — migration guide
+
+**Inputs.** Everything takes `&PixelSlice<'_>` (borrowed, self-describing: bytes + dims + stride + `PixelDescriptor`).
+
+| 0.8 | 0.9 |
+|---|---|
+| `imgref::ImgRef<[u8;3]>` | `PixelSlice::new(&bytes, w, h, w*3, PixelDescriptor::RGB8_SRGB)` or `PixelSlice::from(img)` (imgref feature → `zenpixels/imgref`, rgb-crate pixels) |
+| `yuvxyb::Rgb<f32>` | `PixelSlice`/`PixelBuffer` + `RGBF32.with_transfer(TransferFunction::Srgb)` — or quantize to u8 for the bit-exact LUT path |
+| `yuvxyb::LinearRgb` / `LinearRgbImage` | `PixelBuffer` + `RGBF32_LINEAR` |
+| `yuvxyb::Yuv` | decode to linear RGB upstream (yuvxyb/zenpixels-convert), pass linear f32 |
+
+`ToLinearRgb`, `LinearRgbImage`, `LinearRgbImageError`, `LinearRgbConversionFailed`, the `yuvxyb`/`yuvxyb-math` deps, and the `srgb_*_to_linear` re-exports are gone (use `linear_srgb::default::*` directly).
+
+**Calls.** The `_with_stop` / `_strip*` matrix collapsed into `Ssimulacra2Config`:
+
+| 0.8 | 0.9 |
+|---|---|
+| `compute_ssimulacra2_with_stop(a, b, stop)` | `compute_ssimulacra2_with_config(a, b, &Ssimulacra2Config::default().with_stop(&stop))` |
+| `compute_ssimulacra2_strip(a, b, h)` | `compute_ssimulacra2_with_config(a, b, &Ssimulacra2Config::strips(h))` |
+| `compute_ssimulacra2_strip_with_config(...)` | `Ssimulacra2Config { strip: Some(StripConfig{..}), .. }` |
+| `ref.compare_with_stop(d, stop)` | `ref.compare_with_config(d, &cfg.with_stop(&stop))` |
+| `ref.compare_strip(d, h)` / `compare_strip_with_*` | `ref.compare_with_config(d, &Ssimulacra2Config::strips(h))` |
+| `compute_frame_ssimulacra2*` (deprecated) | removed — decode to `RGBF32_LINEAR` upstream |
+
+`StripConfig` (renamed from `Ssimulacra2StripConfig`) is flattened: `strip_height`, `halo_rows`, `parallel_strips` — `inner` config moves to the outer `Ssimulacra2Config::impl_type`.
+
+**Removed types/variants.** `Fidelity` (+`official`/`precise`/`with_fidelity`/`UnsupportedFidelity`), `Ssimulacra2Reference::{new_precise,new_official,is_official,compare_with,compare_with_and_stop}`, `CompareContext`, `ScalePlanesView`. One engine now — the bit-exact port; `SimdImpl::{Scalar,Simd}` picks kernels (outputs bit-identical).
+
+**Descriptor gating.** PQ/HLG transfers, narrow signal range, non-BT.709 primaries, and unmapped layouts error with `Ssimulacra2Error::UnsupportedInput` instead of being silently mis-scored — convert via `zenpixels-convert` upstream, or use the PU21 path (`hdr-pu`).
 
 ### Added
-- `ImageSource` input trait + adapters: `RgbSlice`, `RgbaSlice`, `GraySlice`, `Rgb16Slice`, `SrgbF32Slice`, `SrgbF32Image`, `StridedBytes`, `SubsetView` (Y-range views for strip callers), blanket `&T` impl.
-- `zenpixels` feature: `ZenpixelsSource` bridges `PixelSlice`/`PixelBuffer` with descriptor validation — premultiplied alpha is un-premultiplied, RGBX/BGRX padding ignored; PQ/HLG, narrow-range, and non-BT.709-primaries sources are rejected (convert via `zenpixels-convert` upstream).
-- `Ssimulacra2Reference` supports alpha and linear+f32-alpha inputs (dual-background compositing on the reference side, matching the encoded alpha semantics).
-- `ToLinearRgb` impl for `yuvxyb::Yuv<T>` — YUV inputs convert through `LinearRgb::try_from` (the same conversion the removed frame API used) and score through the standard encoded/linear pipeline.
-- Cooperative cancellation across every slow path: `compute_ssimulacra2_with_stop` / `compute_ssimulacra2_strip_with_stop` (one-shot), and on `Ssimulacra2Reference` the warm-reference paths `compare_with_stop` and the cached-ref strip paths `compare_strip_with_stop` / `compare_strip_with_config_and_stop`. All take a `&dyn enough::Stop` token and return `Err(Ssimulacra2Error::Cancelled)` if cancelled; the token is checked at the per-scale / per-strip outer-loop boundary — never per-pixel.
+- `zenpixels` mandatory dep; `PixelSlice`/`PixelBuffer`/`PixelDescriptor`/`TransferFunction` re-exported.
+- `Ssimulacra2Config::{strip, stop}` + `StripConfig`; `Ssimulacra2Config::strips(h)` / `.with_stop(&token)` conveniences.
+- Alpha everywhere: RGBA/BGRA/RGBX/BGRX/GrayA layouts; premultiplied alpha un-multiplied on ingest; straight alpha composited onto the reference's 0.1/0.9 dual backgrounds — including cached (`Ssimulacra2Reference`) and linear-f32 inputs.
+- `hdr-pu` feature: `compute_ssimulacra2_pu` — PU21 `banding_glare` replaces the cube-root on absolute-nits planes. Accepts `Linear` f32 (cd/m²) plus `Pq`/`Hlg` u8/u16/f32 descriptors (EOTF-decoded internally; BT.2100 system-gamma 1.2 at a 1000-nit display for HLG). Scores are not comparable to SDR scores. Alpha composites at 20/200 cd/m².
+- `Ssimulacra2Error::{Cancelled, UnsupportedInput}`; `Ssimulacra2Error` is `#[non_exhaustive]`.
 
-### Documentation
-- README: documented the cooperative-cancellation API (the `*_with_stop` variants were shipped but never appeared in the README — found via an insulated external-developer usability test), the flat-`Vec<u8>` → `ImgVec` on-ramp in the Quick Start, the `f64` score type, the no-`[u8; 4]`/alpha note, and the strip API signatures + strip-height semantics.
-- README overhaul to the zen-family conventions: canonical badge row (dropped `branch=` and the codecov badge, `license` → in-page anchor), rendered crosslink footer, credit to the SSIMULACRA2 authors (Cloudinary / libjxl) alongside the rust-av port, and a split crates.io README (`README.crates.md`, generated; `readme` now points at it). Replaced the unverifiable "vs upstream crate" speedup table with measured, committed scalar-vs-SIMD / batch figures + repro, and added `benchmarks/README.md` methodology.
+### Internal
+- `pipeline` module is `#[doc(hidden)] pub` for conformance tooling — internals are version-locked and unstable. `XybFlavor::{CubeRootHi,CubeRootLo}` exist as divergence-probe knobs only (measured: no scoring benefit; the near-99 flat-field sawtooth is structural LUT-step geometry, not cbrt error — see `examples/flat_probe.rs`).
+- `ssimulacra2_bin` keeps `yuvxyb` (it owns YUV decode → linear); library is yuvxyb-free.
 
 ## [0.8.2] - 2026-06-10
 

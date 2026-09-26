@@ -8,14 +8,13 @@
 //! The simplest way to compare two images:
 //!
 //! ```ignore
-//! use fast_ssim2::compute_ssimulacra2;
-//! use imgref::ImgVec;
+//! use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
 //!
-//! // Load your images (8-bit sRGB)
-//! let source: ImgVec<[u8; 3]> = load_image("source.png");
-//! let distorted: ImgVec<[u8; 3]> = load_image("distorted.png");
+//! // Wrap decoded 8-bit sRGB pixels (flat u8 rows).
+//! let source = PixelSlice::new(&rgb_bytes, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
+//! let distorted = PixelSlice::new(&rgb_bytes2, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
 //!
-//! let score = compute_ssimulacra2(source.as_ref(), distorted.as_ref())?;
+//! let score = compute_ssimulacra2(&source, &distorted)?;
 //! // score: 100 = identical, 90+ = imperceptible, <50 = significant degradation
 //! ```
 //!
@@ -31,29 +30,38 @@
 //!
 //! ## Supported Input Formats
 //!
-//! ### With `imgref` feature (recommended for most users)
+//! Inputs are [`zenpixels::PixelSlice`]s — the descriptor declares
+//! layout + color semantics, and the pipeline scores what the bytes
+//! honestly are:
 //!
-//! | Type | Color Space | Notes |
-//! |------|-------------|-------|
-//! | `ImgRef<[u8; 3]>` | sRGB | Standard 8-bit RGB images |
-//! | `ImgRef<[u16; 3]>` | sRGB | 16-bit RGB (high bit depth, SDR) |
-//! | `ImgRef<[f32; 3]>` | **Linear RGB** | Already linearized data |
-//! | `ImgRef<u8>` | sRGB grayscale | Expanded to R=G=B |
-//! | `ImgRef<f32>` | Linear grayscale | Expanded to R=G=B |
+//! | Descriptor | Layout | Path |
+//! |------------|--------|------|
+//! | `RGB8_SRGB`/`RGBA8_SRGB`/`BGRA8_SRGB`/`GRAY8_SRGB`/`RGBX8_SRGB`/`BGRX8_SRGB` | u8 | **LUT-exact** (captured lcms table) |
+//! | `RGB16_SRGB`/`RGBA16_SRGB`/`GRAY16_SRGB` | u16 | sRGB poly (`linear-srgb`) |
+//! | `RGBF32`/`RGBAF32` + `TransferFunction::Srgb` | f32 encoded | sRGB poly (`linear-srgb`) |
+//! | `RGBF32_LINEAR`/`RGBAF32_LINEAR`/`GRAYF32_LINEAR` | f32 | linear planes |
 //!
-//! **Convention:** Integer types assume sRGB gamma encoding. Float types assume linear RGB.
+//! HDR transfers (PQ/HLG), narrow signal range, and non-BT.709 primaries
+//! are rejected with [`Ssimulacra2Error::UnsupportedInput`] in the SDR
+//! entry points — convert via `zenpixels-convert`, or use
+//! [`compute_ssimulacra2_pu`] (`hdr-pu` feature), which accepts Linear-nits
+//! f32 and Pq/Hlg descriptors natively.
 //!
-//! ### Without features (built-in slice adapters)
+//! Alpha channels use the reference's dual-background compositing;
+//! premultiplied alpha is un-multiplied on ingest.
+//!
+//! ### Plain byte buffers
 //!
 //! ```
-//! use fast_ssim2::{compute_ssimulacra2, RgbSlice};
+//! use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
 //!
 //! // Plain u8 sRGB pixels, 64×64 mid-gray.
-//! let data: Vec<[u8; 3]> = vec![[128, 128, 128]; 64 * 64];
-//! let source = RgbSlice::new(&data, 64, 64);
-//! let distorted = RgbSlice::new(&data, 64, 64);
+//! let data: Vec<u8> = vec![128; 64 * 64 * 3];
+//! let slice = || {
+//!     PixelSlice::new(&data, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap()
+//! };
 //!
-//! let score = compute_ssimulacra2(source, distorted)?;
+//! let score = compute_ssimulacra2(&slice(), &slice())?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -63,48 +71,42 @@
 //! different compression levels), precompute the reference data once:
 //!
 //! ```
-//! use fast_ssim2::{Ssimulacra2Reference, RgbSlice};
+//! use fast_ssim2::{Ssimulacra2Reference, PixelDescriptor, PixelSlice};
 //!
 //! // Create test data
-//! let data: Vec<[u8; 3]> = vec![[128, 128, 128]; 64 * 64];
-//! let source = RgbSlice::new(&data, 64, 64);
+//! let data: Vec<u8> = vec![128; 64 * 64 * 3];
+//! let slice = || {
+//!     PixelSlice::new(&data, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap()
+//! };
 //!
 //! // Precompute reference data (~50% of the work)
-//! let reference = Ssimulacra2Reference::new(source)?;
+//! let reference = Ssimulacra2Reference::new(&slice())?;
 //!
 //! // Compare multiple distorted versions efficiently
-//! let distorted = RgbSlice::new(&data, 64, 64);
-//! let score = reference.compare(distorted)?;
+//! let score = reference.compare(&slice())?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! ## Custom Input Types
 //!
-//! Implement [`ImageSource`] to support your own image types:
+//! Inputs are [`zenpixels::PixelSlice`]s — self-describing borrowed views
+//! over strided bytes. Wrap a raw buffer with `PixelSlice::new` and a
+//! [`zenpixels::PixelDescriptor`] constant (e.g. `RGB8_SRGB`); `imgref`
+//! types convert via `PixelSlice::from` under the `imgref` feature, and
+//! owned `PixelBuffer`s expose `as_slice()`.
 //!
 //! ```
-//! use fast_ssim2::{ImageSource, PixelFormat};
+//! use fast_ssim2::{PixelDescriptor, PixelSlice};
 //!
-//! struct MyImage {
-//!     pixels: Vec<[u8; 3]>,
-//!     width: usize,
-//!     height: usize,
-//! }
-//!
-//! impl ImageSource for MyImage {
-//!     fn width(&self) -> usize { self.width }
-//!     fn height(&self) -> usize { self.height }
-//!     fn pixel_format(&self) -> PixelFormat { PixelFormat::Srgb8Rgb }
-//!     fn row_bytes(&self, y: usize) -> &[u8] {
-//!         self.pixels[y * self.width..(y + 1) * self.width].as_flattened()
-//!     }
-//! }
+//! // Plain u8 sRGB pixels: flat bytes + the descriptor says the rest.
+//! let data: Vec<u8> = vec![128; 64 * 64 * 3];
+//! let src = PixelSlice::new(&data, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB)?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! Helper functions for sRGB conversion:
-//! - [`srgb_u8_to_linear`] - 8-bit lookup table (fastest)
-//! - [`srgb_u16_to_linear`] - 16-bit conversion
-//! - [`srgb_to_linear`] - General f32 conversion
+//! For sRGB↔linear conversion helpers, use `linear_srgb::default::*`
+//! directly (same implementation the crate uses internally).
 //!
 //! ## SIMD Configuration
 //!
@@ -121,12 +123,13 @@
 //! ```
 //! use fast_ssim2::{compute_ssimulacra2_with_config, Ssimulacra2Config};
 //!
-//! # let source = fast_ssim2::LinearRgbImage::new(vec![[0.0; 3]; 64], 8, 8);
-//! # let distorted = fast_ssim2::LinearRgbImage::new(vec![[0.0; 3]; 64], 8, 8);
+//! # let mk = || fast_ssim2::PixelBuffer::from_vec(vec![0u8; 64 * 12], 8, 8,
+//! #     fast_ssim2::PixelDescriptor::RGBF32_LINEAR).unwrap();
+//! # let source = mk(); let distorted = mk();
 //! let score = compute_ssimulacra2_with_config(
-//!     source,
-//!     distorted,
-//!     Ssimulacra2Config::scalar(), // or ::simd()
+//!     &source.as_slice(),
+//!     &distorted.as_slice(),
+//!     &Ssimulacra2Config::scalar(), // or ::simd()
 //! )?;
 //! # Ok::<(), fast_ssim2::Ssimulacra2Error>(())
 //! ```
@@ -135,7 +138,8 @@
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `imgref` | | Support for `imgref` image types |
+//! | `imgref` | | Forwards `zenpixels/imgref` — `ImgRef`/`ImgVec` → `PixelSlice` (rgb-crate pixels) |
+//! | `hdr-pu` | | HDR scoring: PU21-integrated encoding (`compute_ssimulacra2_pu`); nits/PQ/HLG inputs |
 //! | `rayon` | | Parallel computation |
 //!
 //! ## Requirements
@@ -153,8 +157,6 @@ mod input;
 #[doc(hidden)]
 pub mod pipeline;
 mod source;
-#[cfg(feature = "zenpixels")]
-mod zenpixels_compat;
 mod precompute;
 // Reference data for parity testing (hidden from docs but accessible for tests)
 #[doc(hidden)]
@@ -162,21 +164,11 @@ pub mod reference_data;
 mod strip;
 mod weights;
 
-pub use input::{LinearRgbImage, LinearRgbImageError};
-pub use source::{
-    AlphaMode, GraySlice, ImageSource, PixelFormat, Rgb16Slice, RgbSlice, RgbaSlice,
-    SrgbF32Image, SrgbF32Slice, StridedBytes, SubsetView,
-};
-#[cfg(feature = "zenpixels")]
-pub use zenpixels_compat::{UnsupportedFormat, ZenpixelsSource};
+pub use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, TransferFunction};
 pub use precompute::Ssimulacra2Reference;
-pub use strip::{
-    HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, Ssimulacra2StripConfig, compute_ssimulacra2_strip,
-    compute_ssimulacra2_strip_with_config, compute_ssimulacra2_strip_with_stop,
-};
+pub use strip::{HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, StripConfig};
 
-// Re-export sRGB conversion functions for users implementing custom input types
-pub use input::{srgb_to_linear, srgb_u8_to_linear, srgb_u16_to_linear};
+// sRGB→linear for callers: use `linear_srgb::default::*` directly.
 
 /// SIMD implementation backend for all operations (blur, XYB conversion, SSIM computation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -204,16 +196,30 @@ impl SimdImpl {
 /// (both published `ssimulacra2` binaries agree); [`SimdImpl`] selects
 /// the kernel family — `Scalar` is the audit oracle, `Simd` is
 /// bit-identical and ~7x fewer instructions.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Ssimulacra2Config {
+/// Per-call options. `Default` = SIMD kernels, whole-image, unstoppable
+/// — identical to plain [`compute_ssimulacra2`].
+///
+/// (`Debug` skipped: the `stop` token is a trait object.)
+#[derive(Clone, Copy, Default)]
+pub struct Ssimulacra2Config<'a> {
     /// Kernel backend for all operations.
     pub impl_type: SimdImpl,
+    /// Strip-wise evaluation for bounded memory on large images —
+    /// `Some(StripConfig)` routes to the strip pipeline.
+    pub strip: Option<StripConfig>,
+    /// Cooperative cancellation token — checked once per scale or per
+    /// strip, never per-pixel.
+    pub stop: Option<&'a dyn enough::Stop>,
 }
 
-impl Ssimulacra2Config {
+impl<'a> Ssimulacra2Config<'a> {
     /// Create configuration with specified implementation.
     pub fn new(impl_type: SimdImpl) -> Self {
-        Self { impl_type }
+        Self {
+            impl_type,
+            strip: None,
+            stop: None,
+        }
     }
 
     /// Default configuration using SIMD kernels.
@@ -225,6 +231,24 @@ impl Ssimulacra2Config {
     pub fn scalar() -> Self {
         Self::new(SimdImpl::Scalar)
     }
+
+    /// Strip-wise evaluation (bounded memory): `strip_height` rows per
+    /// strip interior, default halo, serial.
+    pub fn strips(strip_height: usize) -> Self {
+        Self {
+            strip: Some(StripConfig {
+                strip_height,
+                ..Default::default()
+            }),
+            ..Self::default()
+        }
+    }
+
+    /// Attach a cancellation token.
+    pub fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+        self.stop = Some(stop);
+        self
+    }
 }
 
 /// Errors which can occur when attempting to calculate a SSIMULACRA2 score from two input images.
@@ -235,13 +259,12 @@ impl Ssimulacra2Config {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Ssimulacra2Error {
-    /// An input source's byte buffer was shorter than its declared
-    /// dimensions and [`PixelFormat`](crate::PixelFormat) require.
-    #[error("Input data is {actual} bytes but the declared dimensions and format require more")]
-    InvalidInputData {
-        /// Byte length the source provided.
-        actual: usize,
-    },
+    /// An input [`PixelSlice`](crate::PixelSlice)'s descriptor declares
+    /// something the metric can't score honestly — HDR transfers
+    /// (PQ/HLG), narrow/limited signal range, or a pixel layout with no
+    /// mapping to the SDR sRGB pipeline.
+    #[error("Unsupported input: {0}")]
+    UnsupportedInput(&'static str),
 
     /// The two input images do not have the same width and height.
     #[error("Source and distorted image width and height must be equal")]
@@ -302,13 +325,14 @@ pub enum Ssimulacra2Error {
 pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 
 
-/// Computes the SSIMULACRA2 score from any [`ImageSource`].
+/// Computes the SSIMULACRA2 score from two [`PixelSlice`]s —
+/// borrowed, self-describing views over pixel bytes (stride, format,
+/// transfer, primaries, and alpha all live in the descriptor).
 ///
-/// This is the recommended API. Any [`ImageSource`] works — the
-/// built-in [`RgbSlice`]/[`RgbaSlice`]/[`GraySlice`]/[`StridedBytes`]
-/// adapters cover raw buffers; `imgref` types need the `imgref`
-/// feature; `zenpixels` `PixelSlice`/`PixelBuffer` bridge via the
-/// `zenpixels` feature. Custom inputs implement [`ImageSource`].
+/// Wrap raw buffers with `PixelSlice::new(bytes, w, h, stride, descriptor)`;
+/// `imgref`/`rgb`-crate images convert via `PixelSlice::from` (the
+/// `imgref` feature forwards to `zenpixels/imgref`); `PixelBuffer`
+/// callers pass `&buf.as_slice()`.
 ///
 /// # Color space conventions
 /// - Integer types (`u8`, `u16`) are assumed to be sRGB (gamma-encoded)
@@ -317,73 +341,109 @@ pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 ///
 /// # Example
 /// ```ignore
-/// use imgref::ImgVec;
-/// use fast_ssim2::compute_ssimulacra2;
+/// use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
 ///
-/// let source: ImgVec<[u8; 3]> = /* ... */;
-/// let distorted: ImgVec<[u8; 3]> = /* ... */;
+/// let source = PixelSlice::new(&rgb, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
+/// let distorted = PixelSlice::new(&rgb2, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
 /// let score = compute_ssimulacra2(&source, &distorted)?;
 /// ```
-pub fn compute_ssimulacra2<S, D>(source: S, distorted: D) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
-    compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::default())
-}
-
-/// Computes the SSIMULACRA2 score with cooperative cancellation.
-///
-/// Identical to [`compute_ssimulacra2`] but takes a [`enough::Stop`]
-/// token. The token is checked once at the top of each multi-scale
-/// outer-loop iteration (never inside the per-pixel inner loops), so
-/// cancellation is responsive at scale granularity without adding any
-/// cost to the hot path. On cancellation the function returns
-/// [`Ssimulacra2Error::Cancelled`].
-///
-/// Pass [`enough::Unstoppable`] for the never-cancel path, which is
-/// indistinguishable in cost from [`compute_ssimulacra2`].
-pub fn compute_ssimulacra2_with_stop<S, D>(
-    source: S,
-    distorted: D,
-    stop: &dyn enough::Stop,
-) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
-    compute_ssimulacra2_with_config_and_stop(source, distorted, Ssimulacra2Config::default(), stop)
+pub fn compute_ssimulacra2(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+) -> Result<f64, Ssimulacra2Error> {
+    compute_ssimulacra2_with_config(source, distorted, &Ssimulacra2Config::default())
 }
 
 /// Computes the SSIMULACRA2 score with custom configuration.
-pub fn compute_ssimulacra2_with_config<S, D>(
-    source: S,
-    distorted: D,
-    config: Ssimulacra2Config,
-) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
-    compute_ssimulacra2_with_config_and_stop(source, distorted, config, &enough::Unstoppable)
+///
+/// [`Ssimulacra2Config`] carries everything per-call: kernel family
+/// (`impl_type`), bounded-memory strips (`strip`), and cooperative
+/// cancellation (`stop` — checked once per scale or per strip, never
+/// per-pixel; returns [`Ssimulacra2Error::Cancelled`]).
+///
+/// ```ignore
+/// // strip mode, 128-row interiors:
+/// let cfg = Ssimulacra2Config::strips(128);
+/// compute_ssimulacra2_with_config(&a, &b, &cfg)
+/// ```
+pub fn compute_ssimulacra2_with_config(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+    config: &Ssimulacra2Config<'_>,
+) -> Result<f64, Ssimulacra2Error> {
+    if config.strip.is_some() {
+        return crate::strip::compute_strip_inner(source, distorted, config);
+    }
+    let kernel = pipeline::Kernel::from_impl(config.impl_type);
+    let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
+    compute_pair(source, distorted, kernel, stop)
 }
 
-/// Computes the SSIMULACRA2 score with custom configuration and
-/// cooperative cancellation.
+/// HDR variant (`hdr-pu` feature): SSIMULACRA2 with the cube-root opsin
+/// replaced by **PU21** perceptual encoding of absolute luminance (cd/m²).
 ///
-/// See [`compute_ssimulacra2_with_stop`] for the cancellation semantics.
-fn compute_ssimulacra2_with_config_and_stop<S, D>(
-    source: S,
-    distorted: D,
-    config: Ssimulacra2Config,
-    stop: &dyn enough::Stop,
-) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
+/// Accepted inputs:
+/// - `TransferFunction::Linear` f32 — pixels are absolute nits.
+/// - `TransferFunction::Pq`/`Hlg` (u8/u16/f32) — EOTF-decoded to nits
+///   internally (PQ: ST 2084 → 0–10 000 cd/m²; HLG: inverse-OETF +
+///   system-gamma 1.2 OOTF on a 1000 cd/m² reference display).
+///
+/// BT.2020 primaries are *not* gamut-converted — the opsin consumes the
+/// declared primaries directly (same convention as zensim's PU path;
+/// SROCC ~0.69 on UPIQ HDR).
+///
+/// **Scores are not comparable to [`compute_ssimulacra2`] scores** — this
+/// is a different perceptual-encoding regime for HDR content.
+#[cfg(feature = "hdr-pu")]
+pub fn compute_ssimulacra2_pu(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+) -> Result<f64, Ssimulacra2Error> {
+    compute_ssimulacra2_pu_with_config(source, distorted, &Ssimulacra2Config::default())
+}
+
+/// [`compute_ssimulacra2_pu`] with custom configuration (kernel +
+/// cancellation; `strip` is ignored — HDR strip is not supported).
+#[cfg(feature = "hdr-pu")]
+pub fn compute_ssimulacra2_pu_with_config(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+    config: &Ssimulacra2Config<'_>,
+) -> Result<f64, Ssimulacra2Error> {
+    let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
     let kernel = pipeline::Kernel::from_impl(config.impl_type);
-    compute_pair(source, distorted, kernel, stop)
+    let p1 = source::funnel_nits(source)?;
+    let p2 = source::funnel_nits(distorted)?;
+    let (w1, h1) = p1.dims();
+    let (w2, h2) = p2.dims();
+    if w1 != w2 || h1 != h2 {
+        return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+    }
+    let opts = pipeline::Opts {
+        kernel,
+        flavor: pipeline::XybFlavor::Pu21,
+    };
+    // Alpha: composite onto the SDR dark/light-equivalent backgrounds
+    // (20 / 200 cd/m²), mirroring the encoded path's 0.1/0.9 convention.
+    let has_alpha = prepared_has_alpha(&p1) || prepared_has_alpha(&p2);
+    let once = |bg: f32| -> Result<f64, Ssimulacra2Error> {
+        let mut a = linearize_prepared(&p1, w1, bg);
+        let mut b = linearize_prepared(&p2, w2, bg);
+        let (w, h) = if w1 < 8 || h1 < 8 {
+            let (pw, ph) = (w1.max(8), h1.max(8));
+            a = pad_planes(a, w1, h1, pw, ph);
+            b = pad_planes(b, w2, h2, pw, ph);
+            (pw, ph)
+        } else {
+            (w1, h1)
+        };
+        pipeline::compute_planar_stop(a, b, w, h, opts, stop)
+    };
+    if has_alpha {
+        Ok(once(20.0)?.min(once(200.0)?))
+    } else {
+        once(200.0)
+    }
 }
 
 /// Core pair-scoring entry: the reference SSIMULACRA2.1 pipeline
@@ -392,20 +452,16 @@ where
 /// Encoded sRGB inputs are linearized through the captured reference
 /// LUTs; already-linear inputs are used as-is (the reference binary
 /// never sees such inputs, so bit-exactness there is undefined).
-fn compute_pair<S, D>(
-    source: S,
-    distorted: D,
+fn compute_pair(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
     kernel: pipeline::Kernel,
     stop: &dyn enough::Stop,
-) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
+) -> Result<f64, Ssimulacra2Error> {
     use source::PreparedInput;
 
-    let p1 = source::funnel(&source)?;
-    let p2 = source::funnel(&distorted)?;
+    let p1 = source::funnel(source)?;
+    let p2 = source::funnel(distorted)?;
 
     if let (PreparedInput::Encoded(e1), PreparedInput::Encoded(e2)) = (&p1, &p2) {
         // Sub-8px inputs: the reference binary refuses them, but the
@@ -428,7 +484,7 @@ where
     // Linear-side mirror padding to the 8px pyramid floor (crate contract;
     // the reference binary refuses such inputs — padding is our extension).
     let (pw, ph) = (w1.max(8), h1.max(8));
-    let opts = pipeline::Opts { kernel };
+    let opts = pipeline::Opts { kernel, flavor: pipeline::XybFlavor::CubeRoot };
 
     // Reference alpha compositing: min over two backgrounds (0.1 / 0.9
     // encoded). Linear inputs replicate it with the linearized bg.
@@ -523,6 +579,43 @@ mod tests {
 
     use super::*;
 
+    /// Wrap `&[[f32; 3]]` as an encoded-sRGB `PixelSlice`.
+    fn srgb_f32(data: &[[f32; 3]], w: usize, h: usize) -> zenpixels::PixelSlice<'_> {
+        zenpixels::PixelSlice::new(
+            bytemuck::cast_slice(data),
+            w as u32,
+            h as u32,
+            w * 12,
+            zenpixels::PixelDescriptor::RGBF32
+                .with_transfer(zenpixels::TransferFunction::Srgb),
+        )
+        .unwrap()
+    }
+
+    /// Wrap `&[[f32; 3]]` as a linear `PixelSlice`.
+    fn lin_f32(data: &[[f32; 3]], w: usize, h: usize) -> zenpixels::PixelSlice<'_> {
+        zenpixels::PixelSlice::new(
+            bytemuck::cast_slice(data),
+            w as u32,
+            h as u32,
+            w * 12,
+            zenpixels::PixelDescriptor::RGBF32_LINEAR,
+        )
+        .unwrap()
+    }
+
+    /// Wrap `&[[u8; 3]]` as `RGB8_SRGB`.
+    fn rgb8_slice(data: &[[u8; 3]], w: usize, h: usize) -> zenpixels::PixelSlice<'_> {
+        zenpixels::PixelSlice::new(
+            bytemuck::cast_slice(data),
+            w as u32,
+            h as u32,
+            w * 3,
+            zenpixels::PixelDescriptor::RGB8_SRGB,
+        )
+        .unwrap()
+    }
+
     /// sRGB-encoded f32 raster — the on-grid encoded-input path.
     fn tank_rgb() -> (Vec<[f32; 3]>, Vec<[f32; 3]>, u32, u32) {
         let mk = |name: &str| {
@@ -544,8 +637,8 @@ mod tests {
     fn test_ssimulacra2() {
         let (s, d, w, h) = tank_rgb();
         let score = compute_ssimulacra2(
-            SrgbF32Slice::new(&s, w as usize, h as usize),
-            SrgbF32Slice::new(&d, w as usize, h as usize),
+            &srgb_f32(&s, w as usize, h as usize),
+            &srgb_f32(&d, w as usize, h as usize),
         )
         .unwrap();
         assert!(
@@ -554,12 +647,12 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "imgref")]
     #[test]
-    fn test_u8_and_on_grid_f32_agree() {
-        // The captured-LUT u8 path and `EncodedData::F32` values on the
-        // u8 grid (k/255) must produce bit-identical scores — the grid
-        // snap is what keeps u8-widened-to-f32 callers exact.
+    fn test_u8_and_f32_encoded_nearly_agree() {
+        // u8 (captured LUT) vs f32-encoded sRGB (rational poly): the
+        // general f32 path approximates the LUT within ~1e-7/pixel, so
+        // scores stay within a small tolerance — they're *sane-equal*,
+        // not bit-exact (quantized callers get exactness via u8).
         let s = image::open(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("test_data")
@@ -576,8 +669,7 @@ mod tests {
         .to_rgb8();
         let (w, h) = s.dimensions();
         let mk = |img: &image::RgbImage| {
-            let px: Vec<[u8; 3]> = img.pixels().map(|p| [p[0], p[1], p[2]]).collect();
-            imgref::ImgVec::new(px, w as usize, h as usize)
+            img.pixels().map(|p| [p[0], p[1], p[2]]).collect::<Vec<[u8; 3]>>()
         };
         let (a8, b8) = (mk(&s), mk(&d));
         let mkr = |img: &image::RgbImage| {
@@ -586,21 +678,25 @@ mod tests {
                 .collect::<Vec<[f32; 3]>>()
         };
         let (af, bf) = (mkr(&s), mkr(&d));
-        let score_u8 = compute_ssimulacra2(a8.as_ref(), b8.as_ref()).unwrap();
-        let score_f32 = compute_ssimulacra2(
-            SrgbF32Slice::new(&af, w as usize, h as usize),
-            SrgbF32Slice::new(&bf, w as usize, h as usize),
+        let score_u8 = compute_ssimulacra2(
+            &rgb8_slice(&a8, w as usize, h as usize),
+            &rgb8_slice(&b8, w as usize, h as usize),
         )
         .unwrap();
-        assert_eq!(
-            score_u8, score_f32,
-            "u8 {score_u8} vs on-grid f32 {score_f32} differ — grid snap broken"
+        let score_f32 = compute_ssimulacra2(
+            &srgb_f32(&af, w as usize, h as usize),
+            &srgb_f32(&bf, w as usize, h as usize),
+        )
+        .unwrap();
+        assert!(
+            (score_u8 - score_f32).abs() < 0.15,
+            "u8 {score_u8} vs f32-encoded {score_f32} — poly-vs-LUT drift"
         );
     }
 
     /// Construct a mid-gray linear image.
-    fn make_linear_rgb(width: usize, height: usize) -> LinearRgbImage {
-        LinearRgbImage::new(vec![[0.5f32, 0.5, 0.5]; width * height], width, height)
+    fn make_linear_rgb(width: usize, height: usize) -> Vec<[f32; 3]> {
+        vec![[0.5f32, 0.5, 0.5]; width * height]
     }
 
     #[test]
@@ -622,7 +718,11 @@ mod tests {
     #[test]
     fn test_compute_accepts_small_input() {
         let img = make_linear_rgb(16, 16);
-        let score = compute_ssimulacra2_with_config(img.clone(), img, Ssimulacra2Config::default())
+        let score = compute_ssimulacra2_with_config(
+            &lin_f32(&img, 16, 16),
+            &lin_f32(&img, 16, 16),
+            &Ssimulacra2Config::default(),
+        )
             .expect("16x16 grey image must be accepted");
         assert!(
             (score - 100.0).abs() < 0.01,
@@ -638,7 +738,11 @@ mod tests {
         for (w, h) in [(4usize, 4usize), (1, 1), (3, 7), (7, 3)] {
             let img = make_linear_rgb(w, h);
             let score =
-                compute_ssimulacra2_with_config(img.clone(), img, Ssimulacra2Config::default())
+                compute_ssimulacra2_with_config(
+                    &lin_f32(&img, w, h),
+                    &lin_f32(&img, w, h),
+                    &Ssimulacra2Config::default(),
+                )
                     .unwrap_or_else(|e| panic!("{w}x{h} must score, got {e:?}"));
             assert!(
                 (score - 100.0).abs() < 0.01,
@@ -647,8 +751,12 @@ mod tests {
         }
         // A real sub-8 difference yields a finite score below 100.
         let a = make_linear_rgb(5, 5);
-        let b = LinearRgbImage::new(vec![[0.9f32, 0.1, 0.2]; 25], 5, 5);
-        let s = compute_ssimulacra2_with_config(a, b, Ssimulacra2Config::default())
+        let b = vec![[0.9f32, 0.1, 0.2]; 25];
+        let s = compute_ssimulacra2_with_config(
+            &lin_f32(&a, 5, 5),
+            &lin_f32(&b, 5, 5),
+            &Ssimulacra2Config::default(),
+        )
             .expect("5x5 differing pair must score");
         assert!(s.is_finite() && s < 100.0, "5x5 differing score {s}");
     }
@@ -658,15 +766,15 @@ mod tests {
         let (sa, sb, w, h) = tank_rgb();
         let (w, h) = (w as usize, h as usize);
         let simd = compute_ssimulacra2_with_config(
-            SrgbF32Slice::new(&sa, w, h),
-            SrgbF32Slice::new(&sb, w, h),
-            Ssimulacra2Config::simd(),
+            &srgb_f32(&sa, w, h),
+            &srgb_f32(&sb, w, h),
+            &Ssimulacra2Config::simd(),
         )
         .unwrap();
         let scalar = compute_ssimulacra2_with_config(
-            SrgbF32Slice::new(&sa, w, h),
-            SrgbF32Slice::new(&sb, w, h),
-            Ssimulacra2Config::scalar(),
+            &srgb_f32(&sa, w, h),
+            &srgb_f32(&sb, w, h),
+            &Ssimulacra2Config::scalar(),
         )
         .unwrap();
         assert_eq!(simd, scalar, "scalar vs simd kernel mismatch");

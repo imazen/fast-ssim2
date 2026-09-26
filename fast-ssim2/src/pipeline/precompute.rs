@@ -423,6 +423,7 @@ impl ReferenceCache {
         }
         let opts = super::Opts {
             kernel: super::Kernel::Simd,
+            flavor: super::XybFlavor::CubeRoot,
         };
         let mut accs = Vec::with_capacity(self.num_stacks());
         for stack in 0..self.num_stacks() {
@@ -475,6 +476,7 @@ impl ReferenceCache {
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let opts = super::Opts {
             kernel: super::Kernel::Simd,
+            flavor: super::XybFlavor::CubeRoot,
         };
         let mut acc = super::strip::StripAcc::new(w, h);
         super::strip::accumulate_strips_cached(

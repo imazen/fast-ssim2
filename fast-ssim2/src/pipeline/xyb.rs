@@ -62,14 +62,35 @@ fn cube_root_and_add(x: f32, add: f32) -> f32 {
 /// Input is linear sRGB (already EOTF-decoded) in [0, ~1.05].
 #[inline]
 pub fn linear_rgb_to_xyb_pixel(px: [f32; 3]) -> [f32; 3] {
+    linear_rgb_to_xyb_with(px, |v| cube_root_and_add(v.max(0.0), NEG_CBRT_BIAS))
+}
+
+/// `CubeRootLo` variant — `cbrt_lowp_f32` (1 Halley, ~259 ulp).
+#[inline]
+pub fn linear_rgb_to_xyb_pixel_lo(px: [f32; 3]) -> [f32; 3] {
+    linear_rgb_to_xyb_with(px, |v| {
+        magetypes::nostd_math::cbrt_lowp_f32(v.max(0.0)) + NEG_CBRT_BIAS
+    })
+}
+
+/// `CubeRootHi` variant — `magetypes::nostd_math::cbrt_midp_f32`
+/// (Kahan seed + 2 Halley, max ~3 ulp). The `+ BIAS` add is a plain
+/// f32 add (hwy fuses it into the final step; an honest root + add is
+/// the defensible semantic here).
+#[inline]
+pub fn linear_rgb_to_xyb_pixel_hi(px: [f32; 3]) -> [f32; 3] {
+    linear_rgb_to_xyb_with(px, |v| {
+        magetypes::nostd_math::cbrt_midp_f32(v.max(0.0)) + NEG_CBRT_BIAS
+    })
+}
+
+#[inline]
+fn linear_rgb_to_xyb_with(px: [f32; 3], root: impl Fn(f32) -> f32) -> [f32; 3] {
     let (r, g, b) = (px[0], px[1], px[2]);
     let mixed0 = M00.mul_add(r, M01.mul_add(g, M02.mul_add(b, BIAS)));
     let mixed1 = M10.mul_add(r, M11.mul_add(g, M12.mul_add(b, BIAS)));
     let mixed2 = M20.mul_add(r, M21.mul_add(g, M22.mul_add(b, BIAS)));
 
-    let root = |v: f32| -> f32 {
-        cube_root_and_add(v.max(0.0), NEG_CBRT_BIAS)
-    };
     let m0 = root(mixed0);
     let m1 = root(mixed1);
     let m2 = root(mixed2);

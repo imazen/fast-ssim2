@@ -39,20 +39,27 @@
 //! (~`e^{-6}` ≈ `1e-3` per pixel) from scale 4 where the per-strip
 //! image is small and the effective halo is correspondingly thinner.
 //! Callers can override the halo via
-//! [`Ssimulacra2StripConfig::with_halo_rows`] for stricter parity at
+//! [`StripConfig::with_halo_rows`] for stricter parity at
 //! the cost of slightly more per-strip work.
 //!
 //! ## Example
 //!
+//! Strip mode is selected through [`Ssimulacra2Config::strip`]:
+//!
 //! ```
-//! use fast_ssim2::{compute_ssimulacra2_strip, RgbSlice};
+//! use fast_ssim2::{
+//!     PixelDescriptor, PixelSlice, Ssimulacra2Config, compute_ssimulacra2_with_config,
+//! };
 //!
-//! let data: Vec<[u8; 3]> = vec![[128, 128, 128]; 256 * 256];
-//! let source = RgbSlice::new(&data, 256, 256);
-//! let distorted = RgbSlice::new(&data, 256, 256);
+//! let data: Vec<u8> = vec![128; 256 * 256 * 3];
+//! let source =
+//!     PixelSlice::new(&data, 256, 256, 256 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+//! let distorted =
+//!     PixelSlice::new(&data, 256, 256, 256 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
 //!
-//! // Process in strips of 64 rows each.
-//! let score = compute_ssimulacra2_strip(source, distorted, 64).unwrap();
+//! // Process in strips of 64 interior rows each.
+//! let cfg = Ssimulacra2Config::strips(64);
+//! let score = compute_ssimulacra2_with_config(&source, &distorted, &cfg).unwrap();
 //! assert!((score - 100.0).abs() < 1e-3);
 //! ```
 //!
@@ -60,13 +67,13 @@
 //!
 //! When comparing many distorted images against the same reference,
 //! pair [`Ssimulacra2Reference::new`] with
-//! [`Ssimulacra2Reference::compare_strip`] for the warm-ref + strip
-//! benefit:
+//! [`Ssimulacra2Reference::compare_with_config`] + `config.strip` for
+//! the warm-ref + strip benefit:
 //!
 //! ```ignore
 //! let reference = Ssimulacra2Reference::new(source)?;
 //! for distorted in distortions {
-//!     let score = reference.compare_strip(distorted, 64)?;
+//!     let score = reference.compare_with_config(distorted, &Ssimulacra2Config::strips(64))?;
 //! }
 //! ```
 //!
@@ -75,8 +82,8 @@
 //! For full strip mode on both sides, use [`compute_ssimulacra2_strip`]
 //! directly.
 
-use crate::ImageSource;
-use crate::pipeline::{Kernel, Opts};
+use zenpixels::PixelSlice;
+use crate::pipeline::{XybFlavor, Kernel, Opts};
 use crate::precompute::Ssimulacra2Reference;
 use crate::{Ssimulacra2Config, Ssimulacra2Error};
 
@@ -101,15 +108,15 @@ pub const HALO_ROWS_DEFAULT: usize = 96;
 /// 8 rows would degenerate the per-scale halo accounting.
 pub const MIN_STRIP_HEIGHT: usize = 8;
 
-/// Configuration for strip-wise SSIMULACRA2 computation.
+/// Strip-wise evaluation parameters, selected via
+/// [`Ssimulacra2Config::strip`]. `strip_height` is in scale-0 rows.
 #[derive(Debug, Clone, Copy)]
-pub struct Ssimulacra2StripConfig {
+pub struct StripConfig {
+    /// Interior rows per strip (min [`MIN_STRIP_HEIGHT`]).
+    pub strip_height: usize,
     /// Number of rows above and below each strip's "interior" that
     /// are processed but excluded from the per-pixel reductions.
     pub halo_rows: usize,
-    /// Kernel selection for the per-strip ops (scalar oracle vs SIMD —
-    /// bit-identical).
-    pub inner: Ssimulacra2Config,
     /// Process strips in parallel (requires the `rayon` feature).
     ///
     /// Off by default because parallelism multiplies the memory bound:
@@ -122,34 +129,17 @@ pub struct Ssimulacra2StripConfig {
     pub parallel_strips: bool,
 }
 
-impl Default for Ssimulacra2StripConfig {
+impl Default for StripConfig {
     fn default() -> Self {
         Self {
+            strip_height: 256,
             halo_rows: HALO_ROWS_DEFAULT,
-            inner: Ssimulacra2Config::default(),
             parallel_strips: false,
         }
     }
 }
 
-impl Ssimulacra2StripConfig {
-    /// Create a strip config with the given halo size (rows).
-    #[must_use]
-    pub fn with_halo_rows(halo_rows: usize) -> Self {
-        Self {
-            halo_rows,
-            inner: Ssimulacra2Config::default(),
-            parallel_strips: false,
-        }
-    }
-
-    /// Set the underlying SIMD configuration.
-    #[must_use]
-    pub fn with_inner(mut self, inner: Ssimulacra2Config) -> Self {
-        self.inner = inner;
-        self
-    }
-
+impl StripConfig {
     /// Enable parallel strip processing (requires `rayon`; multiplies
     /// peak memory by the thread count — see [`Self::parallel_strips`]).
     #[must_use]
@@ -172,104 +162,34 @@ impl Ssimulacra2StripConfig {
 /// # Errors
 /// - [`Ssimulacra2Error::InvalidImageSize`] if `strip_height <
 ///   [`MIN_STRIP_HEIGHT`].
-/// - [`Ssimulacra2Error::NonMatchingImageDimensions`],
-///   [`Ssimulacra2Error::ImageTooLarge`] as in
-///   [`crate::compute_ssimulacra2`]. Sub-8px inputs are reflect-padded
-///   per the crate contract.
-pub fn compute_ssimulacra2_strip<S, D>(
-    source: S,
-    distorted: D,
-    strip_height: u32,
-) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
-    compute_ssimulacra2_strip_with_config_and_stop(
-        source,
-        distorted,
-        strip_height,
-        Ssimulacra2StripConfig::default(),
-        &enough::Unstoppable,
-    )
-}
-
-/// [`compute_ssimulacra2_strip`] with cooperative cancellation.
-///
-/// `stop` is checked once per strip (never per-pixel); on cancellation
-/// the comparison returns [`Ssimulacra2Error::Cancelled`].
-///
-/// # Errors
-/// As [`compute_ssimulacra2_strip`], plus `Cancelled`.
-pub fn compute_ssimulacra2_strip_with_stop<S, D>(
-    source: S,
-    distorted: D,
-    strip_height: u32,
-    stop: &dyn enough::Stop,
-) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
-    compute_ssimulacra2_strip_with_config_and_stop(
-        source,
-        distorted,
-        strip_height,
-        Ssimulacra2StripConfig::default(),
-        stop,
-    )
-}
-
-/// [`compute_ssimulacra2_strip`] with explicit configuration.
-///
-/// # Errors
-/// As [`compute_ssimulacra2_strip`].
-pub fn compute_ssimulacra2_strip_with_config<S, D>(
-    source: S,
-    distorted: D,
-    strip_height: u32,
-    config: Ssimulacra2StripConfig,
-) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
-{
-    compute_ssimulacra2_strip_with_config_and_stop(
-        source,
-        distorted,
-        strip_height,
-        config,
-        &enough::Unstoppable,
-    )
-}
-
-/// Strip entry point.
+/// Crate-internal strip runner — invoked from the public entry points
+/// when [`Ssimulacra2Config::strip`] is `Some`. The strip parameters
+/// live in [`StripConfig`]; kernel/stop come from the outer config.
 ///
 /// Inputs with an encoded sRGB pixel format are sliced per strip
 /// in encoded space and linearized through the reference-captured LUT —
 /// the same bit-exact path as [`crate::compute_ssimulacra2`]. `LinearF32*`
 /// inputs take the linear-planes variant.
-fn compute_ssimulacra2_strip_with_config_and_stop<S, D>(
-    source: S,
-    distorted: D,
-    strip_height: u32,
-    config: Ssimulacra2StripConfig,
-    stop: &dyn enough::Stop,
+pub(crate) fn compute_strip_inner(
+    source: &PixelSlice<'_>,
+    distorted: &PixelSlice<'_>,
+    config: &Ssimulacra2Config<'_>,
 ) -> Result<f64, Ssimulacra2Error>
-where
-    S: ImageSource,
-    D: ImageSource,
 {
     use crate::source::PreparedInput;
 
-    if strip_height < MIN_STRIP_HEIGHT as u32 {
+    let sc = config.strip.expect("strip config required");
+    if sc.strip_height < MIN_STRIP_HEIGHT {
         return Err(Ssimulacra2Error::InvalidImageSize);
     }
+    let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
     let opts = Opts {
-        kernel: Kernel::from_impl(config.inner.impl_type),
+        kernel: Kernel::from_impl(config.impl_type),
+        flavor: XybFlavor::CubeRoot,
     };
-    let p1 = crate::source::funnel(&source)?;
-    let p2 = crate::source::funnel(&distorted)?;
+    let strip_height = sc.strip_height;
+    let p1 = crate::source::funnel(source)?;
+    let p2 = crate::source::funnel(distorted)?;
     if let (PreparedInput::Encoded(e1), PreparedInput::Encoded(e2)) = (&p1, &p2) {
         // Same sub-8px crate contract as the pair path — pad encoded
         // planes (per-pixel LUT ⇒ U8-exact, identical to padding
@@ -279,10 +199,10 @@ where
         return crate::pipeline::strip::compute_encoded_strip_stop(
             &p1,
             &p2,
-            strip_height as usize,
-            config.halo_rows,
+            strip_height,
+            sc.halo_rows,
             opts,
-            config.parallel_strips,
+            sc.parallel_strips,
             stop,
         );
     }
@@ -308,10 +228,10 @@ where
             &b,
             w,
             h,
-            strip_height as usize,
-            config.halo_rows,
+            strip_height,
+            sc.halo_rows,
             opts,
-            config.parallel_strips,
+            sc.parallel_strips,
             stop,
         )
     };
@@ -324,86 +244,21 @@ where
 
 
 impl Ssimulacra2Reference {
-    /// Compare a distorted image against the precomputed reference
-    /// using strip-bounded peak memory.
-    ///
-    /// Mirrors [`Ssimulacra2Reference::compare`] but runs the dist
-    /// side in strips of `strip_height` rows (plus default halo); the
-    /// precomputed reference data is held full-image as in the
-    /// non-strip API.
-    ///
-    /// At 40 MP, this bounds dist-side peak memory to
-    /// `O(strip_height * width)` instead of the ~7 GiB of the
-    /// full-image dist path; the ref-side cost stays at the cached
-    /// reference's footprint.
-    ///
-    /// # Errors
-    /// - If the distorted image dimensions don't match the reference
-    /// - If `strip_height < 8`
-    pub fn compare_strip<T: ImageSource>(
+    /// Strip-bounded comparison — crate-internal; the public surface is
+    /// [`Ssimulacra2Reference::compare_with_config`] with `config.strip`.
+    pub(crate) fn compare_strip_inner(
         &self,
-        distorted: T,
-        strip_height: u32,
+        distorted: &PixelSlice<'_>,
+        config: &Ssimulacra2Config<'_>,
     ) -> Result<f64, Ssimulacra2Error> {
-        self.compare_strip_with_config(distorted, strip_height, Ssimulacra2StripConfig::default())
-    }
-
-    /// [`Ssimulacra2Reference::compare_strip`] with cooperative cancellation.
-    ///
-    /// `stop` is checked once per strip (never per-pixel); on cancellation the
-    /// comparison returns [`Ssimulacra2Error::Cancelled`]. `compare_strip` is the
-    /// no-cancellation equivalent (it passes `enough::Unstoppable`).
-    ///
-    /// # Errors
-    /// As [`Ssimulacra2Reference::compare_strip`], plus `Cancelled`.
-    pub fn compare_strip_with_stop<T: ImageSource>(
-        &self,
-        distorted: T,
-        strip_height: u32,
-        stop: &dyn enough::Stop,
-    ) -> Result<f64, Ssimulacra2Error> {
-        self.compare_strip_with_config_and_stop(
-            distorted,
-            strip_height,
-            Ssimulacra2StripConfig::default(),
-            stop,
-        )
-    }
-
-    /// Strip-bounded comparison with explicit configuration.
-    ///
-    /// # Errors
-    /// As [`Ssimulacra2Reference::compare_strip`].
-    pub fn compare_strip_with_config<T: ImageSource>(
-        &self,
-        distorted: T,
-        strip_height: u32,
-        config: Ssimulacra2StripConfig,
-    ) -> Result<f64, Ssimulacra2Error> {
-        self.compare_strip_with_config_and_stop(
-            distorted,
-            strip_height,
-            config,
-            &enough::Unstoppable,
-        )
-    }
-
-    /// [`Ssimulacra2Reference::compare_strip_with_config`] with cooperative cancellation.
-    ///
-    /// # Errors
-    /// As [`Ssimulacra2Reference::compare_strip_with_config`], plus `Cancelled`.
-    pub fn compare_strip_with_config_and_stop<T: ImageSource>(
-        &self,
-        distorted: T,
-        strip_height: u32,
-        config: Ssimulacra2StripConfig,
-        stop: &dyn enough::Stop,
-    ) -> Result<f64, Ssimulacra2Error> {
-        if strip_height < MIN_STRIP_HEIGHT as u32 {
+        let sc = config.strip.expect("strip config required");
+        if sc.strip_height < MIN_STRIP_HEIGHT {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
+        let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
+        let strip_height = sc.strip_height;
         let cache = self.cache();
-        let p = crate::source::funnel(&distorted)?;
+        let p = crate::source::funnel(distorted)?;
         match p {
             crate::source::PreparedInput::Encoded(e2) => {
                 let p2 = e2.reflect_padded(8);
@@ -412,9 +267,9 @@ impl Ssimulacra2Reference {
                 }
                 cache.compare_strip_stop(
                     &p2,
-                    strip_height as usize,
-                    config.halo_rows,
-                    config.parallel_strips,
+                    strip_height,
+                    sc.halo_rows,
+                    sc.parallel_strips,
                     stop,
                 )
             }
@@ -434,9 +289,9 @@ impl Ssimulacra2Reference {
                     best = best.min(cache.compare_strip_linear_stack(
                         si,
                         &planes,
-                        strip_height as usize,
-                        config.halo_rows,
-                        config.parallel_strips,
+                        strip_height,
+                        sc.halo_rows,
+                        sc.parallel_strips,
                         stop,
                     )?);
                 }

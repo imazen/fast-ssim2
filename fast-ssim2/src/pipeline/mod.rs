@@ -16,10 +16,12 @@
 //! - `SSIMMap`/`EdgeDiffMap` with the f32-quotient/f64-aggregate split
 //! - `Score` with the reference's exact f64 op ordering
 //!
-//! Bit-exactness is guaranteed for quantized inputs (8-bit/16-bit images,
-//! JPEG decoded to u8). Arbitrary f32-encoded inputs are linearized by
-//! interpolation into the captured LUT — close to, but not guaranteed
-//! bit-identical with, the reference's lcms evaluation.
+//! Bit-exactness is guaranteed for 8-bit sRGB inputs (JPEG/PNG decoded to
+//! u8) — the captured lcms LUT reproduces the reference's linearization
+//! bit-for-bit. `u16` and off-grid `f32` encoded inputs evaluate the sRGB
+//! polynomial instead — close to, but not guaranteed bit-identical with,
+//! the reference's lcms evaluation (the reference binary only ever sees
+//! u8, so no u16 reference behavior exists to match).
 
 pub mod gauss;
 pub mod simd;
@@ -27,6 +29,8 @@ pub mod strip;
 mod lut8;
 pub mod precompute;
 pub mod maps;
+#[cfg(feature = "hdr-pu")]
+pub mod pu21;
 #[cfg(feature = "rayon")]
 use archmage::incant;
 pub mod score;
@@ -222,9 +226,9 @@ pub fn linearize(enc: &EncodedSrgb, bg: f32) -> [Vec<f32>; 3] {
         }
         EncodedData::F32(data) => {
             for px in data.chunks_exact(3) {
-                out[0].push(encoded_f32_to_linear_grid(px[0], true));
-                out[1].push(encoded_f32_to_linear_grid(px[1], true));
-                out[2].push(encoded_f32_to_linear_grid(px[2], true));
+                out[0].push(encoded_f32_to_linear(px[0]));
+                out[1].push(encoded_f32_to_linear(px[1]));
+                out[2].push(encoded_f32_to_linear(px[2]));
             }
         }
     }
@@ -240,24 +244,12 @@ fn encoded_f32_to_linear(x: f32) -> f32 {
     crate::input::srgb_to_linear(x.clamp(0.0, 1.0))
 }
 
-/// `lin_poly = false` variant for [`EncodedData::F32`]: values sitting on
-/// the u8 grid (`x ≈ k/255`, the overwhelmingly common caller — u8 data
-/// widened to f32) snap to the captured reference LUT, making them
-/// bit-exact with the reference's u8 decode; off-grid values (alpha
-/// blends, true arbitrary f32) use the spec polynomial — the closest
-/// available approximation of lcms's actual float transform.
-#[inline]
-fn encoded_f32_to_linear_grid(x: f32, use_lut: bool) -> f32 {
-    let v = x.clamp(0.0, 1.0) * 255.0;
-    if use_lut {
-        let r = v.round();
-        if (v - r).abs() < 1e-5 {
-            return lut8::LINEAR_LUT_U8[r as usize];
-        }
-    }
-    crate::input::srgb_to_linear(x.clamp(0.0, 1.0))
-}
-
+/// Encoded-f32 linearization is all-poly: [`source::funnel`] converts
+/// images that are entirely on the u8 grid into [`EncodedData::U8`]
+/// upstream, so this path only ever sees real float content. Keeping it
+/// poly-only preserves monotonicity (no per-pixel snap discontinuity)
+/// — quantized callers get the LUT path by quantizing, or automatically
+/// via the funnel's grid check.
 /// Reference `Downsample` — linear RGB, box 2×2, ceil output size,
 /// clamped edge taps, `sum += ` in iy-outer/ix-inner order, `* 0.25`.
 pub fn downsample_planes(p: &[Vec<f32>; 3], width: usize, height: usize) -> ([Vec<f32>; 3], usize, usize) {
@@ -357,6 +349,28 @@ pub fn blur_planes_into(
     }
 }
 
+/// `CubeRootLo`: `cbrt_lowp_f32` — 1 Halley, ~259 ulp max. Experiment knob.
+pub fn planes_to_positive_xyb_lo(p: &mut [Vec<f32>; 3], npix: usize) {
+    for i in 0..npix {
+        let px = xyb::linear_rgb_to_xyb_pixel_lo([p[0][i], p[1][i], p[2][i]]);
+        p[0][i] = px[0];
+        p[1][i] = px[1];
+        p[2][i] = px[2];
+    }
+}
+
+/// `CubeRootHi`: same XYB formation with `magetypes`' mid-precision
+/// Halley cube root (max ~3 ulp vs `f32::cbrt` — vs the reference
+/// recipe's ~6 ulp). Scalar oracle for the SIMD variant.
+pub fn planes_to_positive_xyb_hi(p: &mut [Vec<f32>; 3], npix: usize) {
+    for i in 0..npix {
+        let px = xyb::linear_rgb_to_xyb_pixel_hi([p[0][i], p[1][i], p[2][i]]);
+        p[0][i] = px[0];
+        p[1][i] = px[1];
+        p[2][i] = px[2];
+    }
+}
+
 /// Convert linear-RGB planes to positive-XYB planes in place
 /// (`LinearRGBToXYB` + `MakePositiveXYB` per pixel).
 pub fn planes_to_positive_xyb(p: &mut [Vec<f32>; 3], npix: usize) {
@@ -365,6 +379,27 @@ pub fn planes_to_positive_xyb(p: &mut [Vec<f32>; 3], npix: usize) {
         p[0][i] = px[0];
         p[1][i] = px[1];
         p[2][i] = px[2];
+    }
+}
+
+/// In-place linear planes → positive XYB, per `opts.flavor` (PU21 uses
+/// its own encoding; `kernel` still selects scalar/SIMD for cbrt).
+fn xyb_convert(p: &mut [Vec<f32>; 3], npix: usize, opts: Opts) {
+    match opts.flavor {
+        XybFlavor::CubeRoot => match opts.kernel {
+            Kernel::Simd => simd::planes_to_positive_xyb_simd(p),
+            Kernel::Scalar => planes_to_positive_xyb(p, npix),
+        },
+        XybFlavor::CubeRootHi => match opts.kernel {
+            Kernel::Simd => simd::planes_to_positive_xyb_hi_simd(p),
+            Kernel::Scalar => planes_to_positive_xyb_hi(p, npix),
+        },
+        XybFlavor::CubeRootLo => match opts.kernel {
+            Kernel::Simd => simd::planes_to_positive_xyb_lo_simd(p),
+            Kernel::Scalar => planes_to_positive_xyb_lo(p, npix),
+        },
+        #[cfg(feature = "hdr-pu")]
+        XybFlavor::Pu21 => pu21::planes_to_pu_xyb(p, npix),
     }
 }
 
@@ -391,7 +426,7 @@ pub fn compute_encoded_stop(
         return Err(crate::Ssimulacra2Error::NonMatchingImageDimensions);
     }
     let lin = |e: &EncodedSrgb, bg| linearize(e, bg);
-    let opts = Opts { kernel };
+    let opts = Opts { kernel, flavor: XybFlavor::CubeRoot };
     if enc1.alpha.is_some() {
         let lo = compute_planar_stop(lin(enc1, 0.1), lin(enc2, 0.1), w, h, opts, stop)?;
         let hi = compute_planar_stop(lin(enc1, 0.9), lin(enc2, 0.9), w, h, opts, stop)?;
@@ -423,20 +458,44 @@ impl Kernel {
     pub const SIMD: Self = Self::Simd;
 }
 
+/// Perceptual-encoding flavor for the XYB stage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XybFlavor {
+    /// Cube-root opsin — the SDR/reference encoding (hwy `CubeRootAndAdd`
+    /// port: exponent seed + 3 Newton, ~6 ulp — bit-exact vs binary).
+    CubeRoot,
+    /// Same opsin structure with `magetypes` `cbrt_midp` (Kahan seed +
+    /// 2 Halley iterations — max ~3 ulp vs `f32::cbrt`). Divergent from
+    /// the reference by ≤ ~3 ulp per pixel — a defensible "idealized"
+    /// variant for studying quantization-lattice artifacts. NOT
+    /// bit-exact vs the reference binary.
+    CubeRootHi,
+    /// `magetypes` `cbrt_lowp` — 1 Halley iteration, ~259 max ulp
+    /// (still well inside the opsin's working tolerance; an aggressive
+    /// experiment knob, NOT a defensible scoring variant).
+    CubeRootLo,
+    /// PU21 `banding_glare` on absolute luminance (cd/m²) — HDR input
+    /// (`hdr-pu` feature); scores are not comparable to SDR scores.
+    #[cfg(feature = "hdr-pu")]
+    Pu21,
+}
+
 /// Per-call pipeline options — only the kernel family survives; the
 /// reference's FP behavior (LUT linearization, `CubeRootAndAdd`, f32 σ,
 /// reference FMA ordering) is fixed.
 #[derive(Clone, Copy, Debug)]
 pub struct Opts {
     pub kernel: Kernel,
+    /// Perceptual encoding for the XYB stage (SDR default).
+    pub flavor: XybFlavor,
 }
 
 impl Opts {
     /// Scalar oracle — used by tests/ports comparing SIMD against the
     /// reference-order scalar computation.
-    pub const SCALAR: Self = Self { kernel: Kernel::Scalar };
+    pub const SCALAR: Self = Self { kernel: Kernel::Scalar, flavor: XybFlavor::CubeRoot };
     /// Default: the SIMD kernels.
-    pub const SIMD: Self = Self { kernel: Kernel::Simd };
+    pub const SIMD: Self = Self { kernel: Kernel::Simd, flavor: XybFlavor::CubeRoot };
 }
 
 /// The complete metric on already-linear planes (from [`linearize`] or
@@ -466,7 +525,7 @@ pub fn compute_planar_with(
     height: usize,
     kernel: Kernel,
 ) -> Result<f64, crate::Ssimulacra2Error> {
-    compute_planar_stop(lin1, lin2, width, height, Opts { kernel }, &enough::Unstoppable)
+    compute_planar_stop(lin1, lin2, width, height, Opts { kernel, flavor: XybFlavor::CubeRoot }, &enough::Unstoppable)
 }
 
 /// [`compute_planar`] with cooperative cancellation — `stop` is checked
@@ -512,16 +571,8 @@ pub fn compute_planar_stop(
         let npix = w * h;
         let mut xyb1 = lin1;
         let mut xyb2 = lin2;
-        match opts.kernel {
-            Kernel::Simd => {
-                simd::planes_to_positive_xyb_simd(&mut xyb1);
-                simd::planes_to_positive_xyb_simd(&mut xyb2);
-            }
-            Kernel::Scalar => {
-                planes_to_positive_xyb(&mut xyb1, npix);
-                planes_to_positive_xyb(&mut xyb2, npix);
-            }
-        }
+        xyb_convert(&mut xyb1, npix, opts);
+        xyb_convert(&mut xyb2, npix, opts);
 
         let blur_sel = |p: &[Vec<f32>; 3]| -> [Vec<f32>; 3] {
             match opts.kernel {

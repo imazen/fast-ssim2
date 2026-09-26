@@ -177,11 +177,15 @@ fn compare_images(source: &Path, distorted: &Path) {
         .map(|chunk| [chunk[0], chunk[1], chunk[2]])
         .collect::<Vec<_>>();
 
-    let source_data = fast_ssim2::SrgbF32Image::new(
-        source_data,
-        source.width() as usize,
-        source.height() as usize,
-    );
+    let source_data = zenpixels::PixelSlice::new(
+        bytemuck::cast_slice::<f32, u8>(source_data.as_flattened()),
+        source.width(),
+        source.height(),
+        source.width() as usize * 12,
+        zenpixels::PixelDescriptor::RGBF32
+            .with_transfer(zenpixels::TransferFunction::Srgb),
+    )
+    .expect("Failed to build source PixelSlice");
 
     let distorted_data = distorted
         .to_rgb32f()
@@ -189,13 +193,17 @@ fn compare_images(source: &Path, distorted: &Path) {
         .map(|chunk| [chunk[0], chunk[1], chunk[2]])
         .collect::<Vec<_>>();
 
-    let distorted_data = fast_ssim2::SrgbF32Image::new(
-        distorted_data,
-        distorted.width() as usize,
-        distorted.height() as usize,
-    );
+    let distorted_data = zenpixels::PixelSlice::new(
+        bytemuck::cast_slice::<f32, u8>(distorted_data.as_flattened()),
+        distorted.width(),
+        distorted.height(),
+        distorted.width() as usize * 12,
+        zenpixels::PixelDescriptor::RGBF32
+            .with_transfer(zenpixels::TransferFunction::Srgb),
+    )
+    .expect("Failed to build distorted PixelSlice");
 
-    let result = compute_ssimulacra2(source_data, distorted_data)
+    let result = compute_ssimulacra2(&source_data, &distorted_data)
         .expect("Failed to calculate ssimulacra2");
 
     println!("Score: {result:.8}");

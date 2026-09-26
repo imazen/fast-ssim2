@@ -16,12 +16,21 @@
 use almost_enough::Stopper;
 use enough::{StopReason, Unstoppable};
 use fast_ssim2::{
-    LinearRgbImage, Ssimulacra2Error, Ssimulacra2Reference, compute_ssimulacra2_strip_with_stop,
-    compute_ssimulacra2_with_stop,
+    Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Reference, compute_ssimulacra2_with_config,
 };
 
+fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
+    zenpixels::PixelBuffer::from_vec(
+        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+        w as u32,
+        h as u32,
+        zenpixels::PixelDescriptor::RGBF32_LINEAR,
+    )
+    .unwrap()
+}
+
 /// Build a deterministic non-trivial `width`x`height` linear-RGB image.
-fn generate_image(width: usize, height: usize, seed: u32) -> LinearRgbImage {
+fn generate_image(width: usize, height: usize, seed: u32) -> zenpixels::PixelBuffer {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -46,14 +55,14 @@ fn generate_image(width: usize, height: usize, seed: u32) -> LinearRgbImage {
             data.push([r, g, b]);
         }
     }
-    LinearRgbImage::new(data, width, height)
+    lin_f32_buf(data, width, height)
 }
 
 #[test]
 fn one_shot_cancelled_token_returns_cancelled() {
     let source = generate_image(64, 64, 0);
     let distorted = generate_image(64, 64, 1);
-    let result = compute_ssimulacra2_with_stop(source, distorted, &Stopper::cancelled());
+    let result = compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::default().with_stop(&Stopper::cancelled()));
     match result {
         Err(Ssimulacra2Error::Cancelled(reason)) => {
             assert_eq!(reason, StopReason::Cancelled);
@@ -66,7 +75,7 @@ fn one_shot_cancelled_token_returns_cancelled() {
 fn one_shot_unstoppable_token_computes_score() {
     let img = generate_image(64, 64, 42);
     let score =
-        compute_ssimulacra2_with_stop(img.clone(), img, &Unstoppable).expect("Unstoppable must Ok");
+        compute_ssimulacra2_with_config(&img.as_slice(), &img.as_slice(), &Ssimulacra2Config::default().with_stop(&Unstoppable)).expect("Unstoppable must Ok");
     // Identical inputs score near the 100 ceiling.
     assert!(
         score > 99.0,
@@ -78,7 +87,7 @@ fn one_shot_unstoppable_token_computes_score() {
 fn strip_cancelled_token_returns_cancelled() {
     let source = generate_image(64, 64, 7);
     let distorted = generate_image(64, 64, 8);
-    let result = compute_ssimulacra2_strip_with_stop(source, distorted, 32, &Stopper::cancelled());
+    let result = compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::strips(32).with_stop(&Stopper::cancelled()));
     match result {
         Err(Ssimulacra2Error::Cancelled(reason)) => {
             assert_eq!(reason, StopReason::Cancelled);
@@ -90,7 +99,7 @@ fn strip_cancelled_token_returns_cancelled() {
 #[test]
 fn strip_unstoppable_token_computes_score() {
     let img = generate_image(64, 64, 99);
-    let score = compute_ssimulacra2_strip_with_stop(img.clone(), img, 32, &Unstoppable)
+    let score = compute_ssimulacra2_with_config(&img.as_slice(), &img.as_slice(), &Ssimulacra2Config::strips(32).with_stop(&Unstoppable))
         .expect("Unstoppable must Ok");
     assert!(
         score > 99.0,
@@ -102,9 +111,10 @@ fn strip_unstoppable_token_computes_score() {
 
 #[test]
 fn cached_ref_compare_cancelled_returns_cancelled() {
-    let reference = Ssimulacra2Reference::new(generate_image(64, 64, 3)).expect("reference build");
+    let img = generate_image(64, 64, 3);
+    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
     let distorted = generate_image(64, 64, 4);
-    match reference.compare_with_stop(distorted, &Stopper::cancelled()) {
+    match reference.compare_with_config(&distorted.as_slice(), &Ssimulacra2Config::default().with_stop(&Stopper::cancelled())) {
         Err(Ssimulacra2Error::Cancelled(reason)) => assert_eq!(reason, StopReason::Cancelled),
         other => panic!("expected Err(Cancelled(_)), got {other:?}"),
     }
@@ -113,9 +123,9 @@ fn cached_ref_compare_cancelled_returns_cancelled() {
 #[test]
 fn cached_ref_compare_unstoppable_computes_score() {
     let img = generate_image(64, 64, 5);
-    let reference = Ssimulacra2Reference::new(img.clone()).expect("reference build");
+    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
     let score = reference
-        .compare_with_stop(img, &Unstoppable)
+        .compare_with_config(&img.as_slice(), &Ssimulacra2Config::default().with_stop(&Unstoppable))
         .expect("Unstoppable must Ok");
     assert!(
         score > 99.0,
@@ -125,9 +135,10 @@ fn cached_ref_compare_unstoppable_computes_score() {
 
 #[test]
 fn cached_ref_strip_cancelled_returns_cancelled() {
-    let reference = Ssimulacra2Reference::new(generate_image(64, 64, 6)).expect("reference build");
+    let img = generate_image(64, 64, 6);
+    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
     let distorted = generate_image(64, 64, 7);
-    match reference.compare_strip_with_stop(distorted, 32, &Stopper::cancelled()) {
+    match reference.compare_with_config(&distorted.as_slice(), &Ssimulacra2Config::strips(32).with_stop(&Stopper::cancelled())) {
         Err(Ssimulacra2Error::Cancelled(reason)) => assert_eq!(reason, StopReason::Cancelled),
         other => panic!("expected Err(Cancelled(_)), got {other:?}"),
     }
@@ -136,9 +147,9 @@ fn cached_ref_strip_cancelled_returns_cancelled() {
 #[test]
 fn cached_ref_strip_unstoppable_computes_score() {
     let img = generate_image(64, 64, 8);
-    let reference = Ssimulacra2Reference::new(img.clone()).expect("reference build");
+    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
     let score = reference
-        .compare_strip_with_stop(img, 32, &Unstoppable)
+        .compare_with_config(&img.as_slice(), &Ssimulacra2Config::strips(32).with_stop(&Unstoppable))
         .expect("Unstoppable must Ok");
     assert!(
         score > 99.0,

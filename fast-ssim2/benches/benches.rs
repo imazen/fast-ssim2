@@ -2,11 +2,21 @@ use fast_ssim2::compute_ssimulacra2;
 use num_traits::clamp;
 use rand::RngExt;
 use std::hint::black_box;
-use fast_ssim2::SrgbF32Image;
+
+/// Owned encoded-sRGB `f32` pixels (k/255 grid stays LUT-exact).
+fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
+    zenpixels::PixelBuffer::from_vec(
+        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+        w as u32,
+        h as u32,
+        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+    )
+    .unwrap()
+}
 use zenbench::criterion_compat::*;
 use zenbench::{criterion_group, criterion_main};
 
-fn make_rgb_pair(width: usize, height: usize) -> (SrgbF32Image, SrgbF32Image) {
+fn make_rgb_pair(width: usize, height: usize) -> (zenpixels::PixelBuffer, zenpixels::PixelBuffer) {
     let mut rng = rand::rng();
     let source_data: Vec<[f32; 3]> = (0..width * height)
         .map(|_| {
@@ -29,9 +39,9 @@ fn make_rgb_pair(width: usize, height: usize) -> (SrgbF32Image, SrgbF32Image) {
         })
         .collect();
 
-    let source = SrgbF32Image::new(source_data, width, height);
+    let source = srgb_f32_owned(source_data, width, height);
 
-    let distorted = SrgbF32Image::new(distorted_data, width, height);
+    let distorted = srgb_f32_owned(distorted_data, width, height);
 
     (source, distorted)
 }
@@ -40,12 +50,12 @@ fn bench_ssimulacra2(c: &mut Criterion) {
     for (w, h) in [(320, 240), (1920, 1080), (3840, 2160)] {
         let (source, distorted) = make_rgb_pair(w, h);
         c.bench_function(format!("ssimulacra2_{w}x{h}"), |b| {
-            let s = source.clone();
-            let d = distorted.clone();
-            b.iter_batched(
-                move || (s.clone(), d.clone()),
-                |(s, d)| compute_ssimulacra2(black_box(s), black_box(d)).unwrap(),
-                BatchSize::LargeInput,
+            b.iter(
+                || compute_ssimulacra2(
+                    black_box(&source.as_slice()),
+                    black_box(&distorted.as_slice()),
+                )
+                .unwrap(),
             )
         });
     }

@@ -12,7 +12,7 @@
 //! Strip variants ([`Ssimulacra2Reference::compare_strip`]) bound the
 //! distorted side's memory the same way as [`crate::compute_ssimulacra2_strip`].
 
-use crate::ImageSource;
+use zenpixels::PixelSlice;
 use crate::pipeline::precompute::ReferenceCache;
 use crate::{MAX_IMAGE_PIXELS, Ssimulacra2Config, Ssimulacra2Error};
 
@@ -49,19 +49,20 @@ impl Ssimulacra2Reference {
     ///   (0×0).
     /// - [`Ssimulacra2Error::ImageTooLarge`] if the (padded) image
     ///   exceeds [`MAX_IMAGE_PIXELS`].
-    pub fn new<T: ImageSource>(source: T) -> Result<Self, Ssimulacra2Error> {
-        Self::new_with_config(source, Ssimulacra2Config::default())
+    pub fn new(source: &PixelSlice<'_>) -> Result<Self, Ssimulacra2Error> {
+        Self::new_with_config(source, &Ssimulacra2Config::default())
     }
 
-    /// [`Self::new`] with explicit kernel selection — `impl_type`
-    /// chooses the scalar-oracle or SIMD kernels (bit-identical output).
-    pub fn new_with_config<T: ImageSource>(
-        source: T,
-        config: Ssimulacra2Config,
+    /// [`Self::new`] with explicit options — `impl_type` chooses the
+    /// scalar-oracle or SIMD kernels (bit-identical output); `stop`
+    /// allows cooperative cancellation of the precompute itself.
+    pub fn new_with_config(
+        source: &PixelSlice<'_>,
+        config: &Ssimulacra2Config<'_>,
     ) -> Result<Self, Ssimulacra2Error> {
         let _ = config; // kernel selection is internal; all kernels are bit-identical
         use crate::source::PreparedInput;
-        match crate::source::funnel(&source)? {
+        match crate::source::funnel(source)? {
             PreparedInput::Encoded(e) => {
                 let ow = e.width;
                 let oh = e.height;
@@ -111,22 +112,27 @@ impl Ssimulacra2Reference {
     /// # Errors
     /// - [`Ssimulacra2Error::NonMatchingImageDimensions`] if dimensions
     ///   differ from the source used at construction.
-    pub fn compare<T: ImageSource>(&self, distorted: T) -> Result<f64, Ssimulacra2Error> {
-        self.compare_with_stop(distorted, &enough::Unstoppable)
+    pub fn compare(&self, distorted: &PixelSlice<'_>) -> Result<f64, Ssimulacra2Error> {
+        self.compare_with_config(distorted, &Ssimulacra2Config::default())
     }
 
-    /// [`Self::compare`] with cooperative cancellation — `stop` is
-    /// checked at scale boundaries (never per-pixel).
+    /// [`Self::compare`] with per-call options — `strip` bounds the
+    /// distorted side's memory, `stop` enables cooperative cancellation
+    /// (checked at scale boundaries / per strip).
     ///
     /// # Errors
     /// As [`Self::compare`], plus [`Ssimulacra2Error::Cancelled`].
-    pub fn compare_with_stop<T: ImageSource>(
+    pub fn compare_with_config(
         &self,
-        distorted: T,
-        stop: &dyn enough::Stop,
+        distorted: &PixelSlice<'_>,
+        config: &Ssimulacra2Config<'_>,
     ) -> Result<f64, Ssimulacra2Error> {
+        if config.strip.is_some() {
+            return self.compare_strip_inner(distorted, config);
+        }
         use crate::source::PreparedInput;
-        let p = crate::source::funnel(&distorted)?;
+        let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
+        let p = crate::source::funnel(distorted)?;
         if p.dims() != (self.original_width, self.original_height) {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
@@ -199,9 +205,30 @@ fn pad_or_pass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        LinearRgbImage, SrgbF32Slice, compute_ssimulacra2, compute_ssimulacra2_with_config,
-    };
+    use crate::{compute_ssimulacra2, compute_ssimulacra2_with_config};
+    use zenpixels::{PixelDescriptor, PixelSlice, TransferFunction};
+
+    fn srgb_f32(data: &[[f32; 3]], w: usize, h: usize) -> PixelSlice<'_> {
+        PixelSlice::new(
+            bytemuck::cast_slice(data),
+            w as u32,
+            h as u32,
+            w * 12,
+            PixelDescriptor::RGBF32.with_transfer(TransferFunction::Srgb),
+        )
+        .unwrap()
+    }
+
+    fn lin_f32(data: &[[f32; 3]], w: usize, h: usize) -> PixelSlice<'_> {
+        PixelSlice::new(
+            bytemuck::cast_slice(data),
+            w as u32,
+            h as u32,
+            w * 12,
+            PixelDescriptor::RGBF32_LINEAR,
+        )
+        .unwrap()
+    }
 
     /// sRGB-encoded f32 raster (values k/255 — on the u8 grid).
     fn rgb8(img: &image::RgbImage) -> (Vec<[f32; 3]>, usize, usize) {
@@ -225,13 +252,9 @@ mod tests {
     #[test]
     fn test_precompute_matches_full_compute() {
         let (a, b, w, h) = tank();
-        let full = compute_ssimulacra2(
-            SrgbF32Slice::new(&a, w, h),
-            SrgbF32Slice::new(&b, w, h),
-        )
-        .unwrap();
-        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
-        let cached = ref_.compare(SrgbF32Slice::new(&b, w, h)).unwrap();
+        let full = compute_ssimulacra2(&srgb_f32(&a, w, h), &srgb_f32(&b, w, h)).unwrap();
+        let ref_ = Ssimulacra2Reference::new(&srgb_f32(&a, w, h)).unwrap();
+        let cached = ref_.compare(&srgb_f32(&b, w, h)).unwrap();
         // bit-identical — same kernel family on both paths
         assert_eq!(full, cached, "one-shot {full} != cached {cached}");
     }
@@ -240,26 +263,26 @@ mod tests {
     fn test_precompute_scalar_matches_default() {
         let (a, b, w, h) = tank();
         let scalar = Ssimulacra2Reference::new_with_config(
-            SrgbF32Slice::new(&a, w, h),
-            Ssimulacra2Config::scalar(),
+            &srgb_f32(&a, w, h),
+            &Ssimulacra2Config::scalar(),
         )
         .unwrap();
-        let simd = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
+        let simd = Ssimulacra2Reference::new(&srgb_f32(&a, w, h)).unwrap();
         assert_eq!(
-            scalar.compare(SrgbF32Slice::new(&b, w, h)).unwrap(),
-            simd.compare(SrgbF32Slice::new(&b, w, h)).unwrap(),
+            scalar.compare(&srgb_f32(&b, w, h)).unwrap(),
+            simd.compare(&srgb_f32(&b, w, h)).unwrap(),
         );
     }
 
     #[test]
     fn test_precompute_dimension_mismatch() {
         let (a, _b, w, h) = tank();
-        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
+        let ref_ = Ssimulacra2Reference::new(&srgb_f32(&a, w, h)).unwrap();
         // 1×1 — smaller than the reference; still mismatched vs the
         // 512² source.
-        let tiny = LinearRgbImage::new(vec![[0.5; 3]], 1, 1);
+        let tiny = vec![[0.5f32; 3]];
         assert_eq!(
-            ref_.compare(tiny),
+            ref_.compare(&lin_f32(&tiny, 1, 1)),
             Err(Ssimulacra2Error::NonMatchingImageDimensions)
         );
     }
@@ -279,24 +302,20 @@ mod tests {
         };
         let a = mk(0xabcdef);
         let b = mk(0x123456);
-        let full = compute_ssimulacra2(
-            SrgbF32Slice::new(&a, 7, 5),
-            SrgbF32Slice::new(&b, 7, 5),
-        )
-        .unwrap();
-        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, 7, 5)).unwrap();
-        assert_eq!(full, ref_.compare(SrgbF32Slice::new(&b, 7, 5)).unwrap());
+        let full = compute_ssimulacra2(&srgb_f32(&a, 7, 5), &srgb_f32(&b, 7, 5)).unwrap();
+        let ref_ = Ssimulacra2Reference::new(&srgb_f32(&a, 7, 5)).unwrap();
+        assert_eq!(full, ref_.compare(&srgb_f32(&b, 7, 5)).unwrap());
         assert_eq!(ref_.width(), 7);
         assert_eq!(ref_.height(), 5);
     }
 
     #[test]
     fn test_sub_8_reference_rejects_mismatched_dims() {
-        let tiny = LinearRgbImage::new(vec![[0.5; 3]; 7 * 5], 7, 5);
-        let ref_ = Ssimulacra2Reference::new(tiny).unwrap();
-        let larger = LinearRgbImage::new(vec![[0.5; 3]; 16 * 16], 16, 16);
+        let tiny = vec![[0.5f32; 3]; 7 * 5];
+        let ref_ = Ssimulacra2Reference::new(&lin_f32(&tiny, 7, 5)).unwrap();
+        let larger = vec![[0.5f32; 3]; 16 * 16];
         assert_eq!(
-            ref_.compare(larger),
+            ref_.compare(&lin_f32(&larger, 16, 16)),
             Err(Ssimulacra2Error::NonMatchingImageDimensions)
         );
     }
@@ -304,7 +323,7 @@ mod tests {
     #[test]
     fn test_precompute_metadata() {
         let (a, _b, w, h) = tank();
-        let ref_ = Ssimulacra2Reference::new(SrgbF32Slice::new(&a, w, h)).unwrap();
+        let ref_ = Ssimulacra2Reference::new(&srgb_f32(&a, w, h)).unwrap();
         assert_eq!(ref_.width(), w);
         assert_eq!(ref_.height(), h);
         assert!((1..=6).contains(&ref_.num_scales()));
@@ -320,16 +339,14 @@ mod tests {
                 [f, f * 0.7, f * 0.3]
             })
             .collect();
-        let a = crate::LinearRgbImage::new(px.clone(), 64, 64);
         let px2: Vec<[f32; 3]> = px.iter().map(|p| [p[0] * 0.95, p[1], p[2]]).collect();
-        let b = crate::LinearRgbImage::new(px2, 64, 64);
         let full = compute_ssimulacra2_with_config(
-            a.clone(),
-            b.clone(),
-            Ssimulacra2Config::default(),
+            &lin_f32(&px, 64, 64),
+            &lin_f32(&px2, 64, 64),
+            &Ssimulacra2Config::default(),
         )
         .unwrap();
-        let ref_ = Ssimulacra2Reference::new(a).unwrap();
-        assert_eq!(full, ref_.compare(b).unwrap());
+        let ref_ = Ssimulacra2Reference::new(&lin_f32(&px, 64, 64)).unwrap();
+        assert_eq!(full, ref_.compare(&lin_f32(&px2, 64, 64)).unwrap());
     }
 }

@@ -10,10 +10,21 @@
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
-use fast_ssim2::{LinearRgbImage, Ssimulacra2Config, compute_ssimulacra2_with_config};
+use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
+
+fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
+    zenpixels::PixelBuffer::from_vec(
+        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+        w as u32,
+        h as u32,
+        zenpixels::PixelDescriptor::RGBF32_LINEAR,
+    )
+    .unwrap()
+}
+
 
 /// Generate a deterministic test image of varied linear RGB pixels.
-fn generate_test_image(width: usize, height: usize) -> LinearRgbImage {
+fn generate_test_image(width: usize, height: usize) -> zenpixels::PixelBuffer {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -23,11 +34,11 @@ fn generate_test_image(width: usize, height: usize) -> LinearRgbImage {
             data.push([r, g, b]);
         }
     }
-    LinearRgbImage::new(data, width, height)
+    lin_f32_buf(data, width, height)
 }
 
 /// Generate a slightly different image (simulated distortion).
-fn generate_distorted_image(width: usize, height: usize) -> LinearRgbImage {
+fn generate_distorted_image(width: usize, height: usize) -> zenpixels::PixelBuffer {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -37,7 +48,7 @@ fn generate_distorted_image(width: usize, height: usize) -> LinearRgbImage {
             data.push([r, g, b]);
         }
     }
-    LinearRgbImage::new(data, width, height)
+    lin_f32_buf(data, width, height)
 }
 
 #[test]
@@ -50,10 +61,8 @@ fn ssimulacra2_all_tiers_within_tolerance() {
     // levels of Gaussian blur + XYB conversion. A tolerance of 0.5 on the
     // 0-100 scale catches algorithmic bugs while allowing FMA divergence.
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-        let s = source.clone();
-        let d = distorted.clone();
         let score =
-            compute_ssimulacra2_with_config(s, d, Ssimulacra2Config::simd()).expect("score");
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd()).expect("score");
 
         if let Some(ref_score) = reference_score {
             let diff = (score - ref_score).abs();
@@ -74,15 +83,11 @@ fn ssimulacra2_roundtrip_stability() {
     let distorted = generate_distorted_image(32, 32);
 
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-        let s1 = source.clone();
-        let d1 = distorted.clone();
         let score1 =
-            compute_ssimulacra2_with_config(s1, d1, Ssimulacra2Config::simd()).expect("score1");
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd()).expect("score1");
 
-        let s2 = source.clone();
-        let d2 = distorted.clone();
         let score2 =
-            compute_ssimulacra2_with_config(s2, d2, Ssimulacra2Config::simd()).expect("score2");
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd()).expect("score2");
 
         assert_eq!(
             score1.to_bits(),
