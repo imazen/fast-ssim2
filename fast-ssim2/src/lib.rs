@@ -170,7 +170,7 @@ pub enum Ssimulacra2Error {
         MAX_IMAGE_PIXELS
     )]
     ImageTooLarge {
-        /// Pixel count (`width * height`) of the offending image.
+        /// Pixel count of the offending original or padded image.
         actual: usize,
     },
 

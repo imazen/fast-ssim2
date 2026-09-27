@@ -2,7 +2,9 @@
 
 ## Current development state (2026-09-27)
 
-The working API migration targets the manifest's 0.9.0 surface. This session
+The manifest still reads 0.9.0, which is already a released version with the
+older trait-based API. This is an unreleased breaking migration; a future
+release must pass semver review and receive version approval. This session
 has not published or tagged a release. See [README.md](README.md) for executable
 examples and [CHANGELOG.md](CHANGELOG.md) for migration details.
 

@@ -86,6 +86,74 @@ not estimates.
   paths (256² … 1920×1080) across the three lossless Kanetaka-IWAIT-2026 changes
   (state hoisting, zero-weight skip-map, `CompareContext`); all bit-identical to
   the prior path.
+- [`cpp_parity_2026-08-31.md`](cpp_parity_2026-08-31.md) — M4 Pro (aarch64)
+  agreement with the C++ SSIMULACRA2 binary (jpeg-xl 0.12.0): 576 real
+  photographic pairs at mean |delta| 0.024, why the synthetic `uniform_shift`
+  cases disagree one-directionally, per-archmage-tier maxima, and the
+  0.7.1-vs-0.8.2 comparison. Raw per-case data in the two sibling `.tsv` files.
+- [`version_divergence_2026-09-09.md`](version_divergence_2026-09-09.md)
+  — why 0.8.2 scores differently from 0.7.1 (it is the cube root, and *only* the
+  cube root: HEAD with that one function reverted reproduces 0.7.1 to 6.1e-6),
+  which of the two is closer to the C++ binary (neither — the paired CI on the
+  difference straddles zero at 2016 cells), and the first attribution of the
+  residual C++ gap: every shipped version is +0.0067 high, and adopting jpegli's
+  own `CubeRootAndAdd` + 4-unrolled `FastGaussian1D` horizontal pass removes the
+  bias and cuts mean |Δ| 21%. Reproduction sources in the sibling
+  [`version_divergence_2026-09-09/`](version_divergence_2026-09-09/) directory.
+- [`fleet_4k_2026-09-10.md`](fleet_4k_2026-09-10.md) — **4K single- and
+  multi-threaded on six machines** (M4 Pro, Zen 5, Zen 4 ×2, Zen 3, Arrow Lake),
+  all returning an identical score. The M4 Pro is 2–4× faster single-threaded
+  than every x86 box; MT gain is 1.15–1.86× everywhere. Explains what actually
+  limits it, corrects an earlier "memory-bandwidth bound" claim, and lists the
+  two optimisation ideas that were measured and rejected.
+- [`vertical_band_parallel_2026-09-10.md`](vertical_band_parallel_2026-09-10.md)
+  — parallelising the vertical blur over pre-sliced disjoint column bands (safe
+  Rust, no staging buffer). Bit-identical and sound, but helps two machines and
+  hurts four. **Not merged**; branch `vertical-band-blur`.
+- [`fused_blur_negative_2026-09-10.md`](fused_blur_negative_2026-09-10.md) —
+  replacing the blur's intermediate plane with a 16-row ring buffer. Removes
+  ~995 MiB per 4K scale and buys ~0%, because that traffic is sequential and
+  prefetchable; costs 45% in MT. **Not merged**; branch `fused-blur`.
+- [`vs_cpp_and_mt_2026-09-10.md`](vs_cpp_and_mt_2026-09-10.md) — speed against
+  the C++ binary, CLI to CLI: **1.9× per pixel** (54.8 vs 104.5 ms/MP) and
+  **3–5× on small images** (fixed cost ~1.4 ms against ~7 ms). The C++ tool has
+  no MT path at all (its `ThreadPool*` is null). Ours reaches 1.6–1.8× on 12
+  cores, up from 1.29×, after parallelising XYB / multiply / ssim_map and fixing
+  two overhead bugs — and the record shows why the limiter is Amdahl rather than
+  cache locality, including the measurement that the strip walker (this crate's
+  own locality tool) is *slower* than the full-image path at 4K.
+- [`jpegli_kernels_2026-09-09.md`](jpegli_kernels_2026-09-09.md) — landing
+  jpegli's cube root and horizontal Gaussian, the two kernels the C++
+  SSIMULACRA2 actually evaluates. Removes the +0.0067 bias every released
+  version carried (mean(ours − C++) now +0.00012, mean |Δ| 0.0206 → 0.0166, max
+  0.52 → 0.17) *and* runs 4–6% faster end to end. Records what moved (mean |Δ|
+  0.020 vs 0.9.0), why the opsin matmul stays unfused, and the FMA-class gating
+  the fusion-sensitive cube root now needs.
+- [`arch_consistency_2026-09-09.md`](arch_consistency_2026-09-09.md) — 28
+  score pairs computed on an M4 Pro (NEON) and a Ryzen 9 7900X (AVX2) agree
+  **bit for bit**, so the aarch64-measured C++ parity transfers to x86.
+  Reproduce with `cargo run --release --example arch_scores` on two hosts and
+  `diff`. i686/wasm128 are expected to differ (non-FMA polyfill) and are not
+  covered.
+- [`blur_stride_2026-09-09.md`](blur_stride_2026-09-09.md) — the horizontal
+  blur fell off a 7.6× cliff at power-of-two widths (4 KiB congruence between
+  the source and destination planes, since it gathers eight rows at
+  `width * 4` bytes). Fixed by placing the temp plane 256 B off the source's
+  page position; scores bit-identical, −14.7% end-to-end at 2048×1024 on x86 and
+  −35.1% at 4096×512 on aarch64. `benches/blur_stride.rs` guards it.
+- [`cbrt_perf_2026-09-09.md`](cbrt_perf_2026-09-09.md) — the companion perf
+  answer: jpegli's `CubeRootAndAdd` is not just bit-exact with the C++ reference,
+  it is **faster** than the cube root fast-ssim2 ships (2.7-2.9% on NEON, 6-8% on
+  AVX2 at >=64K px, medians of three runs per host), because it iterates the
+  reciprocal cube root — no divides, and a seed that vectorises.
+  `magetypes::f32x8::cbrt_midp` is the same algorithm as ours and measures
+  slower. Also records that `cloudinary/ssimulacra2`, `libjxl` and `jpegli` carry
+  byte-identical `CubeRootAndAdd` and `FastGaussian1D`.
+- [`ssim2_perf/2026-08-31_x86_0.9.0.md`](ssim2_perf/2026-08-31_x86_0.9.0.md)
+  — Ryzen 9 7900X check that the 0.9.0 API change costs nothing. Its real
+  finding is about the harness, not the code: `ssimulacra2_320x240` spans
+  7.5–8.2 ms across **three runs of one unchanged binary**, so no sub-1 ms
+  delta at that size means anything. Every other case reproduces to ≤0.3%.
 
 `BENCHMARKS.md` at the repo root is **historical** (pre-archmage rewrite: it
 describes removed `simd` / `unsafe-simd` feature flags and the `wide` crate) and

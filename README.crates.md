@@ -190,7 +190,7 @@ and cached paths. Original and padded sizes must fit `MAX_IMAGE_PIXELS`
 smaller application limits where needed. Scoring allocations are infallible.
 
 See [CHANGELOG.md](https://github.com/imazen/fast-ssim2/blob/main/CHANGELOG.md)
-for the 0.8-to-0.9 migration, and
+for migration from the released trait-based API, and
 [benchmarks/README.md](https://github.com/imazen/fast-ssim2/blob/main/benchmarks/README.md)
 for recorded benchmark methodology and results.
 

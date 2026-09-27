@@ -1,7 +1,7 @@
+use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic};
 use std::env;
-use yuvxyb::{ColorPrimaries, Rgb, TransferCharacteristic};
 
-fn load_rgb(path: &str) -> Rgb {
+fn load_rgb(path: &str) -> (Rgb, fast_ssim2::PixelBuffer) {
     let img = image::open(path).unwrap().into_rgb8();
     let (w, h) = (img.width() as usize, img.height() as usize);
     let pixels: Vec<[f32; 3]> = img
@@ -14,14 +14,22 @@ fn load_rgb(path: &str) -> Rgb {
             ]
         })
         .collect();
-    Rgb::new(
+    let rgb = Rgb::new(
         pixels,
         w,
         h,
         TransferCharacteristic::SRGB,
         ColorPrimaries::BT709,
     )
-    .unwrap()
+    .unwrap();
+    let buffer = fast_ssim2::PixelBuffer::from_vec(
+        img.into_raw(),
+        w as u32,
+        h as u32,
+        fast_ssim2::PixelDescriptor::RGB8_SRGB,
+    )
+    .unwrap();
+    (rgb, buffer)
 }
 
 fn main() {
@@ -31,20 +39,21 @@ fn main() {
         std::process::exit(1);
     }
 
-    let src = load_rgb(&args[1]);
-    let dst = load_rgb(&args[2]);
+    let (src, src_buf) = load_rgb(&args[1]);
+    let (dst, dst_buf) = load_rgb(&args[2]);
 
     // rust-av ssimulacra2 v0.5.1 (uses its own scalar code path)
     let rustav = ssimulacra2::compute_frame_ssimulacra2(src.clone(), dst.clone()).unwrap();
 
     // fast-ssim2 default (SIMD kernels)
-    let fast_simd = fast_ssim2::compute_ssimulacra2(src.clone(), dst.clone()).unwrap();
+    let fast_simd =
+        fast_ssim2::compute_ssimulacra2(&src_buf.as_slice(), &dst_buf.as_slice()).unwrap();
 
     // fast-ssim2 scalar-kernel path (bit-identical output)
     let fast_scalar = fast_ssim2::compute_ssimulacra2_with_config(
-        src,
-        dst,
-        fast_ssim2::Ssimulacra2Config::scalar(),
+        &src_buf.as_slice(),
+        &dst_buf.as_slice(),
+        &fast_ssim2::Ssimulacra2Config::scalar(),
     )
     .unwrap();
 

@@ -1,5 +1,10 @@
 > **Historical (pre-archmage rewrite).** The API, feature flags, and benchmarks below are from the pre-archmage version and no longer apply. See README.md for current API and performance data.
 
+Historical record for the previous engine. Commands and API names below refer
+to the recorded commits. Current usage is in [README.md](README.md); the active
+regression gates are `just check-library` and `just clippy-lib`.
+
+
 # SSIMULACRA2 Rust Performance Benchmarks
 
 Captured: 2026-01-04
@@ -97,11 +102,11 @@ use fast_ssim2::{compute_ssimulacra2, compute_ssimulacra2_with_config, Ssimulacr
 // Default (safe SIMD)
 let score = compute_ssimulacra2(source, distorted)?;
 
-// Explicit kernel selection
+// Explicit configuration
 let score = compute_ssimulacra2_with_config(
     source,
     distorted,
-    Ssimulacra2Config::scalar()  // scalar oracle kernels (bit-identical output)
+    Ssimulacra2Config::simd()  // or ::scalar()
 )?;
 ```
 
