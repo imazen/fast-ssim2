@@ -110,7 +110,8 @@ pub const MIN_STRIP_HEIGHT: usize = 8;
 
 /// Strip-wise evaluation parameters, selected via
 /// [`Ssimulacra2Config::strip`]. `strip_height` is in scale-0 rows.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct StripConfig {
     /// Interior rows per strip (min [`MIN_STRIP_HEIGHT`]).
     pub strip_height: usize,
@@ -140,6 +141,37 @@ impl Default for StripConfig {
 }
 
 impl StripConfig {
+    /// Set the requested number of interior rows; validated when scoring.
+    #[must_use]
+    pub fn new(strip_height: usize) -> Self {
+        Self {
+            strip_height,
+            ..Self::default()
+        }
+    }
+
+    /// Set the number of halo rows used to warm up each strip's blur.
+    #[must_use]
+    pub fn with_halo_rows(mut self, halo_rows: usize) -> Self {
+        self.halo_rows = halo_rows;
+        self
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), Ssimulacra2Error> {
+        if self.strip_height < MIN_STRIP_HEIGHT {
+            return Err(Ssimulacra2Error::InvalidConfiguration(
+                "strip_height must be at least 8",
+            ));
+        }
+        #[cfg(not(feature = "rayon"))]
+        if self.parallel_strips {
+            return Err(Ssimulacra2Error::InvalidConfiguration(
+                "parallel strips require the rayon feature",
+            ));
+        }
+        Ok(())
+    }
+
     /// Enable parallel strip processing (requires `rayon`; multiplies
     /// peak memory by the thread count — see [`Self::parallel_strips`]).
     #[must_use]
@@ -178,9 +210,7 @@ pub(crate) fn compute_strip_inner(
     use crate::source::PreparedInput;
 
     let sc = config.strip.expect("strip config required");
-    if sc.strip_height < MIN_STRIP_HEIGHT {
-        return Err(Ssimulacra2Error::InvalidImageSize);
-    }
+    sc.validate()?;
     let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
     let opts = Opts {
         kernel: Kernel::from_impl(config.impl_type),
@@ -249,10 +279,13 @@ impl Ssimulacra2Reference {
         distorted: &PixelSlice<'_>,
         config: &Ssimulacra2Config<'_>,
     ) -> Result<f64, Ssimulacra2Error> {
-        let sc = config.strip.expect("strip config required");
-        if sc.strip_height < MIN_STRIP_HEIGHT {
-            return Err(Ssimulacra2Error::InvalidImageSize);
+        if distorted.width() as usize != self.width() || distorted.rows() as usize != self.height()
+        {
+            return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
+        config.check_stop()?;
+        let sc = config.strip.expect("strip config required");
+        sc.validate()?;
         let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
         let strip_height = sc.strip_height;
         let cache = self.cache();
@@ -263,12 +296,19 @@ impl Ssimulacra2Reference {
                 if p2.width != cache.width() || p2.height != cache.height() {
                     return Err(Ssimulacra2Error::NonMatchingImageDimensions);
                 }
-                cache.compare_strip_stop(&p2, strip_height, sc.halo_rows, sc.parallel_strips, stop)
+                cache.compare_strip_stop_kernel(
+                    &p2,
+                    strip_height,
+                    sc.halo_rows,
+                    sc.parallel_strips,
+                    stop,
+                    Kernel::from_impl(config.impl_type),
+                )
             }
             crate::source::PreparedInput::Linear { .. } => {
                 // Linear side — compare against every ref stack; the
                 // stack's bg drives the dist-side premultiply.
-                let bgs: &[f32] = if cache.has_alpha() {
+                let bgs: &[f32] = if cache.has_alpha() || crate::prepared_has_alpha(&p) {
                     &[0.1, 0.9]
                 } else {
                     &[0.5]
@@ -283,12 +323,13 @@ impl Ssimulacra2Reference {
                         planes
                     };
                     best = best.min(cache.compare_strip_linear_stack(
-                        si,
+                        if cache.has_alpha() { si } else { 0 },
                         &planes,
                         strip_height,
                         sc.halo_rows,
                         sc.parallel_strips,
                         stop,
+                        Kernel::from_impl(config.impl_type),
                     )?);
                 }
                 Ok(best)

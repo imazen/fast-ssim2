@@ -26,6 +26,7 @@
 //! Sources with alpha precompute both blend backgrounds (0.1 / 0.9) and
 //! `compare` takes the minimum, mirroring the reference binary.
 
+use super::Kernel;
 use super::gauss::create_recursive_gaussian;
 use super::simd;
 use super::{EncodedSrgb, ScaleAggregates, downsample_planes, final_score, linearize};
@@ -69,18 +70,32 @@ pub struct ReferenceCache {
 /// Run the official scale walk on the reference side only, storing the
 /// planes each scale's maps need. Mirrors `compute_opts`'s traversal
 /// exactly (lagging scale gate, in-place lin→XYB, product-fused blur).
-fn ref_scales(mut lin1: [Vec<f32>; 3], mut w: usize, mut h: usize) -> Vec<RefScale> {
+fn ref_scales(
+    mut lin1: [Vec<f32>; 3],
+    mut w: usize,
+    mut h: usize,
+    kernel: Kernel,
+    stop: &dyn enough::Stop,
+) -> Result<Vec<RefScale>, Ssimulacra2Error> {
     let rg = create_recursive_gaussian(1.5);
     let mut out = Vec::with_capacity(NUM_SCALES);
     let (mut gw, mut gh) = (w, h);
     for _scale in 0..NUM_SCALES {
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         if gw < 8 || gh < 8 {
             break;
         }
         let (lin1_next, nw, nh) = downsample_planes(&lin1, w, h);
         let npix = w * h;
         let mut xyb1 = lin1;
-        simd::planes_to_positive_xyb_simd(&mut xyb1);
+        super::xyb_convert(
+            &mut xyb1,
+            npix,
+            super::Opts {
+                kernel,
+                flavor: super::XybFlavor::CubeRoot,
+            },
+        );
 
         // mu1 = blur(xyb1); sigma1 = blur(xyb1·xyb1) — the product fuses
         // into the blur input read (identical f32 product).
@@ -97,7 +112,8 @@ fn ref_scales(mut lin1: [Vec<f32>; 3], mut w: usize, mut h: usize) -> Vec<RefSca
                     let mut o = vec![0f32; npix];
                     let mut t = vec![0f32; npix];
                     let b = if is_prod { Some(&xyb1[c]) } else { None };
-                    simd::fast_gaussian_simd(
+                    blur_channel(
+                        kernel,
                         &rg,
                         &xyb1[c],
                         b.map(|v| v.as_slice()),
@@ -122,12 +138,39 @@ fn ref_scales(mut lin1: [Vec<f32>; 3], mut w: usize, mut h: usize) -> Vec<RefSca
             let (mut mu1_a, mut s1_a) = (vec![0f32; npix], vec![0f32; npix]);
             let (mut mu1_b, mut s1_b) = (vec![0f32; npix], vec![0f32; npix]);
             let (mut mu1_c, mut s1_c) = (vec![0f32; npix], vec![0f32; npix]);
-            simd::fast_gaussian_simd(&rg, &xyb1[0], None, w, h, &mut mu1_a, &mut tmp);
-            simd::fast_gaussian_simd(&rg, &xyb1[0], Some(&xyb1[0]), w, h, &mut s1_a, &mut tmp);
-            simd::fast_gaussian_simd(&rg, &xyb1[1], None, w, h, &mut mu1_b, &mut tmp);
-            simd::fast_gaussian_simd(&rg, &xyb1[1], Some(&xyb1[1]), w, h, &mut s1_b, &mut tmp);
-            simd::fast_gaussian_simd(&rg, &xyb1[2], None, w, h, &mut mu1_c, &mut tmp);
-            simd::fast_gaussian_simd(&rg, &xyb1[2], Some(&xyb1[2]), w, h, &mut s1_c, &mut tmp);
+            blur_channel(kernel, &rg, &xyb1[0], None, w, h, &mut mu1_a, &mut tmp);
+            blur_channel(
+                kernel,
+                &rg,
+                &xyb1[0],
+                Some(&xyb1[0]),
+                w,
+                h,
+                &mut s1_a,
+                &mut tmp,
+            );
+            blur_channel(kernel, &rg, &xyb1[1], None, w, h, &mut mu1_b, &mut tmp);
+            blur_channel(
+                kernel,
+                &rg,
+                &xyb1[1],
+                Some(&xyb1[1]),
+                w,
+                h,
+                &mut s1_b,
+                &mut tmp,
+            );
+            blur_channel(kernel, &rg, &xyb1[2], None, w, h, &mut mu1_c, &mut tmp);
+            blur_channel(
+                kernel,
+                &rg,
+                &xyb1[2],
+                Some(&xyb1[2]),
+                w,
+                h,
+                &mut s1_c,
+                &mut tmp,
+            );
             mu1 = [mu1_a, mu1_b, mu1_c];
             sigma1_sq = [s1_a, s1_b, s1_c];
         }
@@ -145,7 +188,7 @@ fn ref_scales(mut lin1: [Vec<f32>; 3], mut w: usize, mut h: usize) -> Vec<RefSca
         w = nw;
         h = nh;
     }
-    out
+    Ok(out)
 }
 
 impl ReferenceCache {
@@ -154,17 +197,25 @@ impl ReferenceCache {
     /// # Errors
     /// - [`Ssimulacra2Error::InvalidImageSize`] if `width`/`height` < 8.
     pub fn new(source: &EncodedSrgb) -> Result<Self, Ssimulacra2Error> {
+        Self::new_with_options(source, Kernel::Simd, &enough::Unstoppable)
+    }
+
+    pub(crate) fn new_with_options(
+        source: &EncodedSrgb,
+        kernel: Kernel,
+        stop: &dyn enough::Stop,
+    ) -> Result<Self, Ssimulacra2Error> {
         let (w, h) = (source.width, source.height);
         if w < 8 || h < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
         let stacks = if source.alpha.is_some() {
             vec![
-                ref_scales(linearize(source, 0.1), w, h),
-                ref_scales(linearize(source, 0.9), w, h),
+                ref_scales(linearize(source, 0.1), w, h, kernel, stop)?,
+                ref_scales(linearize(source, 0.9), w, h, kernel, stop)?,
             ]
         } else {
-            vec![ref_scales(linearize(source, 0.5), w, h)]
+            vec![ref_scales(linearize(source, 0.5), w, h, kernel, stop)?]
         };
         Ok(Self {
             stacks,
@@ -187,14 +238,32 @@ impl ReferenceCache {
         height: usize,
         has_alpha: bool,
     ) -> Result<Self, Ssimulacra2Error> {
+        Self::new_linear_sets_with_options(
+            lin_sets,
+            width,
+            height,
+            has_alpha,
+            Kernel::Simd,
+            &enough::Unstoppable,
+        )
+    }
+
+    pub(crate) fn new_linear_sets_with_options(
+        lin_sets: Vec<[Vec<f32>; 3]>,
+        width: usize,
+        height: usize,
+        has_alpha: bool,
+        kernel: Kernel,
+        stop: &dyn enough::Stop,
+    ) -> Result<Self, Ssimulacra2Error> {
         if width < 8 || height < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
         Ok(Self {
             stacks: lin_sets
                 .into_iter()
-                .map(|l| ref_scales(l, width, height))
-                .collect(),
+                .map(|l| ref_scales(l, width, height, kernel, stop))
+                .collect::<Result<_, _>>()?,
             width,
             height,
             has_alpha,
@@ -211,13 +280,14 @@ impl ReferenceCache {
         w: usize,
         h: usize,
         stop: &dyn enough::Stop,
+        kernel: Kernel,
     ) -> Result<f64, Ssimulacra2Error> {
         if w != self.width || h != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let rg = create_recursive_gaussian(1.5);
-        let scales = dist_scales(&rg, &self.stacks[si], lin2, w, h, stop)?;
+        let scales = dist_scales(&rg, &self.stacks[si], lin2, w, h, stop, kernel)?;
         Ok(final_score(&scales))
     }
 
@@ -266,23 +336,35 @@ impl ReferenceCache {
         distorted: &EncodedSrgb,
         stop: &dyn enough::Stop,
     ) -> Result<f64, Ssimulacra2Error> {
+        self.compare_stop_kernel(distorted, stop, Kernel::Simd)
+    }
+    pub(crate) fn compare_stop_kernel(
+        &self,
+        distorted: &EncodedSrgb,
+        stop: &dyn enough::Stop,
+        kernel: Kernel,
+    ) -> Result<f64, Ssimulacra2Error> {
         if distorted.width != self.width || distorted.height != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let rg = create_recursive_gaussian(1.5);
-        let scores: Vec<f64> = self
-            .stacks
-            .iter()
-            .enumerate()
-            .map(|(si, refstack)| {
-                let bg = if self.has_alpha {
+        let count = if self.has_alpha || distorted.alpha.is_some() {
+            2
+        } else {
+            1
+        };
+        let scores: Vec<f64> = (0..count)
+            .map(|si| {
+                let refstack = &self.stacks[if self.has_alpha { si } else { 0 }];
+                let bg = if count == 2 {
                     if si == 0 { 0.1 } else { 0.9 }
                 } else {
                     0.5
                 };
                 let lin2 = linearize(distorted, bg);
-                let scales = dist_scales(&rg, refstack, lin2, self.width, self.height, stop);
+                let scales =
+                    dist_scales(&rg, refstack, lin2, self.width, self.height, stop, kernel);
                 Ok(final_score(&scales?))
             })
             .collect::<Result<Vec<f64>, Ssimulacra2Error>>()?;
@@ -299,6 +381,7 @@ fn dist_scales(
     mut w: usize,
     mut h: usize,
     stop: &dyn enough::Stop,
+    kernel: Kernel,
 ) -> Result<Vec<ScaleAggregates>, Ssimulacra2Error> {
     let mut scales = Vec::with_capacity(refstack.len());
     for rs in refstack {
@@ -306,7 +389,14 @@ fn dist_scales(
         let (lin2_next, _nw, _nh) = downsample_planes(&lin2, w, h);
         let npix = w * h;
         let mut xyb2 = lin2;
-        simd::planes_to_positive_xyb_simd(&mut xyb2);
+        super::xyb_convert(
+            &mut xyb2,
+            npix,
+            super::Opts {
+                kernel,
+                flavor: super::XybFlavor::CubeRoot,
+            },
+        );
 
         // Three independent blurs: σ2 = blur(xyb2·xyb2),
         // σ12 = blur(xyb1·xyb2), μ2 = blur(xyb2).
@@ -322,16 +412,11 @@ fn dist_scales(
                     let mut o = vec![0f32; npix];
                     let mut t = vec![0f32; npix];
                     match j {
-                        0 => simd::fast_gaussian_simd(
-                            rg,
-                            &xyb2[c],
-                            Some(&xyb2[c]),
-                            w,
-                            h,
-                            &mut o,
-                            &mut t,
-                        ),
-                        1 => simd::fast_gaussian_simd(
+                        0 => {
+                            blur_channel(kernel, rg, &xyb2[c], Some(&xyb2[c]), w, h, &mut o, &mut t)
+                        }
+                        1 => blur_channel(
+                            kernel,
                             rg,
                             &rs.xyb1[c],
                             Some(&xyb2[c]),
@@ -340,7 +425,7 @@ fn dist_scales(
                             &mut o,
                             &mut t,
                         ),
-                        _ => simd::fast_gaussian_simd(rg, &xyb2[c], None, w, h, &mut o, &mut t),
+                        _ => blur_channel(kernel, rg, &xyb2[c], None, w, h, &mut o, &mut t),
                     }
                     o
                 })
@@ -357,7 +442,7 @@ fn dist_scales(
             let mut tmp = vec![0f32; npix];
             let mut run = |a: &[f32], b: Option<&[f32]>| -> Vec<f32> {
                 let mut o = vec![0f32; npix];
-                simd::fast_gaussian_simd(rg, a, b, w, h, &mut o, &mut tmp);
+                blur_channel(kernel, rg, a, b, w, h, &mut o, &mut tmp);
                 o
             };
             sigma2_sq = [
@@ -378,7 +463,19 @@ fn dist_scales(
             let _ = &mut mul;
         }
 
-        let (avg_ssim, avg_edgediff) = {
+        let (avg_ssim, avg_edgediff) = if kernel == Kernel::Scalar {
+            super::maps::maps_fused(
+                &rs.mu1,
+                &mu2,
+                &rs.sigma1_sq,
+                &sigma2_sq,
+                &sigma12,
+                &rs.xyb1,
+                &xyb2,
+                w,
+                h,
+            )
+        } else {
             #[cfg(feature = "rayon")]
             {
                 use rayon::prelude::*;
@@ -497,22 +594,38 @@ impl ReferenceCache {
         parallel: bool,
         stop: &dyn enough::Stop,
     ) -> Result<f64, Ssimulacra2Error> {
+        self.compare_strip_stop_kernel(distorted, strip_height, halo, parallel, stop, Kernel::Simd)
+    }
+    pub(crate) fn compare_strip_stop_kernel(
+        &self,
+        distorted: &EncodedSrgb,
+        strip_height: usize,
+        halo: usize,
+        parallel: bool,
+        stop: &dyn enough::Stop,
+        kernel: Kernel,
+    ) -> Result<f64, Ssimulacra2Error> {
         if distorted.width != self.width || distorted.height != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
         let opts = super::Opts {
-            kernel: super::Kernel::Simd,
+            kernel,
             flavor: super::XybFlavor::CubeRoot,
         };
         let mut accs = Vec::with_capacity(self.num_stacks());
-        for stack in 0..self.num_stacks() {
+        let count = if self.has_alpha || distorted.alpha.is_some() {
+            2
+        } else {
+            1
+        };
+        for stack in 0..count {
             let mut acc = super::strip::StripAcc::new(self.width, self.height);
-            let bg = if self.has_alpha {
+            let bg = if count == 2 {
                 if stack == 0 { 0.1 } else { 0.9 }
             } else {
                 0.5
             };
-            let refstack = &self.stacks[stack];
+            let refstack = &self.stacks[if self.has_alpha { stack } else { 0 }];
             super::strip::accumulate_strips_cached(
                 self.width,
                 self.height,
@@ -542,6 +655,7 @@ impl ReferenceCache {
         halo: usize,
         parallel: bool,
         stop: &dyn enough::Stop,
+        kernel: Kernel,
     ) -> Result<f64, Ssimulacra2Error> {
         let (w, h) = (self.width, self.height);
         if lin2[0].len() != w * h {
@@ -549,7 +663,7 @@ impl ReferenceCache {
         }
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let opts = super::Opts {
-            kernel: super::Kernel::Simd,
+            kernel,
             flavor: super::XybFlavor::CubeRoot,
         };
         let mut acc = super::strip::StripAcc::new(w, h);
@@ -573,5 +687,34 @@ impl ReferenceCache {
             &mut acc,
         )?;
         Ok(acc.finalise(opts))
+    }
+}
+
+fn blur_channel(
+    kernel: Kernel,
+    rg: &super::gauss::RecursiveGaussian,
+    a: &[f32],
+    b: Option<&[f32]>,
+    w: usize,
+    h: usize,
+    out: &mut [f32],
+    tmp: &mut [f32],
+) {
+    if kernel == Kernel::Simd {
+        simd::fast_gaussian_simd(rg, a, b, w, h, out, tmp);
+    } else {
+        let product;
+        let input = if let Some(b) = b {
+            product = a.iter().zip(b).map(|(&a, &b)| a * b).collect::<Vec<_>>();
+            &product[..]
+        } else {
+            a
+        };
+        for y in 0..h {
+            rg.fast_gaussian_1d(&input[y * w..(y + 1) * w], &mut tmp[y * w..(y + 1) * w]);
+        }
+        rg.fast_gaussian_vertical_1d(w, h, |y, x| tmp[y * w + x], &mut |y, x, value| {
+            out[y * w + x] = value
+        });
     }
 }

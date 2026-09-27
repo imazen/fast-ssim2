@@ -181,7 +181,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
             PreparedInput::Encoded(EncodedSrgb {
                 width: w,
                 height: h,
-                data: EncodedData::U8(g),
+                data: EncodedData::U8(g.into_iter().flat_map(|v| [v; 3]).collect()),
                 alpha: None,
             })
         }
@@ -233,7 +233,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
             PreparedInput::Encoded(EncodedSrgb {
                 width: w,
                 height: h,
-                data: EncodedData::U16(g),
+                data: EncodedData::U16(g.into_iter().flat_map(|v| [v; 3]).collect()),
                 alpha: None,
             })
         }
@@ -430,7 +430,7 @@ fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
                 for x in 0..w {
                     let off = row_start + x * bpp;
                     let a = f32::from_ne_bytes([
-                        out[off + alpha_offset + 0],
+                        out[off + alpha_offset],
                         out[off + alpha_offset + 1],
                         out[off + alpha_offset + 2],
                         out[off + alpha_offset + 3],

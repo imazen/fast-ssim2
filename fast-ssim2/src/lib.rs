@@ -154,13 +154,15 @@
 #![forbid(unsafe_code)]
 
 mod input;
+#[cfg(feature = "unstable-internals")]
 #[doc(hidden)]
 pub mod pipeline;
+#[cfg(not(feature = "unstable-internals"))]
+#[allow(dead_code)]
+mod pipeline;
 mod precompute;
 mod source;
-// Reference data for parity testing (hidden from docs but accessible for tests)
-#[doc(hidden)]
-pub mod reference_data;
+
 mod strip;
 mod weights;
 
@@ -201,6 +203,7 @@ impl SimdImpl {
 ///
 /// (`Debug` skipped: the `stop` token is a trait object.)
 #[derive(Clone, Copy, Default)]
+#[non_exhaustive]
 pub struct Ssimulacra2Config<'a> {
     /// Kernel backend for all operations.
     pub impl_type: SimdImpl,
@@ -212,8 +215,40 @@ pub struct Ssimulacra2Config<'a> {
     pub stop: Option<&'a dyn enough::Stop>,
 }
 
+impl core::fmt::Debug for Ssimulacra2Config<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Ssimulacra2Config")
+            .field("impl_type", &self.impl_type)
+            .field("strip", &self.strip)
+            .field("stop", &self.stop.map(|_| "<cancellation token>"))
+            .finish()
+    }
+}
+
 impl<'a> Ssimulacra2Config<'a> {
+    pub(crate) fn check_stop(&self) -> Result<(), Ssimulacra2Error> {
+        if let Some(stop) = self.stop {
+            stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        }
+        Ok(())
+    }
+
+    /// Select the kernel backend while retaining other options.
+    #[must_use]
+    pub fn with_impl(mut self, impl_type: SimdImpl) -> Self {
+        self.impl_type = impl_type;
+        self
+    }
+
+    /// Enable strip evaluation while retaining other options.
+    #[must_use]
+    pub fn with_strip(mut self, strip: StripConfig) -> Self {
+        self.strip = Some(strip);
+        self
+    }
+
     /// Create configuration with specified implementation.
+    #[must_use]
     pub fn new(impl_type: SimdImpl) -> Self {
         Self {
             impl_type,
@@ -223,17 +258,20 @@ impl<'a> Ssimulacra2Config<'a> {
     }
 
     /// Default configuration using SIMD kernels.
+    #[must_use]
     pub fn simd() -> Self {
         Self::new(SimdImpl::Simd)
     }
 
     /// Scalar configuration — the reference-order oracle kernels.
+    #[must_use]
     pub fn scalar() -> Self {
         Self::new(SimdImpl::Scalar)
     }
 
     /// Strip-wise evaluation (bounded memory): `strip_height` rows per
     /// strip interior, default halo, serial.
+    #[must_use]
     pub fn strips(strip_height: usize) -> Self {
         Self {
             strip: Some(StripConfig {
@@ -245,6 +283,7 @@ impl<'a> Ssimulacra2Config<'a> {
     }
 
     /// Attach a cancellation token.
+    #[must_use]
     pub fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
         self.stop = Some(stop);
         self
@@ -259,6 +298,10 @@ impl<'a> Ssimulacra2Config<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Ssimulacra2Error {
+    /// An option is invalid or unsupported by the selected operation.
+    #[error("Invalid configuration: {0}")]
+    InvalidConfiguration(&'static str),
+
     /// An input [`PixelSlice`](crate::PixelSlice)'s descriptor declares
     /// something the metric can't score honestly — HDR transfers
     /// (PQ/HLG), narrow/limited signal range, or a pixel layout with no
@@ -370,6 +413,8 @@ pub fn compute_ssimulacra2_with_config(
     distorted: &zenpixels::PixelSlice<'_>,
     config: &Ssimulacra2Config<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
+    validate_pair(source, distorted)?;
+    config.check_stop()?;
     if config.strip.is_some() {
         return crate::strip::compute_strip_inner(source, distorted, config);
     }
@@ -409,6 +454,13 @@ pub fn compute_ssimulacra2_pu_with_config(
     distorted: &zenpixels::PixelSlice<'_>,
     config: &Ssimulacra2Config<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
+    validate_pair(source, distorted)?;
+    config.check_stop()?;
+    if config.strip.is_some() {
+        return Err(Ssimulacra2Error::InvalidConfiguration(
+            "HDR strip evaluation is not supported",
+        ));
+    }
     let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
     let kernel = pipeline::Kernel::from_impl(config.impl_type);
     let p1 = source::funnel_nits(source)?;
@@ -426,8 +478,8 @@ pub fn compute_ssimulacra2_pu_with_config(
     // (20 / 200 cd/m²), mirroring the encoded path's 0.1/0.9 convention.
     let has_alpha = prepared_has_alpha(&p1) || prepared_has_alpha(&p2);
     let once = |bg: f32| -> Result<f64, Ssimulacra2Error> {
-        let mut a = linearize_prepared(&p1, w1, bg);
-        let mut b = linearize_prepared(&p2, w2, bg);
+        let mut a = linearize_nits(&p1, bg);
+        let mut b = linearize_nits(&p2, bg);
         let (w, h) = if w1 < 8 || h1 < 8 {
             let (pw, ph) = (w1.max(8), h1.max(8));
             a = pad_planes(a, w1, h1, pw, ph);
@@ -442,6 +494,41 @@ pub fn compute_ssimulacra2_pu_with_config(
         Ok(once(20.0)?.min(once(200.0)?))
     } else {
         once(200.0)
+    }
+}
+
+fn validate_pair(
+    source: &PixelSlice<'_>,
+    distorted: &PixelSlice<'_>,
+) -> Result<(), Ssimulacra2Error> {
+    if source.width() != distorted.width() || source.rows() != distorted.rows() {
+        return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "hdr-pu")]
+fn linearize_nits(p: &source::PreparedInput, background_nits: f32) -> [Vec<f32>; 3] {
+    let source::PreparedInput::Linear { planes, alpha, .. } = p else {
+        unreachable!("the HDR funnel produces linear nits")
+    };
+    composite_linear(planes, alpha.as_deref(), background_nits)
+}
+
+fn composite_linear(
+    planes: &[Vec<f32>; 3],
+    alpha: Option<&[f32]>,
+    background: f32,
+) -> [Vec<f32>; 3] {
+    match alpha {
+        None => planes.clone(),
+        Some(alpha) => planes.clone().map(|channel| {
+            channel
+                .iter()
+                .zip(alpha)
+                .map(|(&value, &a)| a * value + (1.0 - a) * background)
+                .collect()
+        }),
     }
 }
 
@@ -524,18 +611,9 @@ pub(crate) fn prepared_has_alpha(p: &source::PreparedInput) -> bool {
 pub(crate) fn linearize_prepared(p: &source::PreparedInput, _w: usize, bg: f32) -> [Vec<f32>; 3] {
     match p {
         source::PreparedInput::Encoded(e) => pipeline::linearize(e, bg),
-        source::PreparedInput::Linear { planes, alpha, .. } => match alpha {
-            None => planes.clone(),
-            Some(a) => {
-                let bg_lin = input::srgb_to_linear(bg);
-                planes.clone().map(|ch| {
-                    ch.iter()
-                        .zip(a.iter())
-                        .map(|(&v, &af)| af * v + (1.0 - af) * bg_lin)
-                        .collect()
-                })
-            }
-        },
+        source::PreparedInput::Linear { planes, alpha, .. } => {
+            composite_linear(planes, alpha.as_deref(), input::srgb_to_linear(bg))
+        }
     }
 }
 

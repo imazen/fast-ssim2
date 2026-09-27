@@ -10,7 +10,9 @@
 //! Run tests with: cargo test --test reference_parity
 
 use fast_ssim2::compute_ssimulacra2;
-use fast_ssim2::reference_data::{REFERENCE_CASES, ReferenceCase};
+#[path = "../src/reference_data.rs"]
+mod reference_data;
+use reference_data::{REFERENCE_CASES, ReferenceCase};
 use sha2::{Digest, Sha256};
 
 /// Owned encoded-sRGB `f32` pixels (k/255 grid stays LUT-exact).

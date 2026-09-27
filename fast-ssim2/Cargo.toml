@@ -63,6 +63,8 @@ features = ["imgref", "rayon", "hdr-pu"]
 
 [features]
 default = []
+# Development-only kernel access; no API stability guarantee.
+unstable-internals = []
 imgref = ["zenpixels/imgref"]  # ImgRef/ImgVec → PixelSlice conversions (rgb-crate pixel types)
 rayon = ["dep:rayon"]
 hdr-pu = []  # PU21-integrated HDR scoring (absolute-nits / PQ / HLG inputs)
@@ -73,14 +75,17 @@ name = "mem_strip"
 
 [[example]]
 name = "obench"
+required-features = ["unstable-internals"]
 
 
 [[example]]
 name = "orfcmp"
+required-features = ["unstable-internals"]
 
 
 [[example]]
 name = "permute_score"
+required-features = ["unstable-internals"]
 
 
 [[example]]
@@ -89,10 +94,12 @@ name = "precompute_benchmark"
 
 [[example]]
 name = "sweep_bench"
+required-features = ["unstable-internals"]
 
 
 [[bench]]
 name = "pipeline_iai"
+required-features = ["unstable-internals"]
 harness = false
 
 [[bench]]
@@ -109,3 +116,15 @@ uninlined_format_args = "allow"
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("avx512"))'] }
 
+
+[[example]]
+name = "cbrt_bench"
+required-features = ["unstable-internals"]
+
+[[example]]
+name = "flat_probe"
+required-features = ["unstable-internals"]
+
+[[test]]
+name = "jpeg_parity"
+required-features = ["unstable-internals"]

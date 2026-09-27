@@ -593,7 +593,7 @@ pub(crate) fn accumulate_strips_cached(
     stop: &dyn enough::Stop,
     acc: &mut StripAcc,
 ) -> Result<(), Ssimulacra2Error> {
-    let strip_h = strip_height.max(8);
+    let strip_h = strip_height.max(8).min(h);
     let n_scales = acc.per_scale.len();
     let mut strips = Vec::new();
     let mut y = 0usize;
@@ -688,7 +688,7 @@ fn accumulate_strips(
     stop: &dyn enough::Stop,
     acc: &mut StripAcc,
 ) -> Result<(), Ssimulacra2Error> {
-    let strip_h = strip_height.max(8);
+    let strip_h = strip_height.max(8).min(h);
     let n_scales = acc.per_scale.len();
 
     // Build the strip list up front: each entry is (interior bounds,
@@ -826,7 +826,7 @@ pub fn compute_encoded_strip_stop(
     if enc1.width < 8 || enc1.height < 8 {
         return Err(Ssimulacra2Error::InvalidImageSize);
     }
-    if enc1.alpha.is_some() {
+    if enc1.alpha.is_some() || enc2.alpha.is_some() {
         let mut acc_lo = StripAcc::new(enc1.width, enc1.height);
         let mut acc_hi = StripAcc::new(enc1.width, enc1.height);
         let (e1, e2) = (enc1, enc2);

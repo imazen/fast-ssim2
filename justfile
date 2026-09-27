@@ -23,3 +23,15 @@ test:
 # Input-layout regression tests, including HDR conversion.
 test-input:
     cargo test -p fast-ssim2 --lib --features hdr-pu source::tests
+
+# Library regression gate (all library features, without CLI video dependencies).
+test-lib:
+    cargo test -p fast-ssim2 --lib --all-features
+
+# Public contract regressions across all library modes.
+test-api:
+    cargo test -p fast-ssim2 --test api_contracts --all-features
+
+# Lint the complete library surface, including development tooling.
+clippy-lib:
+    cargo clippy -p fast-ssim2 --all-targets --all-features -- -D warnings

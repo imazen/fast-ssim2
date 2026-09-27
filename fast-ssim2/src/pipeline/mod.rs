@@ -198,9 +198,13 @@ pub fn linearize(enc: &EncodedSrgb, bg: f32) -> [Vec<f32>; 3] {
         match &enc.data {
             EncodedData::U8(data) => {
                 for (i, px) in data.chunks_exact(3).enumerate() {
-                    out[0].push(encoded(i, px[0] as f32 * (1.0 / 255.0)));
-                    out[1].push(encoded(i, px[1] as f32 * (1.0 / 255.0)));
-                    out[2].push(encoded(i, px[2] as f32 * (1.0 / 255.0)));
+                    for c in 0..3 {
+                        out[c].push(if alpha[i] == 1.0 {
+                            lut8::LINEAR_LUT_U8[px[c] as usize]
+                        } else {
+                            encoded(i, px[c] as f32 * (1.0 / 255.0))
+                        });
+                    }
                 }
             }
             EncodedData::U16(data) => {
@@ -454,7 +458,7 @@ pub fn compute_encoded_stop(
         kernel,
         flavor: XybFlavor::CubeRoot,
     };
-    if enc1.alpha.is_some() {
+    if enc1.alpha.is_some() || enc2.alpha.is_some() {
         let lo = compute_planar_stop(lin(enc1, 0.1), lin(enc2, 0.1), w, h, opts, stop)?;
         let hi = compute_planar_stop(lin(enc1, 0.9), lin(enc2, 0.9), w, h, opts, stop)?;
         return Ok(lo.min(hi));

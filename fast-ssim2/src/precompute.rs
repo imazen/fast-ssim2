@@ -60,7 +60,14 @@ impl Ssimulacra2Reference {
         source: &PixelSlice<'_>,
         config: &Ssimulacra2Config<'_>,
     ) -> Result<Self, Ssimulacra2Error> {
-        let _ = config; // kernel selection is internal; all kernels are bit-identical
+        config.check_stop()?;
+        if config.strip.is_some() {
+            return Err(Ssimulacra2Error::InvalidConfiguration(
+                "reference construction stores full-image scales; strips apply to comparison only",
+            ));
+        }
+        let kernel = crate::pipeline::Kernel::from_impl(config.impl_type);
+        let stop = config.stop.unwrap_or(&enough::Unstoppable);
         use crate::source::PreparedInput;
         match crate::source::funnel(source)? {
             PreparedInput::Encoded(e) => {
@@ -73,7 +80,7 @@ impl Ssimulacra2Reference {
                     });
                 }
                 Ok(Self {
-                    cache: ReferenceCache::new(&padded)?,
+                    cache: ReferenceCache::new_with_options(&padded, kernel, stop)?,
                     original_width: ow,
                     original_height: oh,
                 })
@@ -102,7 +109,9 @@ impl Ssimulacra2Reference {
                     )]
                 };
                 Ok(Self {
-                    cache: ReferenceCache::new_linear_sets(sets, w, h, has_alpha)?,
+                    cache: ReferenceCache::new_linear_sets_with_options(
+                        sets, w, h, has_alpha, kernel, stop,
+                    )?,
                     original_width: ow,
                     original_height: oh,
                 })
@@ -133,6 +142,7 @@ impl Ssimulacra2Reference {
         distorted: &PixelSlice<'_>,
         config: &Ssimulacra2Config<'_>,
     ) -> Result<f64, Ssimulacra2Error> {
+        config.check_stop()?;
         if config.strip.is_some() {
             return self.compare_strip_inner(distorted, config);
         }
@@ -145,14 +155,18 @@ impl Ssimulacra2Reference {
         match p {
             PreparedInput::Encoded(e) => {
                 let padded = e.reflect_padded(8);
-                self.cache.compare_stop(&padded, stop)
+                self.cache.compare_stop_kernel(
+                    &padded,
+                    stop,
+                    crate::pipeline::Kernel::from_impl(config.impl_type),
+                )
             }
             p @ PreparedInput::Linear { .. } => {
                 let (w, h) = (self.cache.width(), self.cache.height());
                 // Evaluate dist against each ref stack; the stack's bg
                 // (0.1/0.9 for alpha caches, 0.5 otherwise) drives the
                 // dist-side premultiply — same pairing as compare_stop.
-                let bgs: &[f32] = if self.cache.has_alpha() {
+                let bgs: &[f32] = if self.cache.has_alpha() || crate::prepared_has_alpha(&p) {
                     &[0.1, 0.9]
                 } else {
                     &[0.5]
@@ -166,10 +180,14 @@ impl Ssimulacra2Reference {
                         w,
                         h,
                     );
-                    best = best.min(
-                        self.cache
-                            .compare_linear_stack_stop(si, planes, w, h, stop)?,
-                    );
+                    best = best.min(self.cache.compare_linear_stack_stop(
+                        if self.cache.has_alpha() { si } else { 0 },
+                        planes,
+                        w,
+                        h,
+                        stop,
+                        crate::pipeline::Kernel::from_impl(config.impl_type),
+                    )?);
                 }
                 Ok(best)
             }
@@ -307,7 +325,7 @@ mod tests {
         let mk = |seed: u32| {
             let px: Vec<[f32; 3]> = (0..7 * 5)
                 .map(|i| {
-                    let v = (((i as u32 * 2654435761u32) ^ seed) >> 20) as u8;
+                    let v = (((i as u32).wrapping_mul(2654435761u32) ^ seed) >> 20) as u8;
                     [v as f32 / 255.0, v as f32 / 510.0, 1.0 - v as f32 / 255.0]
                 })
                 .collect();
