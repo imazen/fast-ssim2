@@ -297,11 +297,20 @@ fn strip_parallel_deterministic() {
             compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &serial_cfg)
                 .unwrap();
         let par =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &par_cfg)
-                .unwrap();
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &par_cfg);
+        #[cfg(feature = "rayon")]
         assert_eq!(
-            serial, par,
-            "strip_h={strip_h}: parallel {par} != serial {serial} — ordered merge is broken",
+            serial,
+            par.unwrap(),
+            "strip_h={strip_h}: ordered merge is broken"
         );
+        #[cfg(not(feature = "rayon"))]
+        {
+            assert!(serial.is_finite());
+            assert!(matches!(
+                par,
+                Err(fast_ssim2::Ssimulacra2Error::InvalidConfiguration(_))
+            ));
+        }
     }
 }

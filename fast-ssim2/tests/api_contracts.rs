@@ -184,3 +184,83 @@ fn hdr_composites_in_nits_and_rejects_strips() {
         Err(Ssimulacra2Error::InvalidConfiguration(_))
     ));
 }
+
+#[test]
+fn integer_grayscale_matches_expanded_rgb() {
+    for bits in [8, 16] {
+        let gray: Vec<u8> = (0..64).map(|i| (i * 37 % 255) as u8).collect();
+        let other: Vec<u8> = gray.iter().map(|&v| v.saturating_add(7)).collect();
+        let expand = |data: &[u8], channels: usize| -> Vec<u8> {
+            data.iter()
+                .flat_map(|&v| {
+                    (0..channels).flat_map(move |_| {
+                        if bits == 8 {
+                            vec![v]
+                        } else {
+                            (v as u16 * 257).to_ne_bytes().to_vec()
+                        }
+                    })
+                })
+                .collect()
+        };
+        let a = expand(&gray, 1);
+        let b = expand(&other, 1);
+        let ar = expand(&gray, 3);
+        let br = expand(&other, 3);
+        let (gd, rd) = if bits == 8 {
+            (PixelDescriptor::GRAY8_SRGB, PixelDescriptor::RGB8_SRGB)
+        } else {
+            (PixelDescriptor::GRAY16_SRGB, PixelDescriptor::RGB16_SRGB)
+        };
+        let mk = |data, desc: PixelDescriptor| {
+            PixelSlice::new(data, 8, 8, 8 * desc.format.bytes_per_pixel(), desc).unwrap()
+        };
+        for cfg in [Ssimulacra2Config::default(), Ssimulacra2Config::strips(8)] {
+            let expected =
+                compute_ssimulacra2_with_config(&mk(&ar, rd), &mk(&br, rd), &cfg).unwrap();
+            assert_eq!(
+                compute_ssimulacra2_with_config(&mk(&a, gd), &mk(&b, gd), &cfg).unwrap(),
+                expected
+            );
+            assert_eq!(
+                Ssimulacra2Reference::new(&mk(&a, gd))
+                    .unwrap()
+                    .compare_with_config(&mk(&b, gd), &cfg)
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn extreme_strip_height_is_clamped_without_overflow() {
+    let data = vec![128; 8 * 8 * 3];
+    let image = rgb(&data, 8, 8);
+    let cfg = Ssimulacra2Config::default()
+        .with_strip(fast_ssim2::StripConfig::new(usize::MAX).with_halo_rows(usize::MAX));
+    assert_eq!(
+        compute_ssimulacra2_with_config(&image, &image, &cfg).unwrap(),
+        100.0
+    );
+    assert_eq!(
+        Ssimulacra2Reference::new(&image)
+            .unwrap()
+            .compare_with_config(&image, &cfg)
+            .unwrap(),
+        100.0
+    );
+}
+
+#[cfg(not(feature = "rayon"))]
+#[test]
+fn parallel_strips_require_rayon() {
+    let data = vec![128; 8 * 8 * 3];
+    let image = rgb(&data, 8, 8);
+    let cfg = Ssimulacra2Config::default()
+        .with_strip(fast_ssim2::StripConfig::default().with_parallel_strips(true));
+    assert!(matches!(
+        compute_ssimulacra2_with_config(&image, &image, &cfg),
+        Err(Ssimulacra2Error::InvalidConfiguration(_))
+    ));
+}
