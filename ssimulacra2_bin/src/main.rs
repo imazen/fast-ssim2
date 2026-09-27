@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "video")]
 use yuvxyb::MatrixCoefficients;
 
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 #[command(propagate_version = true)]
@@ -182,8 +181,7 @@ fn compare_images(source: &Path, distorted: &Path) {
         source.width(),
         source.height(),
         source.width() as usize * 12,
-        zenpixels::PixelDescriptor::RGBF32
-            .with_transfer(zenpixels::TransferFunction::Srgb),
+        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
     )
     .expect("Failed to build source PixelSlice");
 
@@ -198,8 +196,7 @@ fn compare_images(source: &Path, distorted: &Path) {
         distorted.width(),
         distorted.height(),
         distorted.width() as usize * 12,
-        zenpixels::PixelDescriptor::RGBF32
-            .with_transfer(zenpixels::TransferFunction::Srgb),
+        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
     )
     .expect("Failed to build distorted PixelSlice");
 

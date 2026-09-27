@@ -22,7 +22,6 @@ fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffe
     .unwrap()
 }
 
-
 /// Generate a deterministic test image of varied linear RGB pixels.
 fn generate_test_image(width: usize, height: usize) -> zenpixels::PixelBuffer {
     let mut data = Vec::with_capacity(width * height);
@@ -61,8 +60,12 @@ fn ssimulacra2_all_tiers_within_tolerance() {
     // levels of Gaussian blur + XYB conversion. A tolerance of 0.5 on the
     // 0-100 scale catches algorithmic bugs while allowing FMA divergence.
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-        let score =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd()).expect("score");
+        let score = compute_ssimulacra2_with_config(
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::simd(),
+        )
+        .expect("score");
 
         if let Some(ref_score) = reference_score {
             let diff = (score - ref_score).abs();
@@ -83,11 +86,19 @@ fn ssimulacra2_roundtrip_stability() {
     let distorted = generate_distorted_image(32, 32);
 
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
-        let score1 =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd()).expect("score1");
+        let score1 = compute_ssimulacra2_with_config(
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::simd(),
+        )
+        .expect("score1");
 
-        let score2 =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd()).expect("score2");
+        let score2 = compute_ssimulacra2_with_config(
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::simd(),
+        )
+        .expect("score2");
 
         assert_eq!(
             score1.to_bits(),

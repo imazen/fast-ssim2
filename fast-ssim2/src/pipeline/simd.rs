@@ -1,4 +1,12 @@
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::manual_clamp,
+    clippy::assign_op_pattern,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity
+)]
 //! Lane-wise SIMD versions of the match-official kernels.
 //!
 //! Every kernel computes *exactly the same scalar operation sequence per
@@ -393,7 +401,6 @@ pub fn planes_to_positive_xyb_lo_simd(p: &mut [Vec<f32>; 3]) {
     );
 }
 
-
 // ===========================================================================
 // FastGaussian — lane-wise across rows (horizontal) and columns (vertical)
 // ===========================================================================
@@ -493,7 +500,11 @@ fn fast_gaussian_1d_rows_inner(
 
     let mut n = -n_radius + 1;
     let first_aligned = (n_radius + 1).div_euclid(4) * 4
-        + if (n_radius + 1).rem_euclid(4) != 0 { 4 } else { 0 };
+        + if (n_radius + 1).rem_euclid(4) != 0 {
+            4
+        } else {
+            0
+        };
     while n < first_aligned.min(w) {
         step_bounds!(n);
         n += 1;
@@ -601,18 +612,12 @@ fn fast_gaussian_vertical_x8_inner(
         let n_1 = (ctr.wrapping_sub(1)) % 4;
         let n_2 = (ctr.wrapping_sub(2)) % 4;
 
-        let y1 = splat(rg.n2[0]).mul_add(
-            sum,
-            splat(-rg.d1[0]).mul_add(y1_hist[n_1], -y1_hist[n_2]),
-        );
-        let y3 = splat(rg.n2[1]).mul_add(
-            sum,
-            splat(-rg.d1[1]).mul_add(y3_hist[n_1], -y3_hist[n_2]),
-        );
-        let y5 = splat(rg.n2[2]).mul_add(
-            sum,
-            splat(-rg.d1[2]).mul_add(y5_hist[n_1], -y5_hist[n_2]),
-        );
+        let y1 =
+            splat(rg.n2[0]).mul_add(sum, splat(-rg.d1[0]).mul_add(y1_hist[n_1], -y1_hist[n_2]));
+        let y3 =
+            splat(rg.n2[1]).mul_add(sum, splat(-rg.d1[1]).mul_add(y3_hist[n_1], -y3_hist[n_2]));
+        let y5 =
+            splat(rg.n2[2]).mul_add(sum, splat(-rg.d1[2]).mul_add(y5_hist[n_1], -y5_hist[n_2]));
         y1_hist[n_0] = y1;
         y3_hist[n_0] = y3;
         y5_hist[n_0] = y5;
@@ -667,8 +672,12 @@ pub fn fast_gaussian_simd(
             let src: &[f32] = match plane_b {
                 Some(bb) => {
                     rowbuf.clear();
-                    rowbuf.extend(input[row * width..row * width + width]
-                        .iter().zip(&bb[row * width..]).map(|(x, y)| x * y));
+                    rowbuf.extend(
+                        input[row * width..row * width + width]
+                            .iter()
+                            .zip(&bb[row * width..])
+                            .map(|(x, y)| x * y),
+                    );
                     &rowbuf
                 }
                 None => &input[row * width..row * width + width],
@@ -690,7 +699,11 @@ pub fn fast_gaussian_simd(
             width,
             height,
             |r, x| if x >= cols8 { tmp[r * width + x] } else { 0.0 },
-            &mut |r, x, v| if x >= cols8 { out[r * width + x] = v; },
+            &mut |r, x, v| {
+                if x >= cols8 {
+                    out[r * width + x] = v;
+                }
+            },
         );
     }
 }
@@ -798,7 +811,8 @@ pub fn ssim_map_inner(
         // official f32 sequence, lane-wise
         let num_m = (-dm).mul_add(dm, one);
         let num_s = two * (f32x8::load(token, &s12c[i]) - mu12) + kc2;
-        let denom_s = (f32x8::load(token, &s11c[i]) - mu11) + (f32x8::load(token, &s22c[i]) - mu22) + kc2;
+        let denom_s =
+            (f32x8::load(token, &s11c[i]) - mu11) + (f32x8::load(token, &s22c[i]) - mu22) + kc2;
         let q = num_m * num_s / denom_s;
         let qa = q.to_array();
         for l in 0..8 {
@@ -848,13 +862,49 @@ fn edge_diff_map_inner(
 
     for i in 0..i1c.len() {
         // |img - mu| per lane, widened to f64 for the division.
-        let da = (f32x8::load(token, &i2c[i]) - f32x8::load(token, &m2c[i])).abs().to_array();
-        let db = (f32x8::load(token, &i1c[i]) - f32x8::load(token, &m1c[i])).abs().to_array();
+        let da = (f32x8::load(token, &i2c[i]) - f32x8::load(token, &m2c[i]))
+            .abs()
+            .to_array();
+        let db = (f32x8::load(token, &i1c[i]) - f32x8::load(token, &m1c[i]))
+            .abs()
+            .to_array();
         // widen: two f64x4 each
-        let num_lo = f64x4::from_array(token, [1.0 + da[0] as f64, 1.0 + da[1] as f64, 1.0 + da[2] as f64, 1.0 + da[3] as f64]);
-        let num_hi = f64x4::from_array(token, [1.0 + da[4] as f64, 1.0 + da[5] as f64, 1.0 + da[6] as f64, 1.0 + da[7] as f64]);
-        let den_lo = f64x4::from_array(token, [1.0 + db[0] as f64, 1.0 + db[1] as f64, 1.0 + db[2] as f64, 1.0 + db[3] as f64]);
-        let den_hi = f64x4::from_array(token, [1.0 + db[4] as f64, 1.0 + db[5] as f64, 1.0 + db[6] as f64, 1.0 + db[7] as f64]);
+        let num_lo = f64x4::from_array(
+            token,
+            [
+                1.0 + da[0] as f64,
+                1.0 + da[1] as f64,
+                1.0 + da[2] as f64,
+                1.0 + da[3] as f64,
+            ],
+        );
+        let num_hi = f64x4::from_array(
+            token,
+            [
+                1.0 + da[4] as f64,
+                1.0 + da[5] as f64,
+                1.0 + da[6] as f64,
+                1.0 + da[7] as f64,
+            ],
+        );
+        let den_lo = f64x4::from_array(
+            token,
+            [
+                1.0 + db[0] as f64,
+                1.0 + db[1] as f64,
+                1.0 + db[2] as f64,
+                1.0 + db[3] as f64,
+            ],
+        );
+        let den_hi = f64x4::from_array(
+            token,
+            [
+                1.0 + db[4] as f64,
+                1.0 + db[5] as f64,
+                1.0 + db[6] as f64,
+                1.0 + db[7] as f64,
+            ],
+        );
         let q_lo = num_lo / den_lo - one4;
         let q_hi = num_hi / den_hi - one4;
         let d_lo = q_lo.to_array();
@@ -897,7 +947,9 @@ pub fn ssim_map_simd(
         let mut sum0 = 0f64;
         let mut sum1 = 0f64;
         incant!(
-            ssim_map_inner(&m1[c], &m2[c], &s11[c], &s22[c], &s12[c], &mut sum0, &mut sum1),
+            ssim_map_inner(
+                &m1[c], &m2[c], &s11[c], &s22[c], &s12[c], &mut sum0, &mut sum1
+            ),
             [v3, neon, wasm128, scalar]
         );
         out[c * 2] = one_per_pixels * sum0;
@@ -944,7 +996,8 @@ fn maps_fused_inner(
         let dm = a - b;
         let num_m = (-dm).mul_add(dm, one);
         let num_s = two * (f32x8::load(token, &s12c[i]) - mu12) + kc2;
-        let denom_s = (f32x8::load(token, &s11c[i]) - mu11) + (f32x8::load(token, &s22c[i]) - mu22) + kc2;
+        let denom_s =
+            (f32x8::load(token, &s11c[i]) - mu11) + (f32x8::load(token, &s22c[i]) - mu22) + kc2;
         let q = num_m * num_s / denom_s;
         let qa = q.to_array();
         for l in 0..8 {
@@ -1013,7 +1066,10 @@ pub fn maps_fused_simd(
         let (mut sum0, mut sum1) = (0f64, 0f64);
         let mut esums = [0f64; 4];
         incant!(
-            maps_fused_inner(&m1[c], &m2[c], &s11[c], &s22[c], &s12[c], &img1[c], &img2[c], &mut sum0, &mut sum1, &mut esums),
+            maps_fused_inner(
+                &m1[c], &m2[c], &s11[c], &s22[c], &s12[c], &img1[c], &img2[c], &mut sum0,
+                &mut sum1, &mut esums
+            ),
             [v3, neon, wasm128, scalar]
         );
         so[c * 2] = one_per_pixels * sum0;

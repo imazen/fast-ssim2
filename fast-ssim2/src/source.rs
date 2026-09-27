@@ -7,9 +7,7 @@
 
 use std::borrow::Cow;
 
-use zenpixels::{
-    AlphaMode, PixelFormat, PixelSlice, SignalRange, TransferFunction,
-};
+use zenpixels::{AlphaMode, PixelFormat, PixelSlice, SignalRange, TransferFunction};
 
 use crate::Ssimulacra2Error;
 use crate::pipeline::{EncodedData, EncodedSrgb};
@@ -49,9 +47,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
     }
     let npix = w
         .checked_mul(h)
-        .ok_or(Ssimulacra2Error::ImageTooLarge {
-            actual: usize::MAX,
-        })?;
+        .ok_or(Ssimulacra2Error::ImageTooLarge { actual: usize::MAX })?;
     if npix > crate::MAX_IMAGE_PIXELS {
         return Err(Ssimulacra2Error::ImageTooLarge { actual: npix });
     }
@@ -79,7 +75,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
         _ => {
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "unknown transfer — state it explicitly (e.g. RGB8_SRGB) so                  the bytes aren't silently misread",
-            ))
+            ));
         }
     }
     if desc.primaries != zenpixels::ColorPrimaries::Bt709 {
@@ -101,19 +97,17 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
         Cow::Borrowed(slice.as_strided_bytes())
     };
     let stride = slice.stride();
-    let premult_alpha = matches!(desc.alpha, Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied));
+    let premult_alpha = matches!(
+        desc.alpha,
+        Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied)
+    );
 
     let f32_alpha_of = |data: &[u8], stride: usize, bpp: usize| -> Vec<f32> {
         let mut a = Vec::with_capacity(npix);
         for y in 0..h {
             let row = &data[y * stride..];
             for px in row[..w * bpp].chunks_exact(bpp) {
-                a.push(f32::from_ne_bytes([
-                    px[3],
-                    px[4],
-                    px[5],
-                    px[6],
-                ]));
+                a.push(f32::from_ne_bytes([px[3], px[4], px[5], px[6]]));
             }
         }
         a
@@ -211,9 +205,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
                         rgb.push(u16::from_ne_bytes([px[2 * c], px[2 * c + 1]]));
                     }
                     if let Some(a) = alpha.as_mut() {
-                        a.push(
-                            u16::from_ne_bytes([px[6], px[7]]) as f32 * (1.0 / 65535.0),
-                        );
+                        a.push(u16::from_ne_bytes([px[6], px[7]]) as f32 * (1.0 / 65535.0));
                     }
                 }
             }
@@ -297,8 +289,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
                 let row = &data[y * stride..];
                 for px in row[..w * 12].chunks_exact(12) {
                     for (c, ch) in px.chunks_exact(4).enumerate() {
-                        planes[c]
-                            .push(f32::from_ne_bytes([ch[0], ch[1], ch[2], ch[3]]));
+                        planes[c].push(f32::from_ne_bytes([ch[0], ch[1], ch[2], ch[3]]));
                     }
                 }
             }
@@ -371,7 +362,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "unsupported pixel format for SSIMULACRA2 — RGB/RGBA/BGRA/Gray \
                  in u8/u16/f32-sRGB or f32-linear only",
-            ))
+            ));
         }
     })
 }
@@ -396,8 +387,7 @@ fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
                     } else if a < 255 {
                         let inv = 255.0 / a as f32;
                         for c in 0..3 {
-                            out[off + c] =
-                                (out[off + c] as f32 * inv).round().min(255.0) as u8;
+                            out[off + c] = (out[off + c] as f32 * inv).round().min(255.0) as u8;
                         }
                     }
                 }
@@ -481,9 +471,7 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
     }
     let npix = w
         .checked_mul(h)
-        .ok_or(Ssimulacra2Error::ImageTooLarge {
-            actual: usize::MAX,
-        })?;
+        .ok_or(Ssimulacra2Error::ImageTooLarge { actual: usize::MAX })?;
     if npix > crate::MAX_IMAGE_PIXELS {
         return Err(Ssimulacra2Error::ImageTooLarge { actual: npix });
     }
@@ -501,10 +489,15 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
             "PU path needs Linear f32 (nits) or Pq/Hlg descriptors",
         ));
     }
-    if linear && !matches!(
-        desc.format,
-        PixelFormat::RgbF32 | PixelFormat::RgbaF32 | PixelFormat::GrayF32 | PixelFormat::GrayAF32
-    ) {
+    if linear
+        && !matches!(
+            desc.format,
+            PixelFormat::RgbF32
+                | PixelFormat::RgbaF32
+                | PixelFormat::GrayF32
+                | PixelFormat::GrayAF32
+        )
+    {
         return Err(Ssimulacra2Error::UnsupportedInput(
             "linear transfer requires an f32 format",
         ));
@@ -517,8 +510,10 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
         Cow::Borrowed(slice.as_strided_bytes())
     };
     let stride = slice.stride();
-    let alpha_present =
-        matches!(desc.alpha, Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied));
+    let alpha_present = matches!(
+        desc.alpha,
+        Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied)
+    );
 
     // Decode one channel's code value → [0,1], then to nits. For HLG the
     // per-pixel OOTF needs the full triple — handled in the px loop below.
@@ -530,15 +525,28 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
         }
     };
 
-    let rgb_planes = |data: &[u8], bpp: usize, read: &dyn Fn(&[u8]) -> f32, gray: bool,
-                      has_alpha: bool, alpha_off: usize, bgr: bool| {
-        let mut planes = [Vec::with_capacity(npix), Vec::with_capacity(npix), Vec::with_capacity(npix)];
+    let rgb_planes = |data: &[u8],
+                      bpp: usize,
+                      read: &dyn Fn(&[u8]) -> f32,
+                      gray: bool,
+                      has_alpha: bool,
+                      alpha_off: usize,
+                      bgr: bool| {
+        let mut planes = [
+            Vec::with_capacity(npix),
+            Vec::with_capacity(npix),
+            Vec::with_capacity(npix),
+        ];
         let mut alpha = has_alpha.then(|| Vec::with_capacity(npix));
         for y in 0..h {
             let row = &data[y * stride..];
             for px in row[..w * bpp].chunks_exact(bpp) {
                 if hlg {
-                    let triple = [read(&px[0..]), read(&px[bpp / 4..]), read(&px[2 * (bpp / 4)..])];
+                    let triple = [
+                        read(&px[0..]),
+                        read(&px[bpp / 4..]),
+                        read(&px[2 * (bpp / 4)..]),
+                    ];
                     let n = pu21::hlg_triple_to_nits(triple);
                     for c in 0..3 {
                         planes[c].push(if gray { n[0] } else { n[c] });
@@ -564,8 +572,12 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
     };
 
     let (planes, alpha) = match desc.format {
-        PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Rgbx8
-        | PixelFormat::Bgra8 | PixelFormat::Bgrx8 | PixelFormat::Gray8 => {
+        PixelFormat::Rgb8
+        | PixelFormat::Rgba8
+        | PixelFormat::Rgbx8
+        | PixelFormat::Bgra8
+        | PixelFormat::Bgrx8
+        | PixelFormat::Gray8 => {
             let bpp = desc.format.bytes_per_pixel();
             let (a_off, gray) = match desc.format {
                 PixelFormat::Gray8 => (0, true),
@@ -575,14 +587,15 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
             let bgr = matches!(desc.format, PixelFormat::Bgra8 | PixelFormat::Bgrx8);
             rgb_planes(&data, bpp, &rd, gray, alpha_present, a_off, bgr)
         }
-        PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16
-        | PixelFormat::GrayA16 => {
+        PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 | PixelFormat::GrayA16 => {
             let bpp = desc.format.bytes_per_pixel();
             let gray = matches!(desc.format, PixelFormat::Gray16 | PixelFormat::GrayA16);
             let rd = |p: &[u8]| u16::from_ne_bytes([p[0], p[1]]) as f32 * (1.0 / 65535.0);
             rgb_planes(&data, bpp, &rd, gray, alpha_present, bpp - 2, false)
         }
-        PixelFormat::RgbF32 | PixelFormat::RgbaF32 | PixelFormat::GrayF32
+        PixelFormat::RgbF32
+        | PixelFormat::RgbaF32
+        | PixelFormat::GrayF32
         | PixelFormat::GrayAF32 => {
             let bpp = desc.format.bytes_per_pixel();
             let gray = matches!(desc.format, PixelFormat::GrayF32 | PixelFormat::GrayAF32);
@@ -592,7 +605,7 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
         _ => {
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "PU path supports RGB/RGBA/Gray/GrayA layouts",
-            ))
+            ));
         }
     };
 

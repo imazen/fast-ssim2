@@ -68,7 +68,9 @@ fn main() {
     let mut out = String::new();
     for line in std::fs::read_to_string(manifest).unwrap().lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         let f: Vec<&str> = line.split(',').collect();
         let e1 = load(f[0]);
         let e2 = load(f[1]);

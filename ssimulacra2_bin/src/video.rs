@@ -172,8 +172,8 @@ fn calc_score<S: Pixel, D: Pixel, E: Decoder, F: Decoder>(
     // YUV → linear RGB via yuvxyb (matrix+transfer+ranging), then the
     // metric's linear-input path.
     let conv = |y: &Yuv<u8>| -> zenpixels::PixelBuffer {
-        let lin = yuvxyb::LinearRgb::try_from(y.clone())
-            .expect("Yuv to LinearRgb conversion failed");
+        let lin =
+            yuvxyb::LinearRgb::try_from(y.clone()).expect("Yuv to LinearRgb conversion failed");
         let (w, h) = (lin.width().get(), lin.height().get());
         let data = lin.into_data();
         zenpixels::PixelBuffer::from_vec(

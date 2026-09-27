@@ -18,7 +18,9 @@
 
 use std::time::Instant;
 
-use fast_ssim2::{Ssimulacra2Config, Ssimulacra2Reference, compute_ssimulacra2, compute_ssimulacra2_with_config};
+use fast_ssim2::{
+    Ssimulacra2Config, Ssimulacra2Reference, compute_ssimulacra2, compute_ssimulacra2_with_config,
+};
 
 fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
     zenpixels::PixelBuffer::from_vec(
@@ -79,10 +81,19 @@ fn main() {
     let t1 = Instant::now();
     let score = match mode.as_str() {
         "full" => compute_ssimulacra2(&src.as_slice(), &dst.as_slice()).expect("full"),
-        "strip" => compute_ssimulacra2_with_config(&src.as_slice(), &dst.as_slice(), &Ssimulacra2Config::strips(strip_h as usize)).expect("strip"),
+        "strip" => compute_ssimulacra2_with_config(
+            &src.as_slice(),
+            &dst.as_slice(),
+            &Ssimulacra2Config::strips(strip_h as usize),
+        )
+        .expect("strip"),
         "wstrip" => {
             let r = Ssimulacra2Reference::new(&src.as_slice()).expect("ref");
-            r.compare_with_config(&dst.as_slice(), &Ssimulacra2Config::strips(strip_h as usize)).expect("compare_strip")
+            r.compare_with_config(
+                &dst.as_slice(),
+                &Ssimulacra2Config::strips(strip_h as usize),
+            )
+            .expect("compare_strip")
         }
         other => {
             eprintln!("unknown mode: {other}");

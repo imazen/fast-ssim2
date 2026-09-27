@@ -50,13 +50,13 @@ fn bench_ssimulacra2(c: &mut Criterion) {
     for (w, h) in [(320, 240), (1920, 1080), (3840, 2160)] {
         let (source, distorted) = make_rgb_pair(w, h);
         c.bench_function(format!("ssimulacra2_{w}x{h}"), |b| {
-            b.iter(
-                || compute_ssimulacra2(
+            b.iter(|| {
+                compute_ssimulacra2(
                     black_box(&source.as_slice()),
                     black_box(&distorted.as_slice()),
                 )
-                .unwrap(),
-            )
+                .unwrap()
+            })
         });
     }
 }

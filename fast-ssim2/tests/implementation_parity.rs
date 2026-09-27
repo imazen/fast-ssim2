@@ -101,9 +101,12 @@ fn compute_score_from_data(
 #[test]
 fn test_identical_images_exact_score_scalar() {
     let source = load_image("source.png");
-    let score =
-        compute_ssimulacra2_with_config(&source.as_slice(), &source.as_slice(), &Ssimulacra2Config::scalar())
-            .unwrap();
+    let score = compute_ssimulacra2_with_config(
+        &source.as_slice(),
+        &source.as_slice(),
+        &Ssimulacra2Config::scalar(),
+    )
+    .unwrap();
     assert_eq!(
         score, 100.0,
         "Scalar: identical images must score exactly 100.0, got {}",
@@ -114,8 +117,12 @@ fn test_identical_images_exact_score_scalar() {
 #[test]
 fn test_identical_images_exact_score_simd() {
     let source = load_image("source.png");
-    let score =
-        compute_ssimulacra2_with_config(&source.as_slice(), &source.as_slice(), &Ssimulacra2Config::simd()).unwrap();
+    let score = compute_ssimulacra2_with_config(
+        &source.as_slice(),
+        &source.as_slice(),
+        &Ssimulacra2Config::simd(),
+    )
+    .unwrap();
     assert_eq!(
         score, 100.0,
         "SIMD: identical images must score exactly 100.0, got {}",
@@ -170,9 +177,12 @@ fn test_simd_scores_pinned_real_images() {
 
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
-        let score =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd())
-                .unwrap();
+        let score = compute_ssimulacra2_with_config(
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::simd(),
+        )
+        .unwrap();
 
         // Exact match - any deviation indicates a regression
         assert!(
@@ -200,9 +210,12 @@ fn test_scalar_vs_simd_real_images() {
         )
         .unwrap();
 
-        let simd_score =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd())
-                .unwrap();
+        let simd_score = compute_ssimulacra2_with_config(
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::simd(),
+        )
+        .unwrap();
 
         let diff = (scalar_score - simd_score).abs();
         // 1% relative tolerance for FP differences between f64 scalar and f32 SIMD
@@ -274,9 +287,12 @@ fn test_jpeg_quality_ordering_preserved() {
 
     for file in files {
         let distorted = load_image(file);
-        let score =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::simd())
-                .unwrap();
+        let score = compute_ssimulacra2_with_config(
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::simd(),
+        )
+        .unwrap();
 
         assert!(
             score > prev_score,

@@ -15,9 +15,8 @@
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use fast_ssim2::{
-    Ssimulacra2Config, compute_ssimulacra2_with_config,
-
-    Ssimulacra2Reference, compute_ssimulacra2, };
+    Ssimulacra2Config, Ssimulacra2Reference, compute_ssimulacra2, compute_ssimulacra2_with_config,
+};
 
 fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
     zenpixels::PixelBuffer::from_vec(
@@ -70,7 +69,12 @@ fn strip_parity_identical_64x64() {
     let img = generate_image(64, 64, 42);
     // Identical inputs MUST score very close to 100 in both modes.
     let full = compute_ssimulacra2(&img.as_slice(), &img.as_slice()).unwrap();
-    let strip = compute_ssimulacra2_with_config(&img.as_slice(), &img.as_slice(), &Ssimulacra2Config::strips(32)).unwrap();
+    let strip = compute_ssimulacra2_with_config(
+        &img.as_slice(),
+        &img.as_slice(),
+        &Ssimulacra2Config::strips(32),
+    )
+    .unwrap();
     assert!(
         (full - strip).abs() < SCORE_TOLERANCE,
         "identical-image strip {strip:.4} vs full {full:.4} differs by more than {SCORE_TOLERANCE}",
@@ -82,7 +86,12 @@ fn strip_parity_different_64x64() {
     let source = generate_image(64, 64, 0);
     let distorted = generate_image(64, 64, 1);
     let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
-    let strip = compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::strips(32)).unwrap();
+    let strip = compute_ssimulacra2_with_config(
+        &source.as_slice(),
+        &distorted.as_slice(),
+        &Ssimulacra2Config::strips(32),
+    )
+    .unwrap();
     assert!(
         (full - strip).abs() < SCORE_TOLERANCE,
         "different-image strip {strip:.4} vs full {full:.4} differs by more than {SCORE_TOLERANCE}",
@@ -97,7 +106,12 @@ fn strip_parity_512x512_jpeg_like() {
     let distorted = generate_image(width, height, 8);
     let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
     for strip_h in [32u32, 64, 128, 256] {
-        let strip = compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::strips(strip_h as usize)).unwrap();
+        let strip = compute_ssimulacra2_with_config(
+            &source.as_slice(),
+            &distorted.as_slice(),
+            &Ssimulacra2Config::strips(strip_h as usize),
+        )
+        .unwrap();
         assert!(
             (full - strip).abs() < SCORE_TOLERANCE,
             "512x512 strip_h={strip_h} score {strip:.4} vs full {full:.4} differs by more than {SCORE_TOLERANCE}",
@@ -112,7 +126,12 @@ fn strip_parity_1024x1024_jpeg_like() {
     let source = generate_image(width, height, 11);
     let distorted = generate_image(width, height, 12);
     let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
-    let strip = compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &Ssimulacra2Config::strips(128)).unwrap();
+    let strip = compute_ssimulacra2_with_config(
+        &source.as_slice(),
+        &distorted.as_slice(),
+        &Ssimulacra2Config::strips(128),
+    )
+    .unwrap();
     assert!(
         (full - strip).abs() < SCORE_TOLERANCE,
         "1024x1024 strip {strip:.4} vs full {full:.4} differs by more than {SCORE_TOLERANCE}",
@@ -127,7 +146,9 @@ fn warm_ref_strip_parity_512x512() {
     let distorted = generate_image(width, height, 22);
     let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
     let reference = Ssimulacra2Reference::new(&source.as_slice()).unwrap();
-    let strip = reference.compare_with_config(&distorted.as_slice(), &Ssimulacra2Config::strips(64)).unwrap();
+    let strip = reference
+        .compare_with_config(&distorted.as_slice(), &Ssimulacra2Config::strips(64))
+        .unwrap();
     assert!(
         (full - strip).abs() < SCORE_TOLERANCE,
         "compare_strip score {strip:.4} vs full {full:.4} differs by more than {SCORE_TOLERANCE}",
@@ -144,7 +165,9 @@ fn warm_ref_strip_matches_compare() {
     let img = generate_image(256, 256, 99);
     let reference = Ssimulacra2Reference::new(&img.as_slice()).unwrap();
     let compare = reference.compare(&img.as_slice()).unwrap();
-    let strip = reference.compare_with_config(&img.as_slice(), &Ssimulacra2Config::strips(64)).unwrap();
+    let strip = reference
+        .compare_with_config(&img.as_slice(), &Ssimulacra2Config::strips(64))
+        .unwrap();
     assert!(
         (compare - strip).abs() < SCORE_TOLERANCE,
         "compare {compare:.4} vs compare_strip {strip:.4} differs by more than {SCORE_TOLERANCE}",
@@ -154,8 +177,12 @@ fn warm_ref_strip_matches_compare() {
 #[test]
 fn strip_height_below_minimum_errors() {
     let img = generate_image(64, 64, 0);
-    let err = compute_ssimulacra2_with_config(&img.as_slice(), &img.as_slice(), &Ssimulacra2Config::strips(4))
-        .expect_err("strip_height=4 < MIN_STRIP_HEIGHT must error");
+    let err = compute_ssimulacra2_with_config(
+        &img.as_slice(),
+        &img.as_slice(),
+        &Ssimulacra2Config::strips(4),
+    )
+    .expect_err("strip_height=4 < MIN_STRIP_HEIGHT must error");
     let msg = format!("{err}");
     assert!(
         msg.contains("at least") || msg.contains("8x8") || msg.contains("size"),
@@ -166,14 +193,28 @@ fn strip_height_below_minimum_errors() {
 #[test]
 fn strip_height_zero_errors() {
     let img = generate_image(64, 64, 0);
-    assert!(compute_ssimulacra2_with_config(&img.as_slice(), &img.as_slice(), &Ssimulacra2Config::strips(0)).is_err());
+    assert!(
+        compute_ssimulacra2_with_config(
+            &img.as_slice(),
+            &img.as_slice(),
+            &Ssimulacra2Config::strips(0)
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn strip_mismatched_dimensions_errors() {
     let a = generate_image(64, 64, 0);
     let b = generate_image(32, 32, 0);
-    assert!(compute_ssimulacra2_with_config(&a.as_slice(), &b.as_slice(), &Ssimulacra2Config::strips(32)).is_err());
+    assert!(
+        compute_ssimulacra2_with_config(
+            &a.as_slice(),
+            &b.as_slice(),
+            &Ssimulacra2Config::strips(32)
+        )
+        .is_err()
+    );
 }
 
 // ============================================================================
@@ -184,9 +225,24 @@ fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> zenpixels::Pi
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
-            let v = (((x as u32).wrapping_mul(7).wrapping_add(y as u32 * 13).wrapping_add(seed)) & 0xff) as f32 / 255.0;
-            let g = (((x as u32).wrapping_mul(11).wrapping_add(y as u32 * 3).wrapping_add(seed + 50)) & 0xff) as f32 / 255.0;
-            let b = (((x as u32).wrapping_mul(5).wrapping_add(y as u32 * 17).wrapping_add(seed + 100)) & 0xff) as f32 / 255.0;
+            let v = (((x as u32)
+                .wrapping_mul(7)
+                .wrapping_add(y as u32 * 13)
+                .wrapping_add(seed))
+                & 0xff) as f32
+                / 255.0;
+            let g = (((x as u32)
+                .wrapping_mul(11)
+                .wrapping_add(y as u32 * 3)
+                .wrapping_add(seed + 50))
+                & 0xff) as f32
+                / 255.0;
+            let b = (((x as u32)
+                .wrapping_mul(5)
+                .wrapping_add(y as u32 * 17)
+                .wrapping_add(seed + 100))
+                & 0xff) as f32
+                / 255.0;
             data.push([v, g, b]);
         }
     }
@@ -237,18 +293,12 @@ fn strip_parallel_deterministic() {
         let serial_cfg = Ssimulacra2Config::strips(strip_h);
         let mut par_cfg = Ssimulacra2Config::strips(strip_h);
         par_cfg.strip.as_mut().unwrap().parallel_strips = true;
-        let serial = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
-            &serial_cfg,
-        )
-        .unwrap();
-        let par = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
-            &par_cfg,
-        )
-        .unwrap();
+        let serial =
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &serial_cfg)
+                .unwrap();
+        let par =
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &par_cfg)
+                .unwrap();
         assert_eq!(
             serial, par,
             "strip_h={strip_h}: parallel {par} != serial {serial} — ordered merge is broken",

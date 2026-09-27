@@ -2,11 +2,8 @@
 //! Deterministic input → instruction counts are load-independent.
 use fast_ssim2::pipeline::{self, EncodedSrgb, Kernel};
 use fast_ssim2::{PixelBuffer, Ssimulacra2Config, compute_ssimulacra2_with_config};
-use iai_callgrind::{
-    library_benchmark, library_benchmark_group, main as iai_main,
-};
+use iai_callgrind::{library_benchmark, library_benchmark_group, main as iai_main};
 use std::hint::black_box;
-
 
 fn enc(w: usize, h: usize, seed: u32) -> EncodedSrgb {
     let rgb: Vec<[u8; 3]> = (0..w * h)
@@ -46,15 +43,20 @@ fn mk_planes() -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
 
 #[library_benchmark]
 #[bench::edge(mk_planes())]
-fn edge_scalar((a,b,c,d): (Vec<f32>,Vec<f32>,Vec<f32>,Vec<f32>)) -> [f64;12] {
-    let (i1,m1,i2,m2) = ([a.clone(),b.clone(),c.clone()],[a.clone(),b.clone(),c.clone()],[a.clone(),b.clone(),c.clone()],[a.clone(),b.clone(),c.clone()]);
+fn edge_scalar((a, b, c, d): (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)) -> [f64; 12] {
+    let (i1, m1, i2, m2) = (
+        [a.clone(), b.clone(), c.clone()],
+        [a.clone(), b.clone(), c.clone()],
+        [a.clone(), b.clone(), c.clone()],
+        [a.clone(), b.clone(), c.clone()],
+    );
     let _ = d;
-    black_box(pipeline::maps::edge_diff_map(&i1,&m1,&i2,&m2,512,512))
+    black_box(pipeline::maps::edge_diff_map(&i1, &m1, &i2, &m2, 512, 512))
 }
 
 #[library_benchmark]
 #[bench::edge(mk_planes())]
-fn edge_fast((a,b,c,d): (Vec<f32>,Vec<f32>,Vec<f32>,Vec<f32>)) -> [f64;4] {
+fn edge_fast((a, b, c, d): (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)) -> [f64; 4] {
     let mut e = [0f64; 4];
     pipeline::simd::edge_sums_fast(0, 512, 512, &a, &b, &c, &d, &mut e);
     black_box(e)
@@ -62,9 +64,16 @@ fn edge_fast((a,b,c,d): (Vec<f32>,Vec<f32>,Vec<f32>,Vec<f32>)) -> [f64;4] {
 
 #[library_benchmark]
 #[bench::edge(mk_planes())]
-fn edge_simd((a,b,c,d): (Vec<f32>,Vec<f32>,Vec<f32>,Vec<f32>)) -> [f64;12] {
-    let (i1,m1,i2,m2) = ([a.clone(),b.clone(),c.clone()],[a.clone(),b.clone(),c.clone()],[a,b,c],[d.clone(),d.clone(),d]);
-    black_box(pipeline::simd::edge_diff_map_simd(&i1,&m1,&i2,&m2,512,512))
+fn edge_simd((a, b, c, d): (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)) -> [f64; 12] {
+    let (i1, m1, i2, m2) = (
+        [a.clone(), b.clone(), c.clone()],
+        [a.clone(), b.clone(), c.clone()],
+        [a, b, c],
+        [d.clone(), d.clone(), d],
+    );
+    black_box(pipeline::simd::edge_diff_map_simd(
+        &i1, &m1, &i2, &m2, 512, 512,
+    ))
 }
 
 fn lin512() -> (PixelBuffer, PixelBuffer) {
@@ -85,14 +94,19 @@ fn lin512() -> (PixelBuffer, PixelBuffer) {
 #[bench::lin(lin512())]
 fn linear_input_512((a, b): (PixelBuffer, PixelBuffer)) -> f64 {
     black_box(
-        compute_ssimulacra2_with_config(&a.as_slice(), &b.as_slice(), &Ssimulacra2Config::simd()).unwrap(),
+        compute_ssimulacra2_with_config(&a.as_slice(), &b.as_slice(), &Ssimulacra2Config::simd())
+            .unwrap(),
     )
 }
 
 #[library_benchmark]
 #[bench::encoded(setup())]
 fn ref_new((a, _b): (EncodedSrgb, EncodedSrgb)) -> usize {
-    black_box(pipeline::precompute::ReferenceCache::new(&a).unwrap().width())
+    black_box(
+        pipeline::precompute::ReferenceCache::new(&a)
+            .unwrap()
+            .width(),
+    )
 }
 
 #[library_benchmark]
@@ -124,7 +138,12 @@ library_benchmark_group!(
     name = grp_flavor;
     benchmarks = e2e_ref, e2e_midp, e2e_lowp
 );
-iai_main!(library_benchmark_groups = grp_pipeline, grp_edge, grp_xyb, grp_flavor);
+iai_main!(
+    library_benchmark_groups = grp_pipeline,
+    grp_edge,
+    grp_xyb,
+    grp_flavor
+);
 
 // ── cbrt flavor isolation ──────────────────────────────────────────────
 fn xybin() -> (Vec<f32>, Vec<f32>, Vec<f32>) {
@@ -166,9 +185,15 @@ fn planes512() -> ([Vec<f32>; 3], [Vec<f32>; 3]) {
     let mk = |s: u32| {
         let n = 512 * 512;
         [
-            (0..n).map(|i| ((((i as u32 * 2654435761) ^ s) & 0xffff) as f32) / 65536.0).collect::<Vec<f32>>(),
-            (0..n).map(|i| ((((i as u32 * 2246822519) ^ s) & 0xffff) as f32) / 65536.0).collect::<Vec<f32>>(),
-            (0..n).map(|i| ((((i as u32 * 3266489917) ^ s) & 0xffff) as f32) / 65536.0).collect::<Vec<f32>>(),
+            (0..n)
+                .map(|i| ((((i as u32 * 2654435761) ^ s) & 0xffff) as f32) / 65536.0)
+                .collect::<Vec<f32>>(),
+            (0..n)
+                .map(|i| ((((i as u32 * 2246822519) ^ s) & 0xffff) as f32) / 65536.0)
+                .collect::<Vec<f32>>(),
+            (0..n)
+                .map(|i| ((((i as u32 * 3266489917) ^ s) & 0xffff) as f32) / 65536.0)
+                .collect::<Vec<f32>>(),
         ]
     };
     (mk(0xaaa), mk(0xbbb))
@@ -189,17 +214,56 @@ fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuffer {
 #[library_benchmark]
 #[bench::p(planes512())]
 fn e2e_ref((a, b): ([Vec<f32>; 3], [Vec<f32>; 3])) -> f64 {
-    black_box(pipeline::compute_planar_stop(a, b, 512, 512, Opts { kernel: Kernel::Simd, flavor: XybFlavor::CubeRoot }, &enough::Unstoppable).unwrap())
+    black_box(
+        pipeline::compute_planar_stop(
+            a,
+            b,
+            512,
+            512,
+            Opts {
+                kernel: Kernel::Simd,
+                flavor: XybFlavor::CubeRoot,
+            },
+            &enough::Unstoppable,
+        )
+        .unwrap(),
+    )
 }
 
 #[library_benchmark]
 #[bench::p(planes512())]
 fn e2e_midp((a, b): ([Vec<f32>; 3], [Vec<f32>; 3])) -> f64 {
-    black_box(pipeline::compute_planar_stop(a, b, 512, 512, Opts { kernel: Kernel::Simd, flavor: XybFlavor::CubeRootHi }, &enough::Unstoppable).unwrap())
+    black_box(
+        pipeline::compute_planar_stop(
+            a,
+            b,
+            512,
+            512,
+            Opts {
+                kernel: Kernel::Simd,
+                flavor: XybFlavor::CubeRootHi,
+            },
+            &enough::Unstoppable,
+        )
+        .unwrap(),
+    )
 }
 
 #[library_benchmark]
 #[bench::p(planes512())]
 fn e2e_lowp((a, b): ([Vec<f32>; 3], [Vec<f32>; 3])) -> f64 {
-    black_box(pipeline::compute_planar_stop(a, b, 512, 512, Opts { kernel: Kernel::Simd, flavor: XybFlavor::CubeRootLo }, &enough::Unstoppable).unwrap())
+    black_box(
+        pipeline::compute_planar_stop(
+            a,
+            b,
+            512,
+            512,
+            Opts {
+                kernel: Kernel::Simd,
+                flavor: XybFlavor::CubeRootLo,
+            },
+            &enough::Unstoppable,
+        )
+        .unwrap(),
+    )
 }

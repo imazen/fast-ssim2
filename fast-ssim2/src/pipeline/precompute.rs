@@ -1,4 +1,12 @@
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::manual_clamp,
+    clippy::assign_op_pattern,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity
+)]
 //! Precomputed reference for `MatchOfficial` — the official-semantics
 //! analogue of [`crate::Ssimulacra2Reference`].
 //!
@@ -20,9 +28,7 @@
 
 use super::gauss::create_recursive_gaussian;
 use super::simd;
-use super::{
-    downsample_planes, final_score, linearize, EncodedSrgb, ScaleAggregates,
-};
+use super::{EncodedSrgb, ScaleAggregates, downsample_planes, final_score, linearize};
 use crate::Ssimulacra2Error;
 #[cfg(feature = "rayon")]
 use archmage::incant;
@@ -84,16 +90,22 @@ fn ref_scales(mut lin1: [Vec<f32>; 3], mut w: usize, mut h: usize) -> Vec<RefSca
             use rayon::prelude::*;
             // mu: blur(xyb1); sigma1: blur(xyb1·xyb1) — 6 independent
             // channel-jobs total, no product planes materialized.
-            let jobs: Vec<(usize, bool)> = (0..3)
-                .flat_map(|c| [(c, false), (c, true)])
-                .collect();
+            let jobs: Vec<(usize, bool)> = (0..3).flat_map(|c| [(c, false), (c, true)]).collect();
             let flat: Vec<Vec<f32>> = jobs
                 .into_par_iter()
                 .map(|(c, is_prod)| {
                     let mut o = vec![0f32; npix];
                     let mut t = vec![0f32; npix];
                     let b = if is_prod { Some(&xyb1[c]) } else { None };
-                    simd::fast_gaussian_simd(&rg, &xyb1[c], b.map(|v| v.as_slice()), w, h, &mut o, &mut t);
+                    simd::fast_gaussian_simd(
+                        &rg,
+                        &xyb1[c],
+                        b.map(|v| v.as_slice()),
+                        w,
+                        h,
+                        &mut o,
+                        &mut t,
+                    );
                     o
                 })
                 .collect();
@@ -169,12 +181,20 @@ impl ReferenceCache {
     ///
     /// # Errors
     /// - [`Ssimulacra2Error::InvalidImageSize`] if `width`/`height` < 8.
-    pub fn new_linear_sets(lin_sets: Vec<[Vec<f32>; 3]>, width: usize, height: usize, has_alpha: bool) -> Result<Self, Ssimulacra2Error> {
+    pub fn new_linear_sets(
+        lin_sets: Vec<[Vec<f32>; 3]>,
+        width: usize,
+        height: usize,
+        has_alpha: bool,
+    ) -> Result<Self, Ssimulacra2Error> {
         if width < 8 || height < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
         }
         Ok(Self {
-            stacks: lin_sets.into_iter().map(|l| ref_scales(l, width, height)).collect(),
+            stacks: lin_sets
+                .into_iter()
+                .map(|l| ref_scales(l, width, height))
+                .collect(),
             width,
             height,
             has_alpha,
@@ -184,7 +204,14 @@ impl ReferenceCache {
     /// Compare already-linear planes against stack `si` — same
     /// distorted-side pipeline, no linearization step.
     /// `stop` is checked once per scale.
-    pub(crate) fn compare_linear_stack_stop(&self, si: usize, lin2: [Vec<f32>; 3], w: usize, h: usize, stop: &dyn enough::Stop) -> Result<f64, Ssimulacra2Error> {
+    pub(crate) fn compare_linear_stack_stop(
+        &self,
+        si: usize,
+        lin2: [Vec<f32>; 3],
+        w: usize,
+        h: usize,
+        stop: &dyn enough::Stop,
+    ) -> Result<f64, Ssimulacra2Error> {
         if w != self.width || h != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
@@ -234,7 +261,11 @@ impl ReferenceCache {
 
     /// [`Self::compare`] with cooperative cancellation — `stop` is
     /// checked once per stack (alpha yields two).
-    pub fn compare_stop(&self, distorted: &EncodedSrgb, stop: &dyn enough::Stop) -> Result<f64, Ssimulacra2Error> {
+    pub fn compare_stop(
+        &self,
+        distorted: &EncodedSrgb,
+        stop: &dyn enough::Stop,
+    ) -> Result<f64, Ssimulacra2Error> {
         if distorted.width != self.width || distorted.height != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
@@ -283,9 +314,8 @@ fn dist_scales(
         #[cfg(feature = "rayon")]
         {
             use rayon::prelude::*;
-            let jobs: Vec<(usize, usize)> = (0..3)
-                .flat_map(|j| (0..3).map(move |c| (j, c)))
-                .collect();
+            let jobs: Vec<(usize, usize)> =
+                (0..3).flat_map(|j| (0..3).map(move |c| (j, c))).collect();
             let flat: Vec<Vec<f32>> = jobs
                 .into_par_iter()
                 .map(|(j, c)| {
@@ -293,21 +323,30 @@ fn dist_scales(
                     let mut t = vec![0f32; npix];
                     match j {
                         0 => simd::fast_gaussian_simd(
-                            rg, &xyb2[c], Some(&xyb2[c]), w, h, &mut o, &mut t,
+                            rg,
+                            &xyb2[c],
+                            Some(&xyb2[c]),
+                            w,
+                            h,
+                            &mut o,
+                            &mut t,
                         ),
                         1 => simd::fast_gaussian_simd(
-                            rg, &rs.xyb1[c], Some(&xyb2[c]), w, h, &mut o, &mut t,
+                            rg,
+                            &rs.xyb1[c],
+                            Some(&xyb2[c]),
+                            w,
+                            h,
+                            &mut o,
+                            &mut t,
                         ),
-                        _ => simd::fast_gaussian_simd(
-                            rg, &xyb2[c], None, w, h, &mut o, &mut t,
-                        ),
+                        _ => simd::fast_gaussian_simd(rg, &xyb2[c], None, w, h, &mut o, &mut t),
                     }
                     o
                 })
                 .collect();
-            let take3 = |f: &[Vec<f32>], i: usize| {
-                [f[i].clone(), f[i + 1].clone(), f[i + 2].clone()]
-            };
+            let take3 =
+                |f: &[Vec<f32>], i: usize| [f[i].clone(), f[i + 1].clone(), f[i + 2].clone()];
             sigma2_sq = take3(&flat, 0);
             sigma12 = take3(&flat, 3);
             mu2 = take3(&flat, 6);
@@ -349,14 +388,39 @@ fn dist_scales(
                     .into_par_iter()
                     .map(|c| {
                         let (mut s0, mut s1) = (0f64, 0f64);
-                        incant!(simd::ssim_map_inner(
-                            &rs.mu1[c], &mu2[c], &rs.sigma1_sq[c], &sigma2_sq[c],
-                            &sigma12[c], &mut s0, &mut s1), [v3, neon, wasm128, scalar]);
+                        incant!(
+                            simd::ssim_map_inner(
+                                &rs.mu1[c],
+                                &mu2[c],
+                                &rs.sigma1_sq[c],
+                                &sigma2_sq[c],
+                                &sigma12[c],
+                                &mut s0,
+                                &mut s1
+                            ),
+                            [v3, neon, wasm128, scalar]
+                        );
                         let mut e = [0f64; 4];
-                        simd::edge_sums_fast(0, h, w, &rs.xyb1[c], &rs.mu1[c], &xyb2[c], &mu2[c], &mut e);
-                        (opp * s0, (opp * s1).sqrt().sqrt(), [
-                            opp * e[0], (opp * e[1]).sqrt().sqrt(),
-                            opp * e[2], (opp * e[3]).sqrt().sqrt()])
+                        simd::edge_sums_fast(
+                            0,
+                            h,
+                            w,
+                            &rs.xyb1[c],
+                            &rs.mu1[c],
+                            &xyb2[c],
+                            &mu2[c],
+                            &mut e,
+                        );
+                        (
+                            opp * s0,
+                            (opp * s1).sqrt().sqrt(),
+                            [
+                                opp * e[0],
+                                (opp * e[1]).sqrt().sqrt(),
+                                opp * e[2],
+                                (opp * e[3]).sqrt().sqrt(),
+                            ],
+                        )
                     })
                     .collect();
                 let (mut so, mut eo) = ([0f64; 6], [0f64; 12]);
@@ -369,7 +433,17 @@ fn dist_scales(
             }
             #[cfg(not(feature = "rayon"))]
             {
-                simd::maps_fused_simd(&rs.mu1, &mu2, &rs.sigma1_sq, &sigma2_sq, &sigma12, &rs.xyb1, &xyb2, w, h)
+                simd::maps_fused_simd(
+                    &rs.mu1,
+                    &mu2,
+                    &rs.sigma1_sq,
+                    &sigma2_sq,
+                    &sigma12,
+                    &rs.xyb1,
+                    &xyb2,
+                    w,
+                    h,
+                )
             }
         };
         scales.push(ScaleAggregates {
@@ -382,7 +456,6 @@ fn dist_scales(
     }
     Ok(scales)
 }
-
 
 impl ReferenceCache {
     /// Bounded-memory `compare`: the distorted side is processed
@@ -405,7 +478,13 @@ impl ReferenceCache {
         halo: usize,
         parallel: bool,
     ) -> Result<f64, Ssimulacra2Error> {
-        self.compare_strip_stop(distorted, strip_height, halo, parallel, &enough::Unstoppable)
+        self.compare_strip_stop(
+            distorted,
+            strip_height,
+            halo,
+            parallel,
+            &enough::Unstoppable,
+        )
     }
 
     /// [`Self::compare_strip`] with cooperative cancellation — `stop` is
@@ -440,12 +519,7 @@ impl ReferenceCache {
                 strip_height,
                 halo,
                 refstack,
-                |y0, y1| {
-                    super::linearize(
-                        &distorted.strip_rows(y0, y1),
-                        bg,
-                    )
-                },
+                |y0, y1| super::linearize(&distorted.strip_rows(y0, y1), bg),
                 opts,
                 parallel,
                 stop,

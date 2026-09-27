@@ -106,8 +106,8 @@ fn test_jpeg_quality_vs_cpp_reference() {
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
 
-        let score =
-            compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).expect("SSIMULACRA2 computation failed");
+        let score = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice())
+            .expect("SSIMULACRA2 computation failed");
 
         let error = (score - case.cpp_score).abs();
 
@@ -138,8 +138,8 @@ fn test_jpeg_quality_ordering() {
 
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
-        let score =
-            compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).expect("SSIMULACRA2 computation failed");
+        let score = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice())
+            .expect("SSIMULACRA2 computation failed");
 
         assert!(
             score > prev_score,
@@ -168,8 +168,9 @@ fn test_jpeg_quality_with_configs() {
     ];
 
     for (name, config) in configs {
-        let score = compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &config)
-            .expect("SSIMULACRA2 computation failed");
+        let score =
+            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &config)
+                .expect("SSIMULACRA2 computation failed");
 
         let error = (score - cpp_score).abs();
         println!("{}: score={:.6}, error from C++={:.6}", name, score, error);

@@ -29,7 +29,9 @@ fn identical_nits_scores_100() {
 
 #[test]
 fn darker_distortion_scores_lower() {
-    let src: Vec<f32> = (0..64 * 64 * 3).map(|i| ((i * 37) % 977) as f32 + 5.0).collect();
+    let src: Vec<f32> = (0..64 * 64 * 3)
+        .map(|i| ((i * 37) % 977) as f32 + 5.0)
+        .collect();
     // 3× dimmer distorted copy — a luminance-heavy corruption.
     let mut dst = src.clone();
     for v in dst.iter_mut().step_by(4) {
@@ -85,9 +87,13 @@ fn linear_nits_with_alpha_composites() {
         data[i * 4 + 3] = if i % 7 == 0 { 0.0 } else { 1.0 };
     }
     let pa = PixelSlice::new(
-        bytemuck::cast_slice(&data), 64, 64, 64 * 16,
+        bytemuck::cast_slice(&data),
+        64,
+        64,
+        64 * 16,
         PixelDescriptor::RGBAF32_LINEAR,
-    ).unwrap();
+    )
+    .unwrap();
     let opaque: Vec<f32> = vec![100.0; 64 * 64 * 3];
     let po = nits_slice(&opaque, 64, 64);
     let score = compute_ssimulacra2_pu(&pa, &po).unwrap();
@@ -100,7 +106,10 @@ fn bt2020_primaries_accepted_in_pu() {
     // consumes primaries as-is (zensim convention).
     let data = vec![150.0f32; 64 * 64 * 3];
     let s = PixelSlice::new(
-        bytemuck::cast_slice(&data), 64, 64, 64 * 12,
+        bytemuck::cast_slice(&data),
+        64,
+        64,
+        64 * 12,
         PixelDescriptor::RGBF32_LINEAR.with_primaries(zenpixels::ColorPrimaries::Bt2020),
     )
     .unwrap();

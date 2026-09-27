@@ -1,4 +1,12 @@
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::manual_clamp,
+    clippy::assign_op_pattern,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity
+)]
 
 //! The SSIMULACRA2.1 pipeline — a bit-exact reimplementation of the
 //! reference (`ssimulacra2.cc` + vendored libjxl primitives).
@@ -24,21 +32,21 @@
 //! u8, so no u16 reference behavior exists to match).
 
 pub mod gauss;
-pub mod simd;
-pub mod strip;
 mod lut8;
-pub mod precompute;
 pub mod maps;
+pub mod precompute;
 #[cfg(feature = "hdr-pu")]
 pub mod pu21;
+pub mod simd;
+pub mod strip;
 #[cfg(feature = "rayon")]
 use archmage::incant;
 pub mod score;
 pub mod xyb;
 
-pub(crate) use score::score as final_score;
-use gauss::{create_recursive_gaussian, multiply_planes, RecursiveGaussian};
+use gauss::{RecursiveGaussian, create_recursive_gaussian, multiply_planes};
 use score::ScaleAggregates;
+pub(crate) use score::score as final_score;
 
 /// Encoded sRGB pixel data fed to the pipeline.
 ///
@@ -77,11 +85,13 @@ impl EncodedSrgb {
             EncodedData::U16(d) => EncodedData::U16(d[a0..a1].to_vec()),
             EncodedData::F32(d) => EncodedData::F32(d[a0..a1].to_vec()),
         };
-        let alpha = self
-            .alpha
-            .as_ref()
-            .map(|a| a[y0 * w..y1 * w].to_vec());
-        EncodedSrgb { width: w, height: h, data, alpha }
+        let alpha = self.alpha.as_ref().map(|a| a[y0 * w..y1 * w].to_vec());
+        EncodedSrgb {
+            width: w,
+            height: h,
+            data,
+            alpha,
+        }
     }
 
     /// Reflect(mirror)-pad encoded planes up to `min` px on each axis —
@@ -101,10 +111,7 @@ impl EncodedSrgb {
             EncodedData::U16(d) => EncodedData::U16(pad_px(w, h, pw, ph, d)),
             EncodedData::F32(d) => EncodedData::F32(pad_px(w, h, pw, ph, d)),
         };
-        let alpha = self
-            .alpha
-            .as_ref()
-            .map(|a| pad_scalars(w, h, pw, ph, a));
+        let alpha = self.alpha.as_ref().map(|a| pad_scalars(w, h, pw, ph, a));
         EncodedSrgb {
             width: pw,
             height: ph,
@@ -178,7 +185,11 @@ fn pad_scalars(w: usize, h: usize, pw: usize, ph: usize, data: &[f32]) -> Vec<f3
 /// score. `bg` is ignored when `enc.alpha` is `None`.
 pub fn linearize(enc: &EncodedSrgb, bg: f32) -> [Vec<f32>; 3] {
     let n = enc.width * enc.height;
-    let mut out = [Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n)];
+    let mut out = [
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+        Vec::with_capacity(n),
+    ];
     if let Some(alpha) = &enc.alpha {
         let encoded = |i: usize, v: f32| {
             let af = alpha[i];
@@ -252,7 +263,11 @@ fn encoded_f32_to_linear(x: f32) -> f32 {
 /// via the funnel's grid check.
 /// Reference `Downsample` — linear RGB, box 2×2, ceil output size,
 /// clamped edge taps, `sum += ` in iy-outer/ix-inner order, `* 0.25`.
-pub fn downsample_planes(p: &[Vec<f32>; 3], width: usize, height: usize) -> ([Vec<f32>; 3], usize, usize) {
+pub fn downsample_planes(
+    p: &[Vec<f32>; 3],
+    width: usize,
+    height: usize,
+) -> ([Vec<f32>; 3], usize, usize) {
     let nw = width.div_ceil(2);
     let nh = height.div_ceil(2);
     let mut out = [
@@ -298,8 +313,17 @@ pub fn downsample_planes(p: &[Vec<f32>; 3], width: usize, height: usize) -> ([Ve
 
 /// Gaussian-blur a 3-plane image with the reference `FastGaussian`
 /// (horizontal into temp, then vertical).
-pub fn blur_planes(rg: &RecursiveGaussian, p: &[Vec<f32>; 3], width: usize, height: usize) -> [Vec<f32>; 3] {
-    let mut out = [vec![0f32; width * height], vec![0f32; width * height], vec![0f32; width * height]];
+pub fn blur_planes(
+    rg: &RecursiveGaussian,
+    p: &[Vec<f32>; 3],
+    width: usize,
+    height: usize,
+) -> [Vec<f32>; 3] {
+    let mut out = [
+        vec![0f32; width * height],
+        vec![0f32; width * height],
+        vec![0f32; width * height],
+    ];
     let mut tmp = vec![0f32; width * height];
     for c in 0..3 {
         // Horizontal pass: each row independently.
@@ -426,7 +450,10 @@ pub fn compute_encoded_stop(
         return Err(crate::Ssimulacra2Error::NonMatchingImageDimensions);
     }
     let lin = |e: &EncodedSrgb, bg| linearize(e, bg);
-    let opts = Opts { kernel, flavor: XybFlavor::CubeRoot };
+    let opts = Opts {
+        kernel,
+        flavor: XybFlavor::CubeRoot,
+    };
     if enc1.alpha.is_some() {
         let lo = compute_planar_stop(lin(enc1, 0.1), lin(enc2, 0.1), w, h, opts, stop)?;
         let hi = compute_planar_stop(lin(enc1, 0.9), lin(enc2, 0.9), w, h, opts, stop)?;
@@ -493,9 +520,15 @@ pub struct Opts {
 impl Opts {
     /// Scalar oracle — used by tests/ports comparing SIMD against the
     /// reference-order scalar computation.
-    pub const SCALAR: Self = Self { kernel: Kernel::Scalar, flavor: XybFlavor::CubeRoot };
+    pub const SCALAR: Self = Self {
+        kernel: Kernel::Scalar,
+        flavor: XybFlavor::CubeRoot,
+    };
     /// Default: the SIMD kernels.
-    pub const SIMD: Self = Self { kernel: Kernel::Simd, flavor: XybFlavor::CubeRoot };
+    pub const SIMD: Self = Self {
+        kernel: Kernel::Simd,
+        flavor: XybFlavor::CubeRoot,
+    };
 }
 
 /// The complete metric on already-linear planes (from [`linearize`] or
@@ -510,11 +543,7 @@ pub fn compute_planar(
     width: usize,
     height: usize,
 ) -> Result<f64, crate::Ssimulacra2Error> {
-    compute_planar_stop(
-        lin1, lin2, width, height,
-        Opts::SIMD,
-        &enough::Unstoppable,
-    )
+    compute_planar_stop(lin1, lin2, width, height, Opts::SIMD, &enough::Unstoppable)
 }
 
 /// [`compute_planar`] with explicit kernel selection.
@@ -525,7 +554,17 @@ pub fn compute_planar_with(
     height: usize,
     kernel: Kernel,
 ) -> Result<f64, crate::Ssimulacra2Error> {
-    compute_planar_stop(lin1, lin2, width, height, Opts { kernel, flavor: XybFlavor::CubeRoot }, &enough::Unstoppable)
+    compute_planar_stop(
+        lin1,
+        lin2,
+        width,
+        height,
+        Opts {
+            kernel,
+            flavor: XybFlavor::CubeRoot,
+        },
+        &enough::Unstoppable,
+    )
 }
 
 /// [`compute_planar`] with cooperative cancellation — `stop` is checked
@@ -609,8 +648,13 @@ pub fn compute_planar_stop(
                         let mut tmp = vec![0f32; npix];
                         let (a, b) = jobs[j];
                         simd::fast_gaussian_simd(
-                            &rg, &a[c], b.map(|bb| bb[c].as_slice()),
-                            w, h, &mut out, &mut tmp,
+                            &rg,
+                            &a[c],
+                            b.map(|bb| bb[c].as_slice()),
+                            w,
+                            h,
+                            &mut out,
+                            &mut tmp,
                         );
                         out
                     })
@@ -628,14 +672,17 @@ pub fn compute_planar_stop(
             #[cfg(not(feature = "rayon"))]
             {
                 let run = |(a, b): (&[Vec<f32>; 3], Option<&[Vec<f32>; 3]>)| -> [Vec<f32>; 3] {
-                    let mut out = [
-                        vec![0f32; npix], vec![0f32; npix], vec![0f32; npix],
-                    ];
+                    let mut out = [vec![0f32; npix], vec![0f32; npix], vec![0f32; npix]];
                     let mut tmp = vec![0f32; npix];
                     for c in 0..3 {
                         simd::fast_gaussian_simd(
-                            &rg, &a[c], b.map(|bb| bb[c].as_slice()),
-                            w, h, &mut out[c], &mut tmp,
+                            &rg,
+                            &a[c],
+                            b.map(|bb| bb[c].as_slice()),
+                            w,
+                            h,
+                            &mut out[c],
+                            &mut tmp,
                         );
                     }
                     out
@@ -668,17 +715,34 @@ pub fn compute_planar_stop(
                 use rayon::prelude::*;
                 let n = w * h;
                 let opp = 1.0 / n as f64;
-                let parts: Vec<(f64, f64, [f64; 4])> = (0..3).into_par_iter()
+                let parts: Vec<(f64, f64, [f64; 4])> = (0..3)
+                    .into_par_iter()
                     .map(|c| {
                         let (mut s0, mut s1) = (0f64, 0f64);
-                        incant!(simd::ssim_map_inner(
-                            &mu1[c], &mu2[c], &sigma1_sq[c], &sigma2_sq[c], &sigma12[c],
-                            &mut s0, &mut s1), [v3, neon, wasm128, scalar]);
+                        incant!(
+                            simd::ssim_map_inner(
+                                &mu1[c],
+                                &mu2[c],
+                                &sigma1_sq[c],
+                                &sigma2_sq[c],
+                                &sigma12[c],
+                                &mut s0,
+                                &mut s1
+                            ),
+                            [v3, neon, wasm128, scalar]
+                        );
                         let mut e = [0f64; 4];
                         simd::edge_sums_fast(0, h, w, &xyb1[c], &mu1[c], &xyb2[c], &mu2[c], &mut e);
-                        (opp * s0, (opp * s1).sqrt().sqrt(), [
-                            opp * e[0], (opp * e[1]).sqrt().sqrt(),
-                            opp * e[2], (opp * e[3]).sqrt().sqrt()])
+                        (
+                            opp * s0,
+                            (opp * s1).sqrt().sqrt(),
+                            [
+                                opp * e[0],
+                                (opp * e[1]).sqrt().sqrt(),
+                                opp * e[2],
+                                (opp * e[3]).sqrt().sqrt(),
+                            ],
+                        )
                     })
                     .collect();
                 for c in 0..3 {
@@ -695,7 +759,9 @@ pub fn compute_planar_stop(
                 )
             }
         } else {
-            maps::maps_fused(&mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h)
+            maps::maps_fused(
+                &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h,
+            )
         };
         scales.push(ScaleAggregates {
             avg_ssim,

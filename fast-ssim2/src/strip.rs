@@ -82,10 +82,10 @@
 //! For full strip mode on both sides, use [`compute_ssimulacra2_strip`]
 //! directly.
 
-use zenpixels::PixelSlice;
-use crate::pipeline::{XybFlavor, Kernel, Opts};
+use crate::pipeline::{Kernel, Opts, XybFlavor};
 use crate::precompute::Ssimulacra2Reference;
 use crate::{Ssimulacra2Config, Ssimulacra2Error};
+use zenpixels::PixelSlice;
 
 /// Default number of halo rows above and below each strip.
 ///
@@ -174,8 +174,7 @@ pub(crate) fn compute_strip_inner(
     source: &PixelSlice<'_>,
     distorted: &PixelSlice<'_>,
     config: &Ssimulacra2Config<'_>,
-) -> Result<f64, Ssimulacra2Error>
-{
+) -> Result<f64, Ssimulacra2Error> {
     use crate::source::PreparedInput;
 
     let sc = config.strip.expect("strip config required");
@@ -242,7 +241,6 @@ pub(crate) fn compute_strip_inner(
     }
 }
 
-
 impl Ssimulacra2Reference {
     /// Strip-bounded comparison — crate-internal; the public surface is
     /// [`Ssimulacra2Reference::compare_with_config`] with `config.strip`.
@@ -265,18 +263,16 @@ impl Ssimulacra2Reference {
                 if p2.width != cache.width() || p2.height != cache.height() {
                     return Err(Ssimulacra2Error::NonMatchingImageDimensions);
                 }
-                cache.compare_strip_stop(
-                    &p2,
-                    strip_height,
-                    sc.halo_rows,
-                    sc.parallel_strips,
-                    stop,
-                )
+                cache.compare_strip_stop(&p2, strip_height, sc.halo_rows, sc.parallel_strips, stop)
             }
             crate::source::PreparedInput::Linear { .. } => {
                 // Linear side — compare against every ref stack; the
                 // stack's bg drives the dist-side premultiply.
-                let bgs: &[f32] = if cache.has_alpha() { &[0.1, 0.9] } else { &[0.5] };
+                let bgs: &[f32] = if cache.has_alpha() {
+                    &[0.1, 0.9]
+                } else {
+                    &[0.5]
+                };
                 let mut best = f64::INFINITY;
                 for (si, &bg) in bgs.iter().enumerate() {
                     let planes = crate::linearize_prepared(&p, cache.width(), bg);

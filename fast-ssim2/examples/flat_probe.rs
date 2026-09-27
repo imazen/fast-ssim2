@@ -54,12 +54,22 @@ fn main() {
     }
 
     let (w, h) = (64, 64);
-    let opts_ref = Opts { kernel: Kernel::Simd, flavor: XybFlavor::CubeRoot };
-    let opts_hi = Opts { kernel: Kernel::Simd, flavor: XybFlavor::CubeRootHi };
+    let opts_ref = Opts {
+        kernel: Kernel::Simd,
+        flavor: XybFlavor::CubeRoot,
+    };
+    let opts_hi = Opts {
+        kernel: Kernel::Simd,
+        flavor: XybFlavor::CubeRootHi,
+    };
 
     // Real-image divergence check.
     let load = |p: &str| {
-        let img = image::ImageReader::open(p).unwrap().decode().unwrap().to_rgb8();
+        let img = image::ImageReader::open(p)
+            .unwrap()
+            .decode()
+            .unwrap()
+            .to_rgb8();
         let (iw, ih) = img.dimensions();
         EncodedSrgb {
             width: iw as usize,
@@ -75,7 +85,10 @@ fn main() {
     );
     let sref = score(&a, &b, opts_ref);
     let shi = score(&a, &b, opts_hi);
-    println!("real pair: ref {sref:.8}  hi {shi:.8}  diff {:.3e}", shi - sref);
+    println!(
+        "real pair: ref {sref:.8}  hi {shi:.8}  diff {:.3e}",
+        shi - sref
+    );
 
     // Flat-field sweep.
     let mut ref_scores = Vec::new();
@@ -91,10 +104,7 @@ fn main() {
         println!("{v}\t{s1:.8}\t{s2:.8}\t{:.2e}", s2 - s1);
     }
     let stats = |xs: &[f64]| {
-        let steps: Vec<f64> = xs
-            .windows(2)
-            .map(|w| (w[1] - w[0]).abs())
-            .collect();
+        let steps: Vec<f64> = xs.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
         let flips = xs
             .windows(3)
             .filter(|w| (w[1] - w[0]) * (w[2] - w[1]) < 0.0)
@@ -123,7 +133,7 @@ fn main() {
 // s12−μ1μ2 / s11−μ1² subtractions, f64 eval would visibly differ.
 #[allow(dead_code)]
 fn cancel_ab() {
-    use fast_ssim2::pipeline::{simd, maps};
+    use fast_ssim2::pipeline::{maps, simd};
     let (w, h) = (64, 64);
     let rg = fast_ssim2::pipeline::gauss::create_recursive_gaussian(1.5);
     println!("v\td_f32\td_f64\tf32-f64");

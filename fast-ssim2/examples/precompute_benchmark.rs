@@ -42,14 +42,16 @@ fn main() {
 
         let nz_width = std::num::NonZeroUsize::new(width).unwrap();
         let nz_height = std::num::NonZeroUsize::new(height).unwrap();
-        let mk = |d: &Vec<[f32; 3]>| {
-            srgb_f32_owned(d.clone(), nz_width.get(), nz_height.get())
-        };
+        let mk = |d: &Vec<[f32; 3]>| srgb_f32_owned(d.clone(), nz_width.get(), nz_height.get());
 
         // One-shot
         let start = Instant::now();
         for _ in 0..iterations {
-            let _ = { let (a, b) = (mk(&reference_data), mk(&distorted_data)); compute_ssimulacra2(&a.as_slice(), &b.as_slice()) }.unwrap();
+            let _ = {
+                let (a, b) = (mk(&reference_data), mk(&distorted_data));
+                compute_ssimulacra2(&a.as_slice(), &b.as_slice())
+            }
+            .unwrap();
         }
         let full_time = start.elapsed() / iterations as u32;
 
@@ -58,7 +60,11 @@ fn main() {
 
         let start = Instant::now();
         for _ in 0..iterations {
-            let _ = { let d = mk(&distorted_data); precomputed.compare(&d.as_slice()) }.unwrap();
+            let _ = {
+                let d = mk(&distorted_data);
+                precomputed.compare(&d.as_slice())
+            }
+            .unwrap();
         }
         let compare_time = start.elapsed() / iterations as u32;
 

@@ -1,4 +1,12 @@
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::manual_clamp,
+    clippy::assign_op_pattern,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity
+)]
 //! `Msssim::Score` — 108-weight walk and final nonlinear transform.
 //!
 //! The reference binary evaluates this in plain f64 mulsd/addsd (verified by

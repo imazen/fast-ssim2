@@ -120,9 +120,15 @@ pub fn planes_to_pu_xyb(p: &mut [Vec<f32>; 3], npix: usize) {
     for i in 0..npix {
         let (r, g, b) = (p[0][i], p[1][i], p[2][i]);
         // Opsin LMS mix on absolute luminance — no [0,1] clamp (HDR > 1).
-        let mixed0 = M00.mul_add(r, M01.mul_add(g, M02.mul_add(b, BIAS))).max(0.0);
-        let mixed1 = M10.mul_add(r, M11.mul_add(g, M12.mul_add(b, BIAS))).max(0.0);
-        let mixed2 = M20.mul_add(r, M21.mul_add(g, M22.mul_add(b, BIAS))).max(0.0);
+        let mixed0 = M00
+            .mul_add(r, M01.mul_add(g, M02.mul_add(b, BIAS)))
+            .max(0.0);
+        let mixed1 = M10
+            .mul_add(r, M11.mul_add(g, M12.mul_add(b, BIAS)))
+            .max(0.0);
+        let mixed2 = M20
+            .mul_add(r, M21.mul_add(g, M22.mul_add(b, BIAS)))
+            .max(0.0);
 
         let c0 = pu21_encode(mixed0) / PU_WHITE;
         let c1 = pu21_encode(mixed1) / PU_WHITE;

@@ -1,4 +1,12 @@
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::manual_clamp,
+    clippy::assign_op_pattern,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity
+)]
 //! Bit-exact port of libjxl's `FastGaussian` (Charalampidis IIR Gaussian,
 //! sigma = 1.5) as used by the reference SSIMULACRA2 implementation.
 //!
@@ -64,9 +72,7 @@ pub fn create_recursive_gaussian(sigma: f64) -> RecursiveGaussian {
     let zeta_35 = d_51 * recip_d13;
 
     // Invert the 3x3 matrix in place (Inv3x3Matrix), intermediate in f64.
-    let mut a = [
-        p_1, p_3, p_5, r_1, r_3, r_5, zeta_15, zeta_35, 1.0,
-    ];
+    let mut a = [p_1, p_3, p_5, r_1, r_3, r_5, zeta_15, zeta_35, 1.0];
     let t = [
         a[4] * a[8] - a[5] * a[7],
         a[2] * a[7] - a[1] * a[8],
@@ -184,7 +190,11 @@ impl RecursiveGaussian {
 
         // Left side with bounds checks; first_aligned = RoundUpTo(N+1, 4).
         let first_aligned = (n_radius + 1).div_euclid(4) * 4
-            + if (n_radius + 1).rem_euclid(4) != 0 { 4 } else { 0 };
+            + if (n_radius + 1).rem_euclid(4) != 0 {
+                4
+            } else {
+                0
+            };
         while n < first_aligned.min(width) {
             scalar_step!();
             n += 1;
@@ -287,18 +297,12 @@ impl RecursiveGaussian {
 
                 // NegMulSub(d1, y_n1, y_n2) = -(d1*y_n1) - y_n2, then
                 // MulAdd(n2, sum, that) = fma(n2, sum, fma(-d1, y_n1, -y_n2)).
-                let y1 = self.n2[0].mul_add(
-                    sum,
-                    (-self.d1[0]).mul_add(y1_hist[n_1], -y1_hist[n_2]),
-                );
-                let y3 = self.n2[1].mul_add(
-                    sum,
-                    (-self.d1[1]).mul_add(y3_hist[n_1], -y3_hist[n_2]),
-                );
-                let y5 = self.n2[2].mul_add(
-                    sum,
-                    (-self.d1[2]).mul_add(y5_hist[n_1], -y5_hist[n_2]),
-                );
+                let y1 =
+                    self.n2[0].mul_add(sum, (-self.d1[0]).mul_add(y1_hist[n_1], -y1_hist[n_2]));
+                let y3 =
+                    self.n2[1].mul_add(sum, (-self.d1[1]).mul_add(y3_hist[n_1], -y3_hist[n_2]));
+                let y5 =
+                    self.n2[2].mul_add(sum, (-self.d1[2]).mul_add(y5_hist[n_1], -y5_hist[n_2]));
                 y1_hist[n_0] = y1;
                 y3_hist[n_0] = y3;
                 y5_hist[n_0] = y5;

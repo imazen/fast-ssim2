@@ -156,17 +156,17 @@
 mod input;
 #[doc(hidden)]
 pub mod pipeline;
-mod source;
 mod precompute;
+mod source;
 // Reference data for parity testing (hidden from docs but accessible for tests)
 #[doc(hidden)]
 pub mod reference_data;
 mod strip;
 mod weights;
 
-pub use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, TransferFunction};
 pub use precompute::Ssimulacra2Reference;
 pub use strip::{HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, StripConfig};
+pub use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, TransferFunction};
 
 // sRGB→linear for callers: use `linear_srgb::default::*` directly.
 
@@ -323,7 +323,6 @@ pub enum Ssimulacra2Error {
 /// 16 384 * 16 384 = 268 435 456 pixels, comfortably above any practical
 /// still-image use case (8K UHD = 33 MP, full-frame 100 MP DSLR sensors fit).
 pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
-
 
 /// Computes the SSIMULACRA2 score from two [`PixelSlice`]s —
 /// borrowed, self-describing views over pixel bytes (stride, format,
@@ -484,7 +483,10 @@ fn compute_pair(
     // Linear-side mirror padding to the 8px pyramid floor (crate contract;
     // the reference binary refuses such inputs — padding is our extension).
     let (pw, ph) = (w1.max(8), h1.max(8));
-    let opts = pipeline::Opts { kernel, flavor: pipeline::XybFlavor::CubeRoot };
+    let opts = pipeline::Opts {
+        kernel,
+        flavor: pipeline::XybFlavor::CubeRoot,
+    };
 
     // Reference alpha compositing: min over two backgrounds (0.1 / 0.9
     // encoded). Linear inputs replicate it with the linearized bg.
@@ -492,7 +494,10 @@ fn compute_pair(
         let l1 = linearize_prepared(p1, w1, bg);
         let l2 = linearize_prepared(p2, w2, bg);
         let (l1, l2) = if pw != w1 || ph != h1 {
-            (pad_planes(l1, w1, h1, pw, ph), pad_planes(l2, w2, h2, pw, ph))
+            (
+                pad_planes(l1, w1, h1, pw, ph),
+                pad_planes(l2, w2, h2, pw, ph),
+            )
         } else {
             (l1, l2)
         };
@@ -512,7 +517,6 @@ pub(crate) fn prepared_has_alpha(p: &source::PreparedInput) -> bool {
         source::PreparedInput::Linear { alpha, .. } => alpha.is_some(),
     }
 }
-
 
 /// Linearize a funnelled input: encoded data goes through the reference
 /// LUTs (alpha premultiplied onto `bg` in encoded space), linear planes
@@ -572,7 +576,6 @@ pub(crate) fn reflect_index(i: usize, n: usize) -> usize {
     k
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -586,8 +589,7 @@ mod tests {
             w as u32,
             h as u32,
             w * 12,
-            zenpixels::PixelDescriptor::RGBF32
-                .with_transfer(zenpixels::TransferFunction::Srgb),
+            zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
         )
         .unwrap()
     }
@@ -625,7 +627,11 @@ mod tests {
                     .join(name),
             )
             .unwrap();
-            (img.to_rgb32f().as_chunks::<3>().0.to_vec(), img.width(), img.height())
+            (
+                img.to_rgb32f().as_chunks::<3>().0.to_vec(),
+                img.width(),
+                img.height(),
+            )
         };
         let (d1, w1, h1) = mk("tank_source.png");
         let (d2, w2, h2) = mk("tank_distorted.png");
@@ -669,12 +675,20 @@ mod tests {
         .to_rgb8();
         let (w, h) = s.dimensions();
         let mk = |img: &image::RgbImage| {
-            img.pixels().map(|p| [p[0], p[1], p[2]]).collect::<Vec<[u8; 3]>>()
+            img.pixels()
+                .map(|p| [p[0], p[1], p[2]])
+                .collect::<Vec<[u8; 3]>>()
         };
         let (a8, b8) = (mk(&s), mk(&d));
         let mkr = |img: &image::RgbImage| {
             img.pixels()
-                .map(|p| [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0])
+                .map(|p| {
+                    [
+                        p[0] as f32 / 255.0,
+                        p[1] as f32 / 255.0,
+                        p[2] as f32 / 255.0,
+                    ]
+                })
                 .collect::<Vec<[f32; 3]>>()
         };
         let (af, bf) = (mkr(&s), mkr(&d));
@@ -723,7 +737,7 @@ mod tests {
             &lin_f32(&img, 16, 16),
             &Ssimulacra2Config::default(),
         )
-            .expect("16x16 grey image must be accepted");
+        .expect("16x16 grey image must be accepted");
         assert!(
             (score - 100.0).abs() < 0.01,
             "identical images should score 100, got {score}"
@@ -737,13 +751,12 @@ mod tests {
         // still score ~100.
         for (w, h) in [(4usize, 4usize), (1, 1), (3, 7), (7, 3)] {
             let img = make_linear_rgb(w, h);
-            let score =
-                compute_ssimulacra2_with_config(
-                    &lin_f32(&img, w, h),
-                    &lin_f32(&img, w, h),
-                    &Ssimulacra2Config::default(),
-                )
-                    .unwrap_or_else(|e| panic!("{w}x{h} must score, got {e:?}"));
+            let score = compute_ssimulacra2_with_config(
+                &lin_f32(&img, w, h),
+                &lin_f32(&img, w, h),
+                &Ssimulacra2Config::default(),
+            )
+            .unwrap_or_else(|e| panic!("{w}x{h} must score, got {e:?}"));
             assert!(
                 (score - 100.0).abs() < 0.01,
                 "identical {w}x{h} should score ~100, got {score}"
@@ -757,7 +770,7 @@ mod tests {
             &lin_f32(&b, 5, 5),
             &Ssimulacra2Config::default(),
         )
-            .expect("5x5 differing pair must score");
+        .expect("5x5 differing pair must score");
         assert!(s.is_finite() && s < 100.0, "5x5 differing score {s}");
     }
 

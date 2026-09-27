@@ -12,9 +12,9 @@
 //! Strip variants ([`Ssimulacra2Reference::compare_strip`]) bound the
 //! distorted side's memory the same way as [`crate::compute_ssimulacra2_strip`].
 
-use zenpixels::PixelSlice;
 use crate::pipeline::precompute::ReferenceCache;
 use crate::{MAX_IMAGE_PIXELS, Ssimulacra2Config, Ssimulacra2Error};
+use zenpixels::PixelSlice;
 
 /// Precomputed SSIMULACRA2 reference state for fast repeated comparisons.
 ///
@@ -93,7 +93,13 @@ impl Ssimulacra2Reference {
                         pad_or_pass(crate::linearize_prepared(&p, w, 0.9), ow, oh, w, h),
                     ]
                 } else {
-                    vec![pad_or_pass(crate::linearize_prepared(&p, w, 0.5), ow, oh, w, h)]
+                    vec![pad_or_pass(
+                        crate::linearize_prepared(&p, w, 0.5),
+                        ow,
+                        oh,
+                        w,
+                        h,
+                    )]
                 };
                 Ok(Self {
                     cache: ReferenceCache::new_linear_sets(sets, w, h, has_alpha)?,
@@ -146,7 +152,11 @@ impl Ssimulacra2Reference {
                 // Evaluate dist against each ref stack; the stack's bg
                 // (0.1/0.9 for alpha caches, 0.5 otherwise) drives the
                 // dist-side premultiply — same pairing as compare_stop.
-                let bgs: &[f32] = if self.cache.has_alpha() { &[0.1, 0.9] } else { &[0.5] };
+                let bgs: &[f32] = if self.cache.has_alpha() {
+                    &[0.1, 0.9]
+                } else {
+                    &[0.5]
+                };
                 let mut best = f64::INFINITY;
                 for (si, &bg) in bgs.iter().enumerate() {
                     let planes = pad_or_pass(
@@ -156,7 +166,10 @@ impl Ssimulacra2Reference {
                         w,
                         h,
                     );
-                    best = best.min(self.cache.compare_linear_stack_stop(si, planes, w, h, stop)?);
+                    best = best.min(
+                        self.cache
+                            .compare_linear_stack_stop(si, planes, w, h, stop)?,
+                    );
                 }
                 Ok(best)
             }
@@ -188,13 +201,7 @@ impl Ssimulacra2Reference {
 }
 
 /// Mirror-pad linear planes to the 8px pyramid floor when needed.
-fn pad_or_pass(
-    planes: [Vec<f32>; 3],
-    w: usize,
-    h: usize,
-    pw: usize,
-    ph: usize,
-) -> [Vec<f32>; 3] {
+fn pad_or_pass(planes: [Vec<f32>; 3], w: usize, h: usize, pw: usize, ph: usize) -> [Vec<f32>; 3] {
     if pw == w && ph == h {
         planes
     } else {
@@ -235,7 +242,13 @@ mod tests {
         let (w, h) = img.dimensions();
         let px: Vec<[f32; 3]> = img
             .pixels()
-            .map(|p| [p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0])
+            .map(|p| {
+                [
+                    p[0] as f32 / 255.0,
+                    p[1] as f32 / 255.0,
+                    p[2] as f32 / 255.0,
+                ]
+            })
             .collect();
         (px, w as usize, h as usize)
     }

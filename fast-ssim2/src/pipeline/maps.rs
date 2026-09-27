@@ -1,4 +1,12 @@
-#![allow(clippy::too_many_arguments, clippy::needless_range_loop, clippy::manual_memcpy, clippy::manual_clamp, clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::type_complexity)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    clippy::manual_clamp,
+    clippy::assign_op_pattern,
+    clippy::chunks_exact_to_as_chunks,
+    clippy::type_complexity
+)]
 
 //! Bit-exact ports of `SSIMMap` and `EdgeDiffMap` from `ssimulacra2.cc`.
 //!
@@ -56,8 +64,7 @@ pub fn ssim_map_opts(
                 let mu12 = mu1 * mu2;
                 let num_m = 1.0f64 - (mu1 - mu2) * (mu1 - mu2);
                 let num_s = 2.0f64 * (s12[c][i] as f64 - mu12) + K_C2 as f64;
-                let denom_s =
-                    (s11[c][i] as f64 - mu11) + (s22[c][i] as f64 - mu22) + K_C2 as f64;
+                let denom_s = (s11[c][i] as f64 - mu11) + (s22[c][i] as f64 - mu22) + K_C2 as f64;
                 (1.0f64 - num_m * num_s / denom_s).max(0.0)
             } else {
                 let mu1 = m1[c][i];
@@ -82,15 +89,8 @@ pub fn ssim_map_opts(
     out
 }
 
-
 /// One channel's edge-diff sums (raw, pre-normalization).
-pub fn edge_diff_map_ch(
-    img1: &[f32],
-    mu1: &[f32],
-    img2: &[f32],
-    mu2: &[f32],
-    sums: &mut [f64; 4],
-) {
+pub fn edge_diff_map_ch(img1: &[f32], mu1: &[f32], img2: &[f32], mu2: &[f32], sums: &mut [f64; 4]) {
     for i in 0..img1.len() {
         let num = 1.0 + (img2[i] - mu2[i]).abs() as f64;
         let den = 1.0 + (img1[i] - mu1[i]).abs() as f64;
