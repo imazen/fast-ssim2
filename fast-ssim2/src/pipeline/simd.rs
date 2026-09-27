@@ -667,7 +667,7 @@ pub fn fast_gaussian_simd(
 /// [`fast_gaussian_simd`] with cooperative cancellation — `stop` is
 /// checked between the horizontal and vertical passes and inside the
 /// (sequential even under `rayon`) vertical column-block loop.
-pub fn fast_gaussian_simd_stop(
+pub(crate) fn fast_gaussian_simd_stop(
     rg: &RecursiveGaussian,
     input: &[f32],
     plane_b: Option<&[f32]>,
@@ -679,6 +679,7 @@ pub fn fast_gaussian_simd_stop(
 ) -> Result<(), enough::StopReason> {
     // `may_stop` collapses Unstoppable to a None check in the loops below.
     let stop = stop.may_stop().then_some(stop);
+    stop.check()?;
     // Horizontal: 8-row blocks + scalar tail rows.
     // Each block is an independent lane-group — bit-exact under
     // `rayon` (disjoint output chunks, identical per-lane math).
@@ -689,12 +690,14 @@ pub fn fast_gaussian_simd_stop(
         tmp[..rows8 * width]
             .par_chunks_exact_mut(width * 8)
             .enumerate()
-            .for_each(|(block, chunk)| {
+            .try_for_each(|(block, chunk)| {
+                stop.check()?;
                 incant!(
                     fast_gaussian_1d_rows_inner(rg, input, plane_b, width, block * 8, chunk),
                     [v3, neon, wasm128, scalar]
-                )
-            });
+                );
+                Ok::<(), enough::StopReason>(())
+            })?;
     }
     #[cfg(not(feature = "rayon"))]
     for row0 in (0..rows8).step_by(8) {
@@ -1130,7 +1133,7 @@ pub fn maps_fused_simd(
 /// calls the inner kernel on sub-slices; per-pixel math is independent
 /// and the f64 accumulators stay in index order → bit-exact.
 #[allow(clippy::too_many_arguments)]
-pub fn maps_fused_simd_stop(
+pub(crate) fn maps_fused_simd_stop(
     m1: &[Vec<f32>; 3],
     m2: &[Vec<f32>; 3],
     s11: &[Vec<f32>; 3],
@@ -1201,4 +1204,31 @@ pub fn edge_diff_map_simd(
         out[c * 4 + 3] = (one_per_pixels * sums[3]).sqrt().sqrt();
     }
     out
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+
+    struct Cancel;
+    impl enough::Stop for Cancel {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            Err(enough::StopReason::Cancelled)
+        }
+    }
+
+    #[test]
+    fn cancelled_blur_does_not_start_horizontal_pass() {
+        let (w, h) = (32, 32);
+        let input = vec![1.0; w * h];
+        let mut out = vec![-7.0; w * h];
+        let mut tmp = vec![-7.0; w * h];
+        let rg = super::super::gauss::create_recursive_gaussian(1.5);
+        assert_eq!(
+            fast_gaussian_simd_stop(&rg, &input, None, w, h, &mut out, &mut tmp, &Cancel),
+            Err(enough::StopReason::Cancelled)
+        );
+        assert!(tmp.iter().all(|&v| v == -7.0));
+        assert!(out.iter().all(|&v| v == -7.0));
+    }
 }

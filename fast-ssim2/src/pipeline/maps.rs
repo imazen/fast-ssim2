@@ -179,7 +179,7 @@ pub fn maps_fused(
 /// channel and per `MAPS_STOP_STRIDE`-pixel chunk inside the fused loop
 /// (accumulators stay scalar-ordered, so chunking is bit-exact).
 #[allow(clippy::too_many_arguments)]
-pub fn maps_fused_stop(
+pub(crate) fn maps_fused_stop(
     m1: &[Vec<f32>; 3],
     m2: &[Vec<f32>; 3],
     s11: &[Vec<f32>; 3],

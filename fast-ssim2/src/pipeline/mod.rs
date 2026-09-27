@@ -195,7 +195,7 @@ const LINEARIZE_STOP_ROWS: usize = 64;
 
 /// [`linearize`] with cooperative cancellation — `stop` is checked every
 /// [`LINEARIZE_STOP_ROWS`] rows between row chunks.
-pub fn linearize_stop(
+pub(crate) fn linearize_stop(
     enc: &EncodedSrgb,
     bg: f32,
     stop: &dyn enough::Stop,
@@ -380,7 +380,7 @@ pub fn blur_planes(
 
 /// [`blur_planes`] with cooperative cancellation — `stop` is checked
 /// per channel and per row-block inside each pass.
-pub fn blur_planes_stop(
+pub(crate) fn blur_planes_stop(
     rg: &RecursiveGaussian,
     p: &[Vec<f32>; 3],
     width: usize,

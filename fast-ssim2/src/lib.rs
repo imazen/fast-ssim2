@@ -379,6 +379,9 @@ fn composite_linear_stop(
     width: usize,
     stop: &dyn enough::Stop,
 ) -> Result<[Vec<f32>; 3], enough::StopReason> {
+    if !stop.may_stop() {
+        return Ok(composite_linear(planes, alpha, background));
+    }
     let stop = stop.may_stop().then_some(stop);
     match alpha {
         None => Ok(planes.clone()),
