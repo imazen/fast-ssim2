@@ -27,9 +27,11 @@ use archmage::{SimdToken, X64V3Token};
 use enough::Stop;
 
 /// Rows between `stop` polls in the sequential horizontal-pass fallback.
+#[cfg(not(feature = "rayon"))]
 const STOP_ROW_STRIDE: usize = 1 << 10;
 /// Column-block iterations between `stop` polls in the vertical pass
 /// (each block processes 8 columns × full height).
+#[cfg(not(feature = "rayon"))]
 const STOP_COL_STRIDE: usize = 128;
 /// Pixels between `stop` polls inside `maps_fused_simd_stop`.
 const MAPS_SIMD_STOP_STRIDE: usize = 1 << 21;
@@ -731,9 +733,43 @@ pub(crate) fn fast_gaussian_simd_stop(
 
     stop.check()?;
 
-    // Vertical: 8-column blocks + scalar tail columns. This loop is
-    // sequential even with `rayon`, so it must poll internally.
+    // Vertical: 8-column blocks + scalar tail columns. Each block's IIR
+    // runs down its own columns — fully independent — but writes land
+    // strided inside `out`, so the blocks can't borrow disjoint slices
+    // (and `forbid(unsafe_code)` rules out a shared-mutable split).
+    // Under `rayon` each block computes into private scratch
+    // (out_off=0, out_stride=8 → contiguous) and a parallel scatter
+    // copies the row strips into place. Bit-identical: same inner call,
+    // same column writes, different intermediate buffer.
     let cols8 = width / 8 * 8;
+    #[cfg(feature = "rayon")]
+    {
+        use rayon::prelude::*;
+        let nblocks = cols8 / 8;
+        let block_outs: Vec<Vec<f32>> = (0..nblocks)
+            .into_par_iter()
+            .map(|b| -> Result<Vec<f32>, enough::StopReason> {
+                stop.check()?;
+                let mut bo = vec![0f32; height * 8];
+                incant!(
+                    fast_gaussian_vertical_x8_inner(rg, tmp, width, height, b * 8, &mut bo, 0, 8),
+                    [v3, neon, wasm128, scalar]
+                );
+                Ok(bo)
+            })
+            .collect::<Result<_, _>>()?;
+        // Scatter: row `r` of `out`'s column range [0..cols8) is the
+        // concatenation of every block's row — a parallel row-major copy.
+        out.par_chunks_mut(width)
+            .take(height)
+            .enumerate()
+            .for_each(|(r, orow)| {
+                for (b, bo) in block_outs.iter().enumerate() {
+                    orow[b * 8..b * 8 + 8].copy_from_slice(&bo[r * 8..r * 8 + 8]);
+                }
+            });
+    }
+    #[cfg(not(feature = "rayon"))]
     for x0 in (0..cols8).step_by(8) {
         if x0 & (STOP_COL_STRIDE - 1) == 0 {
             stop.check()?;
