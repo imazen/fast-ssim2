@@ -322,7 +322,7 @@ pub fn compute_ssimulacra2_pu_with_config(
         } else {
             (w1, h1)
         };
-        pipeline::compute_planar_stop(a, b, w, h, opts, stop)
+        pipeline::compute_planar_stop(a, b, w, h, opts, stop.unwrap_or(&enough::Unstoppable))
     };
     if has_alpha {
         Ok(once(20.0)?.min(once(200.0)?))
