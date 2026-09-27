@@ -56,7 +56,13 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
     match desc.transfer {
         TransferFunction::Srgb => {}
         TransferFunction::Linear => {
-            if !matches!(desc.format, PixelFormat::RgbaF32 | PixelFormat::RgbF32) {
+            if !matches!(
+                desc.format,
+                PixelFormat::RgbaF32
+                    | PixelFormat::RgbF32
+                    | PixelFormat::GrayF32
+                    | PixelFormat::GrayAF32
+            ) {
                 return Err(Ssimulacra2Error::UnsupportedInput(
                     "linear transfer requires an f32 format",
                 ));
@@ -107,7 +113,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
         for y in 0..h {
             let row = &data[y * stride..];
             for px in row[..w * bpp].chunks_exact(bpp) {
-                a.push(f32::from_ne_bytes([px[3], px[4], px[5], px[6]]));
+                a.push(f32::from_ne_bytes([px[12], px[13], px[14], px[15]]));
             }
         }
         a
@@ -353,7 +359,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
             }
             PreparedInput::Linear {
                 planes: [g.clone(), g.clone(), g],
-                alpha: Some(a),
+                alpha: premult_alpha.then_some(a),
                 width: w,
                 height: h,
             }
@@ -393,17 +399,20 @@ fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
                 }
             }
         }
-        PixelFormat::Rgba16 => {
+        PixelFormat::Rgba16 | PixelFormat::GrayA16 => {
+            let bpp = slice.descriptor().format.bytes_per_pixel();
+            let alpha_offset = bpp - 2;
             for y in 0..h {
                 let row_start = y * stride;
                 for x in 0..w {
-                    let off = row_start + x * 8;
-                    let a = u16::from_ne_bytes([out[off + 6], out[off + 7]]);
+                    let off = row_start + x * bpp;
+                    let a =
+                        u16::from_ne_bytes([out[off + alpha_offset], out[off + alpha_offset + 1]]);
                     if a == 0 {
-                        out[off..off + 6].fill(0);
+                        out[off..off + alpha_offset].fill(0);
                     } else if a < 65535 {
                         let inv = 65535.0 / a as f32;
-                        for c in 0..3 {
+                        for c in 0..alpha_offset / 2 {
                             let co = off + c * 2;
                             let v = u16::from_ne_bytes([out[co], out[co + 1]]);
                             let unpremul = (v as f32 * inv).round().min(65535.0) as u16;
@@ -414,22 +423,23 @@ fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
             }
         }
         PixelFormat::RgbaF32 | PixelFormat::GrayAF32 => {
-            let bpp = 16;
+            let bpp = slice.descriptor().format.bytes_per_pixel();
+            let alpha_offset = bpp - 4;
             for y in 0..h {
                 let row_start = y * stride;
                 for x in 0..w {
                     let off = row_start + x * bpp;
                     let a = f32::from_ne_bytes([
-                        out[off + 12],
-                        out[off + 13],
-                        out[off + 14],
-                        out[off + 15],
+                        out[off + alpha_offset + 0],
+                        out[off + alpha_offset + 1],
+                        out[off + alpha_offset + 2],
+                        out[off + alpha_offset + 3],
                     ]);
                     if a <= 0.0 {
-                        out[off..off + 12].fill(0);
+                        out[off..off + alpha_offset].fill(0);
                     } else if a < 1.0 {
                         let inv = 1.0 / a;
-                        for c in 0..3 {
+                        for c in 0..alpha_offset / 4 {
                             let co = off + c * 4;
                             let v = f32::from_ne_bytes([
                                 out[co],
@@ -527,6 +537,7 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
 
     let rgb_planes = |data: &[u8],
                       bpp: usize,
+                      channel_bytes: usize,
                       read: &dyn Fn(&[u8]) -> f32,
                       gray: bool,
                       has_alpha: bool,
@@ -542,11 +553,14 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
             let row = &data[y * stride..];
             for px in row[..w * bpp].chunks_exact(bpp) {
                 if hlg {
-                    let triple = [
-                        read(&px[0..]),
-                        read(&px[bpp / 4..]),
-                        read(&px[2 * (bpp / 4)..]),
-                    ];
+                    let triple = if gray {
+                        [read(px); 3]
+                    } else {
+                        core::array::from_fn(|c| {
+                            let src = if bgr { 2 - c } else { c };
+                            read(&px[src * channel_bytes..])
+                        })
+                    };
                     let n = pu21::hlg_triple_to_nits(triple);
                     for c in 0..3 {
                         planes[c].push(if gray { n[0] } else { n[c] });
@@ -557,7 +571,7 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
                     planes[1].push(g);
                     planes[2].push(g);
                 } else {
-                    let cbytes = bpp / 4;
+                    let cbytes = channel_bytes;
                     for (c, plane) in planes.iter_mut().enumerate() {
                         let src = if bgr { 2 - c } else { c };
                         plane.push(decode01(read(&px[src * cbytes..])));
@@ -585,13 +599,13 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
             };
             let rd = |p: &[u8]| p[0] as f32 * (1.0 / 255.0);
             let bgr = matches!(desc.format, PixelFormat::Bgra8 | PixelFormat::Bgrx8);
-            rgb_planes(&data, bpp, &rd, gray, alpha_present, a_off, bgr)
+            rgb_planes(&data, bpp, 1, &rd, gray, alpha_present, a_off, bgr)
         }
         PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 | PixelFormat::GrayA16 => {
             let bpp = desc.format.bytes_per_pixel();
             let gray = matches!(desc.format, PixelFormat::Gray16 | PixelFormat::GrayA16);
             let rd = |p: &[u8]| u16::from_ne_bytes([p[0], p[1]]) as f32 * (1.0 / 65535.0);
-            rgb_planes(&data, bpp, &rd, gray, alpha_present, bpp - 2, false)
+            rgb_planes(&data, bpp, 2, &rd, gray, alpha_present, bpp - 2, false)
         }
         PixelFormat::RgbF32
         | PixelFormat::RgbaF32
@@ -600,7 +614,7 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
             let bpp = desc.format.bytes_per_pixel();
             let gray = matches!(desc.format, PixelFormat::GrayF32 | PixelFormat::GrayAF32);
             let rd = |p: &[u8]| f32::from_ne_bytes([p[0], p[1], p[2], p[3]]);
-            rgb_planes(&data, bpp, &rd, gray, alpha_present, bpp - 4, false)
+            rgb_planes(&data, bpp, 4, &rd, gray, alpha_present, bpp - 4, false)
         }
         _ => {
             return Err(Ssimulacra2Error::UnsupportedInput(
@@ -615,4 +629,135 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
         width: w,
         height: h,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zenpixels::PixelDescriptor;
+
+    fn floats(values: &[f32], desc: PixelDescriptor, stride: usize) -> PixelSlice<'_> {
+        PixelSlice::new(bytemuck::cast_slice(values), 1, 2, stride, desc).unwrap()
+    }
+
+    #[test]
+    fn linear_alpha_and_gray_respect_layout_and_stride() {
+        let rgba = [
+            0.2, 0.4, 0.6, 0.5, 99.0, 99.0, 99.0, 99.0, 0.8, 0.6, 0.4, 0.25,
+        ];
+        let p = funnel(&floats(&rgba, PixelDescriptor::RGBAF32_LINEAR, 32)).unwrap();
+        let PreparedInput::Linear { planes, alpha, .. } = p else {
+            panic!("linear expected")
+        };
+        assert_eq!(planes, [vec![0.2, 0.8], vec![0.4, 0.6], vec![0.6, 0.4]]);
+        assert_eq!(alpha.unwrap(), [0.5, 0.25]);
+        for premult in [false, true] {
+            let gray = if premult {
+                [0.125, 0.5, 99.0, 99.0, 0.1875, 0.25]
+            } else {
+                [0.25, 0.5, 99.0, 99.0, 0.75, 0.25]
+            };
+            let desc = PixelDescriptor::GRAYAF32_LINEAR.with_alpha(Some(if premult {
+                AlphaMode::Premultiplied
+            } else {
+                AlphaMode::Straight
+            }));
+            let p = funnel(&floats(&gray, desc, 16)).unwrap();
+            let PreparedInput::Linear { planes, alpha, .. } = p else {
+                panic!("linear expected")
+            };
+            assert_eq!(
+                planes,
+                [vec![0.25, 0.75], vec![0.25, 0.75], vec![0.25, 0.75]]
+            );
+            assert_eq!(alpha.unwrap(), [0.5, 0.25]);
+        }
+        let gray = [0.25, 99.0, 0.75];
+        let p = funnel(&floats(&gray, PixelDescriptor::GRAYF32_LINEAR, 8)).unwrap();
+        let PreparedInput::Linear { planes, .. } = p else {
+            panic!("linear expected")
+        };
+        assert_eq!(planes[0], [0.25, 0.75]);
+    }
+
+    #[cfg(feature = "hdr-pu")]
+    #[test]
+    fn hdr_layouts_decode_the_same_colors() {
+        use crate::pipeline::pu21::{hlg_triple_to_nits, pq_channel_to_nits};
+        for transfer in [
+            TransferFunction::Pq,
+            TransferFunction::Hlg,
+            TransferFunction::Linear,
+        ] {
+            for bits in [8, 16, 32] {
+                if transfer == TransferFunction::Linear && bits != 32 {
+                    continue;
+                }
+                for gray in [false, true] {
+                    for alpha in [false, true] {
+                        if gray && alpha && bits == 8 {
+                            continue;
+                        }
+                        let desc = match (bits, gray, alpha) {
+                            (8, false, false) => PixelDescriptor::RGB8_SRGB,
+                            (8, false, true) => PixelDescriptor::RGBA8_SRGB,
+                            (8, true, false) => PixelDescriptor::GRAY8_SRGB,
+                            (16, false, false) => PixelDescriptor::RGB16_SRGB,
+                            (16, false, true) => PixelDescriptor::RGBA16_SRGB,
+                            (16, true, false) => PixelDescriptor::GRAY16_SRGB,
+                            (16, true, true) => PixelDescriptor::GRAYA16_SRGB,
+                            (32, false, false) => PixelDescriptor::RGBF32_LINEAR,
+                            (32, false, true) => PixelDescriptor::RGBAF32_LINEAR,
+                            (32, true, false) => PixelDescriptor::GRAYF32_LINEAR,
+                            (32, true, true) => PixelDescriptor::GRAYAF32_LINEAR,
+                            _ => unreachable!(),
+                        }
+                        .with_transfer(transfer);
+                        let values: &[u8] = if gray {
+                            &[51, 128]
+                        } else {
+                            &[51, 102, 153, 128]
+                        };
+                        let count = (if gray { 1 } else { 3 }) + usize::from(alpha);
+                        let mut pixel = Vec::new();
+                        for &v in &values[..count] {
+                            match bits {
+                                8 => pixel.push(v),
+                                16 => pixel.extend_from_slice(&(v as u16 * 257).to_ne_bytes()),
+                                _ => pixel
+                                    .extend_from_slice(&(v as f32 * (1.0 / 255.0)).to_ne_bytes()),
+                            }
+                        }
+                        let stride = pixel.len() * 2;
+                        let mut bytes = pixel.clone();
+                        bytes.resize(stride, 0xff);
+                        bytes.extend_from_slice(&pixel);
+                        let slice = PixelSlice::new(&bytes, 1, 2, stride, desc).unwrap();
+                        let PreparedInput::Linear {
+                            planes, alpha: a, ..
+                        } = funnel_nits(&slice).unwrap()
+                        else {
+                            panic!("linear expected")
+                        };
+                        let rgb = if gray { [0.2; 3] } else { [0.2, 0.4, 0.6] };
+                        let expected = match transfer {
+                            TransferFunction::Pq => rgb.map(pq_channel_to_nits),
+                            TransferFunction::Hlg => hlg_triple_to_nits(rgb),
+                            _ => rgb,
+                        };
+                        for c in 0..3 {
+                            for &actual in &planes[c] {
+                                assert!(
+                                    (actual - expected[c]).abs() <= 0.001 * expected[c].max(1.0),
+                                    "{desc:?}: {actual} != {}",
+                                    expected[c]
+                                );
+                            }
+                        }
+                        assert_eq!(a.is_some(), alpha);
+                    }
+                }
+            }
+        }
+    }
 }

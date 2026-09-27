@@ -19,3 +19,7 @@ api-doc-check:
 test:
     cargo test --all-targets
     cargo test --doc
+
+# Input-layout regression tests, including HDR conversion.
+test-input:
+    cargo test -p fast-ssim2 --lib --features hdr-pu source::tests
