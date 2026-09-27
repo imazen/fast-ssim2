@@ -87,12 +87,27 @@ impl Ssimulacra2Reference {
                 let has_alpha = crate::prepared_has_alpha(&p);
                 let sets = if has_alpha {
                     vec![
-                        pad_or_pass(crate::linearize_prepared(&p, w, 0.1), ow, oh, w, h),
-                        pad_or_pass(crate::linearize_prepared(&p, w, 0.9), ow, oh, w, h),
+                        pad_or_pass(
+                            crate::linearize_prepared_stop(&p, 0.1, stop)
+                                .map_err(Ssimulacra2Error::Cancelled)?,
+                            ow,
+                            oh,
+                            w,
+                            h,
+                        ),
+                        pad_or_pass(
+                            crate::linearize_prepared_stop(&p, 0.9, stop)
+                                .map_err(Ssimulacra2Error::Cancelled)?,
+                            ow,
+                            oh,
+                            w,
+                            h,
+                        ),
                     ]
                 } else {
                     vec![pad_or_pass(
-                        crate::linearize_prepared(&p, w, 0.5),
+                        crate::linearize_prepared_stop(&p, 0.5, stop)
+                            .map_err(Ssimulacra2Error::Cancelled)?,
                         ow,
                         oh,
                         w,
@@ -165,7 +180,8 @@ impl Ssimulacra2Reference {
                 let mut best = f64::INFINITY;
                 for (si, &bg) in bgs.iter().enumerate() {
                     let planes = pad_or_pass(
-                        crate::linearize_prepared(&p, w, bg),
+                        crate::linearize_prepared_stop(&p, bg, stop)
+                            .map_err(Ssimulacra2Error::Cancelled)?,
                         self.original_width,
                         self.original_height,
                         w,

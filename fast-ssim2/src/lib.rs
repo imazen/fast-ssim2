@@ -14,6 +14,8 @@ mod source;
 mod strip;
 mod weights;
 
+use enough::Stop;
+
 pub use precompute::Ssimulacra2Reference;
 pub use strip::{HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, StripConfig};
 pub use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, TransferFunction};
@@ -291,6 +293,7 @@ pub fn compute_ssimulacra2_pu_with_config(
         ));
     }
     let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
+    let stop = stop.may_stop().then_some(stop);
     let kernel = pipeline::Kernel::from_impl(config.impl_type);
     let p1 = source::funnel_nits(source)?;
     let p2 = source::funnel_nits(distorted)?;
@@ -307,7 +310,9 @@ pub fn compute_ssimulacra2_pu_with_config(
     // (20 / 200 cd/m²), mirroring the encoded path's 0.1/0.9 convention.
     let has_alpha = prepared_has_alpha(&p1) || prepared_has_alpha(&p2);
     let once = |bg: f32| -> Result<f64, Ssimulacra2Error> {
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let mut a = linearize_nits(&p1, bg);
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let mut b = linearize_nits(&p2, bg);
         let (w, h) = if w1 < 8 || h1 < 8 {
             let (pw, ph) = (w1.max(8), h1.max(8));
@@ -361,6 +366,51 @@ fn composite_linear(
     }
 }
 
+/// Rows between `stop` polls in [`composite_linear_stop`]'s per-channel
+/// premultiply pass — the check stays out of the per-pixel map.
+const COMPOSITE_STOP_ROWS: usize = 64;
+
+/// [`composite_linear`] with cooperative cancellation — row-chunked
+/// (`width`-sized slices), so the inner map still vectorizes.
+fn composite_linear_stop(
+    planes: &[Vec<f32>; 3],
+    alpha: Option<&[f32]>,
+    background: f32,
+    width: usize,
+    stop: &dyn enough::Stop,
+) -> Result<[Vec<f32>; 3], enough::StopReason> {
+    if !stop.may_stop() {
+        return Ok(composite_linear(planes, alpha, background));
+    }
+    let stop = stop.may_stop().then_some(stop);
+    match alpha {
+        None => Ok(planes.clone()),
+        Some(alpha) => {
+            let mut out = [Vec::new(), Vec::new(), Vec::new()];
+            for (c, channel) in planes.iter().enumerate() {
+                if width == 0 || channel.len() % width != 0 || channel.len() > alpha.len() {
+                    // Degenerate geometry — keep the non-stop path's
+                    // zip-truncation semantics.
+                    return Ok(composite_linear(planes, Some(alpha), background));
+                }
+                let mut dst = Vec::with_capacity(channel.len());
+                for (r, row) in channel.chunks_exact(width).enumerate() {
+                    if r & (COMPOSITE_STOP_ROWS - 1) == 0 {
+                        stop.check()?;
+                    }
+                    dst.extend(
+                        row.iter()
+                            .zip(&alpha[r * width..])
+                            .map(|(&value, &a)| a * value + (1.0 - a) * background),
+                    );
+                }
+                out[c] = dst;
+            }
+            Ok(out)
+        }
+    }
+}
+
 /// Core pair-scoring entry: the reference SSIMULACRA2.1 pipeline
 /// reproduced bit-for-bit.
 ///
@@ -375,6 +425,7 @@ fn compute_pair(
 ) -> Result<f64, Ssimulacra2Error> {
     use source::PreparedInput;
 
+    let stop = stop.may_stop().then_some(stop);
     let p1 = source::funnel(source)?;
     let p2 = source::funnel(distorted)?;
 
@@ -385,7 +436,7 @@ fn compute_pair(
         // identical to padding post-linearization, and stays U8-exact).
         let q1 = e1.reflect_padded(8);
         let q2 = e2.reflect_padded(8);
-        return pipeline::compute_encoded_stop(&q1, &q2, kernel, stop);
+        return pipeline::compute_encoded_stop(&q1, &q2, kernel, &stop);
     }
 
     let (w1, h1) = p1.dims();
@@ -407,8 +458,11 @@ fn compute_pair(
     // Reference alpha compositing: min over two backgrounds (0.1 / 0.9
     // encoded). Linear inputs replicate it with the linearized bg.
     let eval = |bg: f32, p1: &PreparedInput, p2: &PreparedInput| -> Result<f64, Ssimulacra2Error> {
-        let l1 = linearize_prepared(p1, w1, bg);
-        let l2 = linearize_prepared(p2, w2, bg);
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        let l1 = linearize_prepared_stop(p1, bg, &stop).map_err(Ssimulacra2Error::Cancelled)?;
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        let l2 = linearize_prepared_stop(p2, bg, &stop).map_err(Ssimulacra2Error::Cancelled)?;
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let (l1, l2) = if pw != w1 || ph != h1 {
             (
                 pad_planes(l1, w1, h1, pw, ph),
@@ -417,7 +471,7 @@ fn compute_pair(
         } else {
             (l1, l2)
         };
-        pipeline::compute_planar_stop(l1, l2, pw, ph, opts, stop)
+        pipeline::compute_planar_stop(l1, l2, pw, ph, opts, &stop)
     };
 
     if has_alpha {
@@ -442,6 +496,23 @@ pub(crate) fn linearize_prepared(p: &source::PreparedInput, _w: usize, bg: f32) 
         source::PreparedInput::Encoded(e) => pipeline::linearize(e, bg),
         source::PreparedInput::Linear { planes, alpha, .. } => {
             composite_linear(planes, alpha.as_deref(), input::srgb_to_linear(bg))
+        }
+    }
+}
+
+/// [`linearize_prepared`] with cooperative cancellation — the encoded
+/// path polls between row chunks in [`pipeline::linearize_stop`], the
+/// linear path in [`composite_linear_stop`].
+pub(crate) fn linearize_prepared_stop(
+    p: &source::PreparedInput,
+    bg: f32,
+    stop: &dyn enough::Stop,
+) -> Result<[Vec<f32>; 3], enough::StopReason> {
+    match p {
+        source::PreparedInput::Encoded(e) => pipeline::linearize_stop(e, bg, stop),
+        source::PreparedInput::Linear { planes, alpha, .. } => {
+            let (w, _) = p.dims();
+            composite_linear_stop(planes, alpha.as_deref(), input::srgb_to_linear(bg), w, stop)
         }
     }
 }

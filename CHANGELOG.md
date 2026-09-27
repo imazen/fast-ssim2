@@ -50,6 +50,7 @@
 
 
 ### Fixed
+- Cancellation polling now reaches inside the pipeline's expensive passes — the `stop` token is checked between row chunks in `linearize`/`composite_linear`, per channel and between row/column blocks in the recursive-Gaussian blurs (scalar and SIMD), between pixel chunks in the fused SSIM/edge-diff maps, and at every scale-loop boundary. Measured on a 2048×2048 RGB8 pair: worst inter-poll gap 456 ms → 26 ms, score bit-identical. Checks sit outside per-pixel loops and behind `Stop::may_stop()` (`Option<&dyn Stop>`), so `Unstoppable` stays free of vtable calls.
 - Decode HDR RGB channel sizes, BGR order, strided alpha, and premultiplied grayscale correctly (afe14b1f).
 - Reject original dimension mismatches before padding, honor cached backend/cancellation options, and reject unsupported options (cb966fd6).
 - Composite HDR backgrounds in nits and use both backgrounds when only the distorted image has alpha (cb966fd6).

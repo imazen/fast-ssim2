@@ -44,6 +44,7 @@ use archmage::incant;
 pub mod score;
 pub mod xyb;
 
+use enough::Stop;
 use gauss::{RecursiveGaussian, create_recursive_gaussian, multiply_planes};
 use score::ScaleAggregates;
 pub(crate) use score::score as final_score;
@@ -184,7 +185,27 @@ fn pad_scalars(w: usize, h: usize, pw: usize, ph: usize, data: &[f32]) -> Vec<f3
 /// the metric twice — `bg = 0.1` and `bg = 0.9` — and keeps the worse
 /// score. `bg` is ignored when `enc.alpha` is `None`.
 pub fn linearize(enc: &EncodedSrgb, bg: f32) -> [Vec<f32>; 3] {
-    let n = enc.width * enc.height;
+    linearize_stop(enc, bg, &enough::Unstoppable).unwrap_or_else(|_| unreachable!())
+}
+
+/// Rows between `stop` polls inside [`linearize_stop`]'s LUT loops —
+/// checks stay out of the per-pixel loop so the inner pass still
+/// vectorizes.
+const LINEARIZE_STOP_ROWS: usize = 64;
+
+/// [`linearize`] with cooperative cancellation — `stop` is checked every
+/// [`LINEARIZE_STOP_ROWS`] rows between row chunks.
+pub(crate) fn linearize_stop(
+    enc: &EncodedSrgb,
+    bg: f32,
+    stop: &dyn enough::Stop,
+) -> Result<[Vec<f32>; 3], enough::StopReason> {
+    let stop = stop.may_stop().then_some(stop);
+    let (w, h) = (enc.width, enc.height);
+    if w == 0 || h == 0 {
+        return Ok([Vec::new(), Vec::new(), Vec::new()]);
+    }
+    let n = w * h;
     let mut out = [
         Vec::with_capacity(n),
         Vec::with_capacity(n),
@@ -197,57 +218,90 @@ pub fn linearize(enc: &EncodedSrgb, bg: f32) -> [Vec<f32>; 3] {
         };
         match &enc.data {
             EncodedData::U8(data) => {
-                for (i, px) in data.chunks_exact(3).enumerate() {
-                    for c in 0..3 {
-                        out[c].push(if alpha[i] == 1.0 {
-                            lut8::LINEAR_LUT_U8[px[c] as usize]
-                        } else {
-                            encoded(i, px[c] as f32 * (1.0 / 255.0))
-                        });
+                for (r, row) in data.chunks_exact(3 * w).enumerate() {
+                    if r & (LINEARIZE_STOP_ROWS - 1) == 0 {
+                        stop.check()?;
+                    }
+                    for (j, px) in row.chunks_exact(3).enumerate() {
+                        let i = r * w + j;
+                        for c in 0..3 {
+                            out[c].push(if alpha[i] == 1.0 {
+                                lut8::LINEAR_LUT_U8[px[c] as usize]
+                            } else {
+                                encoded(i, px[c] as f32 * (1.0 / 255.0))
+                            });
+                        }
                     }
                 }
             }
             EncodedData::U16(data) => {
-                for (i, px) in data.chunks_exact(3).enumerate() {
-                    out[0].push(encoded(i, px[0] as f32 * (1.0 / 65535.0)));
-                    out[1].push(encoded(i, px[1] as f32 * (1.0 / 65535.0)));
-                    out[2].push(encoded(i, px[2] as f32 * (1.0 / 65535.0)));
+                for (r, row) in data.chunks_exact(3 * w).enumerate() {
+                    if r & (LINEARIZE_STOP_ROWS - 1) == 0 {
+                        stop.check()?;
+                    }
+                    for (j, px) in row.chunks_exact(3).enumerate() {
+                        let i = r * w + j;
+                        out[0].push(encoded(i, px[0] as f32 * (1.0 / 65535.0)));
+                        out[1].push(encoded(i, px[1] as f32 * (1.0 / 65535.0)));
+                        out[2].push(encoded(i, px[2] as f32 * (1.0 / 65535.0)));
+                    }
                 }
             }
             EncodedData::F32(data) => {
-                for (i, px) in data.chunks_exact(3).enumerate() {
-                    out[0].push(encoded(i, px[0]));
-                    out[1].push(encoded(i, px[1]));
-                    out[2].push(encoded(i, px[2]));
+                for (r, row) in data.chunks_exact(3 * w).enumerate() {
+                    if r & (LINEARIZE_STOP_ROWS - 1) == 0 {
+                        stop.check()?;
+                    }
+                    for (j, px) in row.chunks_exact(3).enumerate() {
+                        let i = r * w + j;
+                        out[0].push(encoded(i, px[0]));
+                        out[1].push(encoded(i, px[1]));
+                        out[2].push(encoded(i, px[2]));
+                    }
                 }
             }
         }
-        return out;
+        return Ok(out);
     }
     match &enc.data {
         EncodedData::U8(data) => {
-            for px in data.chunks_exact(3) {
-                out[0].push(lut8::LINEAR_LUT_U8[px[0] as usize]);
-                out[1].push(lut8::LINEAR_LUT_U8[px[1] as usize]);
-                out[2].push(lut8::LINEAR_LUT_U8[px[2] as usize]);
+            for (r, row) in data.chunks_exact(3 * w).enumerate() {
+                if r & (LINEARIZE_STOP_ROWS - 1) == 0 {
+                    stop.check()?;
+                }
+                for px in row.chunks_exact(3) {
+                    out[0].push(lut8::LINEAR_LUT_U8[px[0] as usize]);
+                    out[1].push(lut8::LINEAR_LUT_U8[px[1] as usize]);
+                    out[2].push(lut8::LINEAR_LUT_U8[px[2] as usize]);
+                }
             }
         }
         EncodedData::U16(data) => {
-            for px in data.chunks_exact(3) {
-                out[0].push(crate::input::srgb_to_linear(px[0] as f32 * (1.0 / 65535.0)));
-                out[1].push(crate::input::srgb_to_linear(px[1] as f32 * (1.0 / 65535.0)));
-                out[2].push(crate::input::srgb_to_linear(px[2] as f32 * (1.0 / 65535.0)));
+            for (r, row) in data.chunks_exact(3 * w).enumerate() {
+                if r & (LINEARIZE_STOP_ROWS - 1) == 0 {
+                    stop.check()?;
+                }
+                for px in row.chunks_exact(3) {
+                    out[0].push(crate::input::srgb_to_linear(px[0] as f32 * (1.0 / 65535.0)));
+                    out[1].push(crate::input::srgb_to_linear(px[1] as f32 * (1.0 / 65535.0)));
+                    out[2].push(crate::input::srgb_to_linear(px[2] as f32 * (1.0 / 65535.0)));
+                }
             }
         }
         EncodedData::F32(data) => {
-            for px in data.chunks_exact(3) {
-                out[0].push(encoded_f32_to_linear(px[0]));
-                out[1].push(encoded_f32_to_linear(px[1]));
-                out[2].push(encoded_f32_to_linear(px[2]));
+            for (r, row) in data.chunks_exact(3 * w).enumerate() {
+                if r & (LINEARIZE_STOP_ROWS - 1) == 0 {
+                    stop.check()?;
+                }
+                for px in row.chunks_exact(3) {
+                    out[0].push(encoded_f32_to_linear(px[0]));
+                    out[1].push(encoded_f32_to_linear(px[1]));
+                    out[2].push(encoded_f32_to_linear(px[2]));
+                }
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Reference-linearization approximation for arbitrary encoded f32 in
@@ -317,6 +371,23 @@ pub fn blur_planes(
     width: usize,
     height: usize,
 ) -> [Vec<f32>; 3] {
+    // Unstoppable never fires — the only effect is a few strided checks.
+    match blur_planes_stop(rg, p, width, height, &enough::Unstoppable) {
+        Ok(o) => o,
+        Err(_) => unreachable!("Unstoppable never stops"),
+    }
+}
+
+/// [`blur_planes`] with cooperative cancellation — `stop` is checked
+/// per channel and per row-block inside each pass.
+pub(crate) fn blur_planes_stop(
+    rg: &RecursiveGaussian,
+    p: &[Vec<f32>; 3],
+    width: usize,
+    height: usize,
+    stop: &dyn enough::Stop,
+) -> Result<[Vec<f32>; 3], enough::StopReason> {
+    let stop = stop.may_stop().then_some(stop);
     let mut out = [
         vec![0f32; width * height],
         vec![0f32; width * height],
@@ -324,23 +395,34 @@ pub fn blur_planes(
     ];
     let mut tmp = vec![0f32; width * height];
     for c in 0..3 {
+        stop.check()?;
         // Horizontal pass: each row independently.
         for y in 0..height {
+            if y & (MOD_ROW_STOP_STRIDE - 1) == 0 {
+                stop.check()?;
+            }
             rg.fast_gaussian_1d(
                 &p[c][y * width..(y + 1) * width],
                 &mut tmp[y * width..(y + 1) * width],
             );
         }
-        // Vertical pass: each column independently.
-        let tmp_ref = &tmp;
-        rg.fast_gaussian_vertical_1d(
-            width,
-            height,
-            |row, x| tmp_ref[row * width + x],
-            &mut |row, x, v| out[c][row * width + x] = v,
-        );
+        stop.check()?;
+        // Vertical pass: each column independently. Columns are
+        // independent, so chunk them to poll mid-pass.
+        for x0 in (0..width).step_by(MOD_COL_STOP_STRIDE) {
+            let cw = (width - x0).min(MOD_COL_STOP_STRIDE);
+            let tmp_ref = &tmp;
+            let out_c = &mut out[c];
+            rg.fast_gaussian_vertical_1d(
+                cw,
+                height,
+                |row, x| tmp_ref[row * width + x0 + x],
+                &mut |row, x, v| out_c[row * width + x0 + x] = v,
+            );
+            stop.check()?;
+        }
     }
-    out
+    Ok(out)
 }
 
 /// `blur_planes` writing into caller-provided scratch (strip-mode reuse).
@@ -443,21 +525,26 @@ pub fn compute_encoded_stop(
     kernel: Kernel,
     stop: &dyn enough::Stop,
 ) -> Result<f64, crate::Ssimulacra2Error> {
+    let stop = stop.may_stop().then_some(stop);
     let (w, h) = (enc1.width, enc1.height);
     if w != enc2.width || h != enc2.height {
         return Err(crate::Ssimulacra2Error::NonMatchingImageDimensions);
     }
-    let lin = |e: &EncodedSrgb, bg| linearize(e, bg);
+    let lin = |e: &EncodedSrgb, bg| -> Result<[Vec<f32>; 3], crate::Ssimulacra2Error> {
+        let planes = linearize_stop(e, bg, &stop).map_err(crate::Ssimulacra2Error::Cancelled)?;
+        stop.check().map_err(crate::Ssimulacra2Error::Cancelled)?;
+        Ok(planes)
+    };
     let opts = Opts {
         kernel,
         flavor: XybFlavor::CubeRoot,
     };
     if enc1.alpha.is_some() || enc2.alpha.is_some() {
-        let lo = compute_planar_stop(lin(enc1, 0.1), lin(enc2, 0.1), w, h, opts, stop)?;
-        let hi = compute_planar_stop(lin(enc1, 0.9), lin(enc2, 0.9), w, h, opts, stop)?;
+        let lo = compute_planar_stop(lin(enc1, 0.1)?, lin(enc2, 0.1)?, w, h, opts, &stop)?;
+        let hi = compute_planar_stop(lin(enc1, 0.9)?, lin(enc2, 0.9)?, w, h, opts, &stop)?;
         return Ok(lo.min(hi));
     }
-    compute_planar_stop(lin(enc1, 0.5), lin(enc2, 0.5), w, h, opts, stop)
+    compute_planar_stop(lin(enc1, 0.5)?, lin(enc2, 0.5)?, w, h, opts, &stop)
 }
 
 /// Kernel family — the lane-wise SIMD implementations
@@ -567,8 +654,14 @@ pub fn compute_planar_with(
     )
 }
 
+/// Rows between `stop` polls inside `blur_planes_stop`'s horizontal pass.
+const MOD_ROW_STOP_STRIDE: usize = 1 << 10;
+/// Columns per chunk between `stop` polls inside `blur_planes_stop`'s
+/// vertical pass (columns are independent; each chunk is width-sliced).
+const MOD_COL_STOP_STRIDE: usize = 256;
+
 /// [`compute_planar`] with cooperative cancellation — `stop` is checked
-/// once per scale (never per-pixel).
+/// between the per-scale plane ops and inside the blur passes.
 pub fn compute_planar_stop(
     lin1: [Vec<f32>; 3],
     lin2: [Vec<f32>; 3],
@@ -577,6 +670,7 @@ pub fn compute_planar_stop(
     opts: Opts,
     stop: &dyn enough::Stop,
 ) -> Result<f64, crate::Ssimulacra2Error> {
+    let stop = stop.may_stop().then_some(stop);
     if width < 8 || height < 8 {
         return Err(crate::Ssimulacra2Error::InvalidImageSize);
     }
@@ -605,19 +699,20 @@ pub fn compute_planar_stop(
         // current linear planes to XYB *in place* — saves 6 plane
         // allocations (lin1/lin2 clones) per scale.
         let (lin1_next, nw, nh) = downsample_planes(&lin1, w, h);
+        stop.check().map_err(crate::Ssimulacra2Error::Cancelled)?;
         let (lin2_next, _, _) = downsample_planes(&lin2, w, h);
+        stop.check().map_err(crate::Ssimulacra2Error::Cancelled)?;
 
         let npix = w * h;
         let mut xyb1 = lin1;
         let mut xyb2 = lin2;
         xyb_convert(&mut xyb1, npix, opts);
+        stop.check().map_err(crate::Ssimulacra2Error::Cancelled)?;
         xyb_convert(&mut xyb2, npix, opts);
+        stop.check().map_err(crate::Ssimulacra2Error::Cancelled)?;
 
-        let blur_sel = |p: &[Vec<f32>; 3]| -> [Vec<f32>; 3] {
-            match opts.kernel {
-                Kernel::Scalar => blur_planes(&rg, p, w, h),
-                Kernel::Simd => simd::blur_planes_simd(&rg, p, w, h),
-            }
+        let blur_sel = |p: &[Vec<f32>; 3]| -> Result<[Vec<f32>; 3], enough::StopReason> {
+            blur_planes_stop(&rg, p, w, h, &stop)
         };
 
         // mul = xyb_i * xyb_i → blurred squares; mul = xyb1 * xyb2 → cross.
@@ -647,7 +742,7 @@ pub fn compute_planar_stop(
                         let mut out = vec![0f32; npix];
                         let mut tmp = vec![0f32; npix];
                         let (a, b) = jobs[j];
-                        simd::fast_gaussian_simd(
+                        simd::fast_gaussian_simd_stop(
                             &rg,
                             &a[c],
                             b.map(|bb| bb[c].as_slice()),
@@ -655,10 +750,12 @@ pub fn compute_planar_stop(
                             h,
                             &mut out,
                             &mut tmp,
-                        );
-                        out
+                            &stop,
+                        )?;
+                        Ok(out)
                     })
-                    .collect();
+                    .collect::<Result<_, enough::StopReason>>()
+                    .map_err(crate::Ssimulacra2Error::Cancelled)?;
                 let take3 = |it: &mut std::vec::IntoIter<Vec<f32>>| {
                     [it.next().unwrap(), it.next().unwrap(), it.next().unwrap()]
                 };
@@ -671,11 +768,14 @@ pub fn compute_planar_stop(
             }
             #[cfg(not(feature = "rayon"))]
             {
-                let run = |(a, b): (&[Vec<f32>; 3], Option<&[Vec<f32>; 3]>)| -> [Vec<f32>; 3] {
+                let run = |(a, b): (&[Vec<f32>; 3], Option<&[Vec<f32>; 3]>)| -> Result<
+                    [Vec<f32>; 3],
+                    crate::Ssimulacra2Error,
+                > {
                     let mut out = [vec![0f32; npix], vec![0f32; npix], vec![0f32; npix]];
                     let mut tmp = vec![0f32; npix];
                     for c in 0..3 {
-                        simd::fast_gaussian_simd(
+                        simd::fast_gaussian_simd_stop(
                             &rg,
                             &a[c],
                             b.map(|bb| bb[c].as_slice()),
@@ -683,26 +783,28 @@ pub fn compute_planar_stop(
                             h,
                             &mut out[c],
                             &mut tmp,
-                        );
+                            &stop,
+                        )
+                        .map_err(crate::Ssimulacra2Error::Cancelled)?;
                     }
-                    out
+                    Ok(out)
                 };
-                sigma1_sq = run(jobs[0]);
-                sigma2_sq = run(jobs[1]);
-                sigma12 = run(jobs[2]);
-                mu1 = run(jobs[3]);
-                mu2 = run(jobs[4]);
+                sigma1_sq = run(jobs[0])?;
+                sigma2_sq = run(jobs[1])?;
+                sigma12 = run(jobs[2])?;
+                mu1 = run(jobs[3])?;
+                mu2 = run(jobs[4])?;
             }
         } else {
             let mut mul = [vec![0f32; npix], vec![0f32; npix], vec![0f32; npix]];
             multiply_planes(&xyb1, &xyb1, &mut mul);
-            sigma1_sq = blur_sel(&mul);
+            sigma1_sq = blur_sel(&mul).map_err(crate::Ssimulacra2Error::Cancelled)?;
             multiply_planes(&xyb2, &xyb2, &mut mul);
-            sigma2_sq = blur_sel(&mul);
+            sigma2_sq = blur_sel(&mul).map_err(crate::Ssimulacra2Error::Cancelled)?;
             multiply_planes(&xyb1, &xyb2, &mut mul);
-            sigma12 = blur_sel(&mul);
-            mu1 = blur_sel(&xyb1);
-            mu2 = blur_sel(&xyb2);
+            sigma12 = blur_sel(&mul).map_err(crate::Ssimulacra2Error::Cancelled)?;
+            mu1 = blur_sel(&xyb1).map_err(crate::Ssimulacra2Error::Cancelled)?;
+            mu2 = blur_sel(&xyb2).map_err(crate::Ssimulacra2Error::Cancelled)?;
         }
 
         // ssim (lanes) + edge_diff (scalar f64) run per channel — the
@@ -731,9 +833,10 @@ pub fn compute_planar_stop(
                             ),
                             [v3, neon, wasm128, scalar]
                         );
+                        stop.check()?;
                         let mut e = [0f64; 4];
                         simd::edge_sums_fast(0, h, w, &xyb1[c], &mu1[c], &xyb2[c], &mu2[c], &mut e);
-                        (
+                        Ok((
                             opp * s0,
                             (opp * s1).sqrt().sqrt(),
                             [
@@ -742,9 +845,10 @@ pub fn compute_planar_stop(
                                 opp * e[2],
                                 (opp * e[3]).sqrt().sqrt(),
                             ],
-                        )
+                        ))
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, enough::StopReason>>()
+                    .map_err(crate::Ssimulacra2Error::Cancelled)?;
                 for c in 0..3 {
                     so[c * 2] = parts[c].0;
                     so[c * 2 + 1] = parts[c].1;
@@ -754,14 +858,16 @@ pub fn compute_planar_stop(
             }
             #[cfg(not(feature = "rayon"))]
             {
-                simd::maps_fused_simd(
-                    &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h,
+                simd::maps_fused_simd_stop(
+                    &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h, &stop,
                 )
+                .map_err(crate::Ssimulacra2Error::Cancelled)?
             }
         } else {
-            maps::maps_fused(
-                &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h,
+            maps::maps_fused_stop(
+                &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h, &stop,
             )
+            .map_err(crate::Ssimulacra2Error::Cancelled)?
         };
         scales.push(ScaleAggregates {
             avg_ssim,

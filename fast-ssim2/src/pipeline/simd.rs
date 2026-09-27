@@ -24,6 +24,15 @@ use archmage::incant;
 use archmage::magetypes;
 #[cfg(target_arch = "x86_64")]
 use archmage::{SimdToken, X64V3Token};
+use enough::Stop;
+
+/// Rows between `stop` polls in the sequential horizontal-pass fallback.
+const STOP_ROW_STRIDE: usize = 1 << 10;
+/// Column-block iterations between `stop` polls in the vertical pass
+/// (each block processes 8 columns × full height).
+const STOP_COL_STRIDE: usize = 128;
+/// Pixels between `stop` polls inside `maps_fused_simd_stop`.
+const MAPS_SIMD_STOP_STRIDE: usize = 1 << 21;
 
 /// 8-pixel edge-diff chunk in AVX2: the f64 division lane-widened via
 /// `_mm256_cvtps_pd` instead of per-lane `as f64` extraction — the
@@ -642,6 +651,35 @@ pub fn fast_gaussian_simd(
     out: &mut [f32],
     tmp: &mut [f32],
 ) {
+    // Unstoppable never fires — the only effect is a few strided checks.
+    let _ = fast_gaussian_simd_stop(
+        rg,
+        input,
+        plane_b,
+        width,
+        height,
+        out,
+        tmp,
+        &enough::Unstoppable,
+    );
+}
+
+/// [`fast_gaussian_simd`] with cooperative cancellation — `stop` is
+/// checked between the horizontal and vertical passes and inside the
+/// (sequential even under `rayon`) vertical column-block loop.
+pub(crate) fn fast_gaussian_simd_stop(
+    rg: &RecursiveGaussian,
+    input: &[f32],
+    plane_b: Option<&[f32]>,
+    width: usize,
+    height: usize,
+    out: &mut [f32],
+    tmp: &mut [f32],
+    stop: &dyn enough::Stop,
+) -> Result<(), enough::StopReason> {
+    // `may_stop` collapses Unstoppable to a None check in the loops below.
+    let stop = stop.may_stop().then_some(stop);
+    stop.check()?;
     // Horizontal: 8-row blocks + scalar tail rows.
     // Each block is an independent lane-group — bit-exact under
     // `rayon` (disjoint output chunks, identical per-lane math).
@@ -652,15 +690,20 @@ pub fn fast_gaussian_simd(
         tmp[..rows8 * width]
             .par_chunks_exact_mut(width * 8)
             .enumerate()
-            .for_each(|(block, chunk)| {
+            .try_for_each(|(block, chunk)| {
+                stop.check()?;
                 incant!(
                     fast_gaussian_1d_rows_inner(rg, input, plane_b, width, block * 8, chunk),
                     [v3, neon, wasm128, scalar]
-                )
-            });
+                );
+                Ok::<(), enough::StopReason>(())
+            })?;
     }
     #[cfg(not(feature = "rayon"))]
     for row0 in (0..rows8).step_by(8) {
+        if row0 & (STOP_ROW_STRIDE - 1) == 0 {
+            stop.check()?;
+        }
         incant!(
             fast_gaussian_1d_rows_inner(rg, input, plane_b, width, row0, &mut tmp[row0 * width..]),
             [v3, neon, wasm128, scalar]
@@ -686,9 +729,15 @@ pub fn fast_gaussian_simd(
         }
     }
 
-    // Vertical: 8-column blocks + scalar tail columns.
+    stop.check()?;
+
+    // Vertical: 8-column blocks + scalar tail columns. This loop is
+    // sequential even with `rayon`, so it must poll internally.
     let cols8 = width / 8 * 8;
     for x0 in (0..cols8).step_by(8) {
+        if x0 & (STOP_COL_STRIDE - 1) == 0 {
+            stop.check()?;
+        }
         incant!(
             fast_gaussian_vertical_x8_inner(rg, tmp, width, height, x0, out, x0, width),
             [v3, neon, wasm128, scalar]
@@ -706,6 +755,7 @@ pub fn fast_gaussian_simd(
             },
         );
     }
+    Ok(())
 }
 
 /// Plane-level wrapper: 3 channels through `fast_gaussian_simd`.
@@ -1060,18 +1110,67 @@ pub fn maps_fused_simd(
     width: usize,
     height: usize,
 ) -> ([f64; 6], [f64; 12]) {
+    // Unstoppable never fires — the only effect is strided checks.
+    match maps_fused_simd_stop(
+        m1,
+        m2,
+        s11,
+        s22,
+        s12,
+        img1,
+        img2,
+        width,
+        height,
+        &enough::Unstoppable,
+    ) {
+        Ok(o) => o,
+        Err(_) => unreachable!("Unstoppable never stops"),
+    }
+}
+
+/// [`maps_fused_simd`] with cooperative cancellation — `stop` is checked
+/// per channel and per `MAPS_SIMD_STOP_STRIDE`-pixel chunk. Each chunk
+/// calls the inner kernel on sub-slices; per-pixel math is independent
+/// and the f64 accumulators stay in index order → bit-exact.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn maps_fused_simd_stop(
+    m1: &[Vec<f32>; 3],
+    m2: &[Vec<f32>; 3],
+    s11: &[Vec<f32>; 3],
+    s22: &[Vec<f32>; 3],
+    s12: &[Vec<f32>; 3],
+    img1: &[Vec<f32>; 3],
+    img2: &[Vec<f32>; 3],
+    width: usize,
+    height: usize,
+    stop: &dyn enough::Stop,
+) -> Result<([f64; 6], [f64; 12]), enough::StopReason> {
+    let stop = stop.may_stop().then_some(stop);
     let one_per_pixels = 1.0 / (height * width) as f64;
     let (mut so, mut eo) = ([0f64; 6], [0f64; 12]);
+    let npix = width * height;
     for c in 0..3 {
         let (mut sum0, mut sum1) = (0f64, 0f64);
         let mut esums = [0f64; 4];
-        incant!(
-            maps_fused_inner(
-                &m1[c], &m2[c], &s11[c], &s22[c], &s12[c], &img1[c], &img2[c], &mut sum0,
-                &mut sum1, &mut esums
-            ),
-            [v3, neon, wasm128, scalar]
-        );
+        for off in (0..npix).step_by(MAPS_SIMD_STOP_STRIDE) {
+            let end = npix.min(off + MAPS_SIMD_STOP_STRIDE);
+            incant!(
+                maps_fused_inner(
+                    &m1[c][off..end],
+                    &m2[c][off..end],
+                    &s11[c][off..end],
+                    &s22[c][off..end],
+                    &s12[c][off..end],
+                    &img1[c][off..end],
+                    &img2[c][off..end],
+                    &mut sum0,
+                    &mut sum1,
+                    &mut esums
+                ),
+                [v3, neon, wasm128, scalar]
+            );
+            stop.check()?;
+        }
         so[c * 2] = one_per_pixels * sum0;
         so[c * 2 + 1] = (one_per_pixels * sum1).sqrt().sqrt();
         eo[c * 4] = one_per_pixels * esums[0];
@@ -1079,7 +1178,7 @@ pub fn maps_fused_simd(
         eo[c * 4 + 2] = one_per_pixels * esums[2];
         eo[c * 4 + 3] = (one_per_pixels * esums[3]).sqrt().sqrt();
     }
-    (so, eo)
+    Ok((so, eo))
 }
 
 /// `edge_diff_map` via lanes — returns the same `[f64; 12]` aggregates.
@@ -1105,4 +1204,31 @@ pub fn edge_diff_map_simd(
         out[c * 4 + 3] = (one_per_pixels * sums[3]).sqrt().sqrt();
     }
     out
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+
+    struct Cancel;
+    impl enough::Stop for Cancel {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            Err(enough::StopReason::Cancelled)
+        }
+    }
+
+    #[test]
+    fn cancelled_blur_does_not_start_horizontal_pass() {
+        let (w, h) = (32, 32);
+        let input = vec![1.0; w * h];
+        let mut out = vec![-7.0; w * h];
+        let mut tmp = vec![-7.0; w * h];
+        let rg = super::super::gauss::create_recursive_gaussian(1.5);
+        assert_eq!(
+            fast_gaussian_simd_stop(&rg, &input, None, w, h, &mut out, &mut tmp, &Cancel),
+            Err(enough::StopReason::Cancelled)
+        );
+        assert!(tmp.iter().all(|&v| v == -7.0));
+        assert!(out.iter().all(|&v| v == -7.0));
+    }
 }
