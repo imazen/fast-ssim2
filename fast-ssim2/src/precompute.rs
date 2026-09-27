@@ -1,16 +1,6 @@
-//! Precomputed reference-image state for fast repeated comparisons.
-//!
-//! [`Ssimulacra2Reference`] runs the reference-side half of the
-//! SSIMULACRA2.1 pipeline once (linearize → XYB → per-scale μ/σ planes)
-//! and caches it, so each subsequent [`compare`](Ssimulacra2Reference::compare)
-//! only pays for the distorted side. Measured on a 512² u8 workload via
-//! iai-callgrind: `compare` = 20.4M instructions vs 31.8M for the
-//! one-shot compute — ~36% saved per call, `new` amortizes from the
-//! second compare onward. Output is bit-identical to
-//! [`crate::compute_ssimulacra2`].
-//!
-//! Strip variants ([`Ssimulacra2Reference::compare_strip`]) bound the
-//! distorted side's memory the same way as [`crate::compute_ssimulacra2_strip`].
+//! Owned reference-side pyramid for repeated SDR comparisons.
+//! Construction and comparisons honor backend selection and cancellation.
+//! Strip options apply to comparisons only; reference storage remains full-image.
 
 use crate::pipeline::precompute::ReferenceCache;
 use crate::{MAX_IMAGE_PIXELS, Ssimulacra2Config, Ssimulacra2Error};
@@ -40,9 +30,8 @@ pub struct Ssimulacra2Reference {
 impl Ssimulacra2Reference {
     /// Precompute the reference pipeline for `source`.
     ///
-    /// Encoded sRGB inputs (`Srgb*` pixel formats) take the LUT-exact
-    /// encoded path — bit-identical to [`crate::compute_ssimulacra2`];
-    /// `LinearF32*` inputs build the cache from their linear planes.
+    /// Inputs use the same descriptor-driven conversion as
+    /// [`crate::compute_ssimulacra2`].
     ///
     /// # Errors
     /// - [`Ssimulacra2Error::InvalidImageSize`] if the image is empty
@@ -56,6 +45,8 @@ impl Ssimulacra2Reference {
     /// [`Self::new`] with explicit options — `impl_type` chooses the
     /// scalar-oracle or SIMD kernels (bit-identical output); `stop`
     /// allows cooperative cancellation of the precompute itself.
+    /// `strip` must be `None`; otherwise returns
+    /// [`crate::Ssimulacra2Error::InvalidConfiguration`].
     pub fn new_with_config(
         source: &PixelSlice<'_>,
         config: &Ssimulacra2Config<'_>,

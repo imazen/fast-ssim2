@@ -1,86 +1,6 @@
-//! Strip-wise SSIMULACRA2 computation for bounded peak memory at very
-//! large image sizes.
-//!
-//! The full SSIMULACRA2 pipeline allocates roughly 24 image-sized `f32`
-//! planes plus a downscale pyramid; at 40 MP this is ~7 GiB of working
-//! memory. The strip walker bounds that to `O(strip_height * width)` by
-//! processing the image in horizontal strips, accumulating per-strip
-//! contributions to each scale's SSIM and edge-difference reductions, and
-//! summing those contributions across strips before the final score
-//! aggregation.
-//!
-//! ## Algorithm
-//!
-//! The two non-local operations in SSIMULACRA2 are:
-//!
-//! 1. The recursive (IIR) Gaussian blur (`Blur`), which has effectively
-//!    finite support thanks to its exponential impulse decay (sigma=1.5,
-//!    so a halo of 24 rows reduces the boundary effect to ~e^-16).
-//! 2. The 2×2 downsampling between scales, which has a strict halo of
-//!    one row on either side.
-//!
-//! Everything else — XYB conversion, `make_positive_xyb`, planar
-//! multiply, the SSIM/edge-diff reductions — is per-pixel and trivially
-//! stripable.
-//!
-//! The strip walker therefore processes each strip with a configurable
-//! halo of extra rows above and below; the per-pixel reductions inside
-//! the halo are discarded, and only the rows inside the "interior" of
-//! each strip contribute to the accumulated sums.
-//!
-//! ## Parity
-//!
-//! With the default halo ([`HALO_ROWS_DEFAULT`] = 96 rows), the strip
-//! score differs from the full-image score by less than 0.01 on the
-//! 0..100 SSIMULACRA2 scale across the test corpus at and above
-//! 256x256. The exponential decay of the IIR's impulse response gives
-//! effective bit-identity at the f32 precision used by the inner SSIM
-//! map computation for scales 0..3, and a small residual contribution
-//! (~`e^{-6}` ≈ `1e-3` per pixel) from scale 4 where the per-strip
-//! image is small and the effective halo is correspondingly thinner.
-//! Callers can override the halo via
-//! [`StripConfig::with_halo_rows`] for stricter parity at
-//! the cost of slightly more per-strip work.
-//!
-//! ## Example
-//!
-//! Strip mode is selected through [`Ssimulacra2Config::strip`]:
-//!
-//! ```
-//! use fast_ssim2::{
-//!     PixelDescriptor, PixelSlice, Ssimulacra2Config, compute_ssimulacra2_with_config,
-//! };
-//!
-//! let data: Vec<u8> = vec![128; 256 * 256 * 3];
-//! let source =
-//!     PixelSlice::new(&data, 256, 256, 256 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
-//! let distorted =
-//!     PixelSlice::new(&data, 256, 256, 256 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
-//!
-//! // Process in strips of 64 interior rows each.
-//! let cfg = Ssimulacra2Config::strips(64);
-//! let score = compute_ssimulacra2_with_config(&source, &distorted, &cfg).unwrap();
-//! assert!((score - 100.0).abs() < 1e-3);
-//! ```
-//!
-//! ## Cached-reference strip API
-//!
-//! When comparing many distorted images against the same reference,
-//! pair [`Ssimulacra2Reference::new`] with
-//! [`Ssimulacra2Reference::compare_with_config`] + `config.strip` for
-//! the warm-ref + strip benefit:
-//!
-//! ```ignore
-//! let reference = Ssimulacra2Reference::new(source)?;
-//! for distorted in distortions {
-//!     let score = reference.compare_with_config(distorted, &Ssimulacra2Config::strips(64))?;
-//! }
-//! ```
-//!
-//! Note that `compare_strip` still holds the full precomputed reference
-//! in memory; the strip discipline only bounds dist-side peak memory.
-//! For full strip mode on both sides, use [`compute_ssimulacra2_strip`]
-//! directly.
+//! Strip evaluation reduces intermediate working buffers; input conversion
+//! still materializes whole images. Cached comparisons also retain the full
+//! reference pyramid. Select strips through [`crate::Ssimulacra2Config::with_strip`].
 
 use crate::pipeline::{Kernel, Opts, XybFlavor};
 use crate::precompute::Ssimulacra2Reference;
@@ -89,17 +9,9 @@ use zenpixels::PixelSlice;
 
 /// Default number of halo rows above and below each strip.
 ///
-/// SSIMULACRA2 runs the IIR Gaussian at every pyramid scale. The
-/// scale-0 image has the most rows; scale-4's image is 16× smaller.
-/// The IIR impulse decays as roughly `e^{-2/3 · n}` per row at
-/// sigma=1.5, so the *effective* halo at scale `s` is
-/// `HALO_ROWS_DEFAULT >> s`. To keep at least 6 rows of warmup at
-/// scale 4 (the deepest scale on a 40 MP image), we set the scale-0
-/// halo to 96 rows. This adds modest per-strip overhead (a 256-row
-/// strip becomes a 448-row working strip — 75 % more work per strip,
-/// still bounded by `O(strip_h)` rather than `O(full_h)`) in exchange
-/// for atomic-tolerance parity against the full-image score across
-/// all scales.
+/// Halo rows warm up the recursive blur and are excluded from reductions.
+/// Larger halos cost more work and reduce boundary effects; whole-image
+/// evaluation remains the choice for exact whole-image scores.
 pub const HALO_ROWS_DEFAULT: usize = 96;
 
 /// Minimum supported strip height (in scale-0 rows).
@@ -121,9 +33,7 @@ pub struct StripConfig {
     /// Process strips in parallel (requires the `rayon` feature).
     ///
     /// Off by default because parallelism multiplies the memory bound:
-    /// peak RSS becomes ~`threads × (strip+2·halo) × width × ~30 f32
-    /// planes`. The concurrency cap is `min(threads, 8)` — the workload
-    /// is memory-bandwidth-bound past that. On low-RAM machines keep
+    /// intermediate buffers are replicated per active strip. The concurrency cap is `min(threads, 8)` — at most eight strips run concurrently. On low-RAM machines keep
     /// this `false` — the memory bound is the strip path's contract.
     /// Scores are bit-identical either way (sums merge in fixed strip
     /// order).
@@ -181,27 +91,7 @@ impl StripConfig {
     }
 }
 
-/// Computes the SSIMULACRA2 score with strip-bounded peak memory.
-///
-/// `strip_height` is the number of rows in each strip's "interior" at
-/// scale 0; the actual working strip is `strip_height + 2*halo_rows`
-/// rows tall, where `halo_rows` defaults to [`HALO_ROWS_DEFAULT`].
-///
-/// At 40 MP (e.g., 7700x5200) with `strip_height=256`, peak working
-/// memory is bounded by ~24 × 7700 × (256+48) × 4 B ≈ 220 MiB, an
-/// order of magnitude below the ~7 GiB of the full-image path.
-///
-/// # Errors
-/// - [`Ssimulacra2Error::InvalidImageSize`] if `strip_height <
-///   [`MIN_STRIP_HEIGHT`].
-/// Crate-internal strip runner — invoked from the public entry points
-/// when [`Ssimulacra2Config::strip`] is `Some`. The strip parameters
-/// live in [`StripConfig`]; kernel/stop come from the outer config.
-///
-/// Inputs with an encoded sRGB pixel format are sliced per strip
-/// in encoded space and linearized through the reference-captured LUT —
-/// the same bit-exact path as [`crate::compute_ssimulacra2`]. `LinearF32*`
-/// inputs take the linear-planes variant.
+/// Internal SDR strip runner. Materializes inputs before processing strips.
 pub(crate) fn compute_strip_inner(
     source: &PixelSlice<'_>,
     distorted: &PixelSlice<'_>,

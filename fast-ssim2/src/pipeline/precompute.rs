@@ -7,7 +7,7 @@
     clippy::chunks_exact_to_as_chunks,
     clippy::type_complexity
 )]
-//! Precomputed reference for `MatchOfficial` — the official-semantics
+//! Precomputed reference for SDR — the official-semantics
 //! analogue of [`crate::Ssimulacra2Reference`].
 //!
 //! Stores the reference-side per-scale planes produced by the official
@@ -17,11 +17,6 @@
 //! one source (encoder rate-distortion search, tuning sweeps), the
 //! reference-side linearize→XYB→blur work is paid once instead of per
 //! call.
-//!
-//! ```ignore
-//! let r = ReferenceCache::new(&source)?;
-//! let score = r.compare(&distorted)?; // == compute_ssimulacra2 MatchOfficial
-//! ```
 //!
 //! Sources with alpha precompute both blend backgrounds (0.1 / 0.9) and
 //! `compare` takes the minimum, mirroring the reference binary.
@@ -51,10 +46,10 @@ pub(crate) struct RefScale {
     pub(crate) height: usize,
 }
 
-/// Precomputed `MatchOfficial` reference.
+/// Precomputed SDR reference.
 ///
-/// Cheap to clone (buffers are `Vec`s — clone is a deep copy; keep one
-/// per batch loop). `Sync` — one reference can be shared across worker
+/// Cloning deep-copies the buffers; keep one
+/// per batch loop. `Sync` — one reference can be shared across worker
 /// threads as long as each has its own distorted-side scratch.
 #[derive(Clone, Debug)]
 pub struct ReferenceCache {
@@ -318,9 +313,8 @@ impl ReferenceCache {
         self.height
     }
 
-    /// Compute the `MatchOfficial` score of `distorted` against the
-    /// precomputed reference — bit-identical to `compute_ssimulacra2` at
-    /// `Fidelity::MatchOfficial`, with the reference-side pipeline paid
+    /// Compute the SDR score of `distorted` against the
+    /// precomputed reference — bit-identical to `compute_ssimulacra2` with whole-image evaluation, with the reference-side pipeline paid
     /// once in [`Self::new`].
     ///
     /// # Errors
@@ -564,7 +558,7 @@ impl ReferenceCache {
     /// (32-aligned interior, halo covering the Gaussian tail). When
     /// `parallel` is set the strips run on the rayon pool capped at
     /// `min(threads, 8)` — same contract as
-    /// [`crate::Ssimulacra2StripConfig::parallel_strips`].
+    /// [`crate::StripConfig::parallel_strips`].
     ///
     /// # Errors
     /// Same as [`Self::compare`].

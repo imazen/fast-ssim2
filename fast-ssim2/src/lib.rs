@@ -1,156 +1,4 @@
-//! # fast-ssim2
-//!
-//! Fast SIMD-accelerated implementation of [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2),
-//! a perceptual image quality metric.
-//!
-//! ## Quick Start
-//!
-//! The simplest way to compare two images:
-//!
-//! ```ignore
-//! use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
-//!
-//! // Wrap decoded 8-bit sRGB pixels (flat u8 rows).
-//! let source = PixelSlice::new(&rgb_bytes, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
-//! let distorted = PixelSlice::new(&rgb_bytes2, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
-//!
-//! let score = compute_ssimulacra2(&source, &distorted)?;
-//! // score: 100 = identical, 90+ = imperceptible, <50 = significant degradation
-//! ```
-//!
-//! ## Score Interpretation
-//!
-//! | Score | Quality |
-//! |-------|---------|
-//! | **100** | Identical (no difference) |
-//! | **90+** | Imperceptible difference |
-//! | **70-90** | Minor, subtle difference |
-//! | **50-70** | Noticeable difference |
-//! | **<50** | Significant degradation |
-//!
-//! ## Supported Input Formats
-//!
-//! Inputs are [`zenpixels::PixelSlice`]s — the descriptor declares
-//! layout + color semantics, and the pipeline scores what the bytes
-//! honestly are:
-//!
-//! | Descriptor | Layout | Path |
-//! |------------|--------|------|
-//! | `RGB8_SRGB`/`RGBA8_SRGB`/`BGRA8_SRGB`/`GRAY8_SRGB`/`RGBX8_SRGB`/`BGRX8_SRGB` | u8 | **LUT-exact** (captured lcms table) |
-//! | `RGB16_SRGB`/`RGBA16_SRGB`/`GRAY16_SRGB` | u16 | sRGB poly (`linear-srgb`) |
-//! | `RGBF32`/`RGBAF32` + `TransferFunction::Srgb` | f32 encoded | sRGB poly (`linear-srgb`) |
-//! | `RGBF32_LINEAR`/`RGBAF32_LINEAR`/`GRAYF32_LINEAR` | f32 | linear planes |
-//!
-//! HDR transfers (PQ/HLG), narrow signal range, and non-BT.709 primaries
-//! are rejected with [`Ssimulacra2Error::UnsupportedInput`] in the SDR
-//! entry points — convert via `zenpixels-convert`, or use
-//! [`compute_ssimulacra2_pu`] (`hdr-pu` feature), which accepts Linear-nits
-//! f32 and Pq/Hlg descriptors natively.
-//!
-//! Alpha channels use the reference's dual-background compositing;
-//! premultiplied alpha is un-multiplied on ingest.
-//!
-//! ### Plain byte buffers
-//!
-//! ```
-//! use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
-//!
-//! // Plain u8 sRGB pixels, 64×64 mid-gray.
-//! let data: Vec<u8> = vec![128; 64 * 64 * 3];
-//! let slice = || {
-//!     PixelSlice::new(&data, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap()
-//! };
-//!
-//! let score = compute_ssimulacra2(&slice(), &slice())?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! ## Batch Comparisons (2x Faster)
-//!
-//! When comparing multiple images against the same reference (e.g., evaluating
-//! different compression levels), precompute the reference data once:
-//!
-//! ```
-//! use fast_ssim2::{Ssimulacra2Reference, PixelDescriptor, PixelSlice};
-//!
-//! // Create test data
-//! let data: Vec<u8> = vec![128; 64 * 64 * 3];
-//! let slice = || {
-//!     PixelSlice::new(&data, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap()
-//! };
-//!
-//! // Precompute reference data (~50% of the work)
-//! let reference = Ssimulacra2Reference::new(&slice())?;
-//!
-//! // Compare multiple distorted versions efficiently
-//! let score = reference.compare(&slice())?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! ## Custom Input Types
-//!
-//! Inputs are [`zenpixels::PixelSlice`]s — self-describing borrowed views
-//! over strided bytes. Wrap a raw buffer with `PixelSlice::new` and a
-//! [`zenpixels::PixelDescriptor`] constant (e.g. `RGB8_SRGB`); `imgref`
-//! types convert via `PixelSlice::from` under the `imgref` feature, and
-//! owned `PixelBuffer`s expose `as_slice()`.
-//!
-//! ```
-//! use fast_ssim2::{PixelDescriptor, PixelSlice};
-//!
-//! // Plain u8 sRGB pixels: flat bytes + the descriptor says the rest.
-//! let data: Vec<u8> = vec![128; 64 * 64 * 3];
-//! let src = PixelSlice::new(&data, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB)?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! Helper functions for sRGB conversion:
-//! For sRGB↔linear conversion helpers, use `linear_srgb::default::*`
-//! directly (same implementation the crate uses internally).
-//!
-//! ## SIMD Configuration
-//!
-//! SIMD is enabled by default via the `archmage` crate, providing cross-platform
-//! acceleration on x86_64 (AVX2, AVX-512), AArch64 (NEON), and WASM (SIMD128).
-//!
-//! | Backend | Speed | Platforms |
-//! |---------|-------|-----------|
-//! | `Scalar` | 1.0× (baseline) | All |
-//! | `Simd` (default) | 2-3× | x86_64, AArch64, WASM |
-//!
-//! To explicitly select a backend:
-//!
-//! ```
-//! use fast_ssim2::{compute_ssimulacra2_with_config, Ssimulacra2Config};
-//!
-//! # let mk = || fast_ssim2::PixelBuffer::from_vec(vec![0u8; 64 * 12], 8, 8,
-//! #     fast_ssim2::PixelDescriptor::RGBF32_LINEAR).unwrap();
-//! # let source = mk(); let distorted = mk();
-//! let score = compute_ssimulacra2_with_config(
-//!     &source.as_slice(),
-//!     &distorted.as_slice(),
-//!     &Ssimulacra2Config::scalar(), // or ::simd()
-//! )?;
-//! # Ok::<(), fast_ssim2::Ssimulacra2Error>(())
-//! ```
-//!
-//! ## Features
-//!
-//! | Feature | Default | Description |
-//! |---------|---------|-------------|
-//! | `imgref` | | Forwards `zenpixels/imgref` — `ImgRef`/`ImgVec` → `PixelSlice` (rgb-crate pixels) |
-//! | `hdr-pu` | | HDR scoring: PU21-integrated encoding (`compute_ssimulacra2_pu`); nits/PQ/HLG inputs |
-//! | `rayon` | | Parallel computation |
-//!
-//! ## Requirements
-//!
-//! - **Image size:** [`compute_ssimulacra2`], [`Ssimulacra2Reference`],
-//!   and [`compute_ssimulacra2_strip`] accept any size from 1×1 up to
-//!   [`MAX_IMAGE_PIXELS`] pixels; inputs below the metric's 8×8 pyramid
-//!   floor are reflect(mirror)-padded before processing (a crate-level
-//!   extension — the reference binary refuses such images).
-//! - **MSRV:** 1.89.0
-
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
 mod input;
@@ -194,14 +42,13 @@ impl SimdImpl {
 
 /// Configuration for SSIMULACRA2 computation.
 ///
-/// The pipeline is a bit-exact port of the reference implementation
-/// (both published `ssimulacra2` binaries agree); [`SimdImpl`] selects
-/// the kernel family — `Scalar` is the audit oracle, `Simd` is
-/// bit-identical and ~7x fewer instructions.
+/// [`crate::SimdImpl`] selects scalar or runtime-dispatched SIMD kernels.
+/// Input conversion follows the pixel descriptor; see the crate-level input
+/// semantics for the scope of reference parity.
 /// Per-call options. `Default` = SIMD kernels, whole-image, unstoppable
 /// — identical to plain [`compute_ssimulacra2`].
 ///
-/// (`Debug` skipped: the `stop` token is a trait object.)
+/// `Debug` reports the presence of a cancellation token without inspecting it.
 #[derive(Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct Ssimulacra2Config<'a> {
@@ -293,7 +140,7 @@ impl<'a> Ssimulacra2Config<'a> {
 /// Errors which can occur when attempting to calculate a SSIMULACRA2 score from two input images.
 ///
 /// `#[non_exhaustive]`: downstream `match` arms must include a wildcard `_ =>`,
-/// so future variants (like [`Ssimulacra2Error::Cancelled`]) can be added without
+/// so future variants can be added without
 /// breaking callers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -302,7 +149,7 @@ pub enum Ssimulacra2Error {
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(&'static str),
 
-    /// An input [`PixelSlice`](crate::PixelSlice)'s descriptor declares
+    /// An input [`crate::PixelSlice`]'s descriptor declares
     /// something the metric can't score honestly — HDR transfers
     /// (PQ/HLG), narrow/limited signal range, or a pixel layout with no
     /// mapping to the SDR sRGB pipeline.
@@ -313,24 +160,11 @@ pub enum Ssimulacra2Error {
     #[error("Source and distorted image width and height must be equal")]
     NonMatchingImageDimensions,
 
-    /// One of the input images is below the metric's 8×8 pyramid floor,
-    /// in a code path that does not reflect-pad.
-    ///
-    /// The primary entry points ([`compute_ssimulacra2`],
-    /// [`Ssimulacra2Reference`], and the strip APIs) reflect-pad sub-8px
-    /// inputs instead of returning this error; it still signals
-    /// `strip_height < 8` and empty inputs.
-    #[error("Images must be at least 8x8 pixels")]
+    /// An input has zero width or height. Nonempty sub-8px images are padded.
+    #[error("Image width and height must be nonzero")]
     InvalidImageSize,
 
-    /// One of the input images exceeds the maximum supported pixel count.
-    ///
-    /// SSIMULACRA2 allocates roughly 24 image-sized `f32` planes of working
-    /// memory plus several downscaled copies of the input, so unbounded
-    /// caller-supplied dimensions are a denial-of-service vector. The current
-    /// cap is [`MAX_IMAGE_PIXELS`] pixels (`width * height`), matching the
-    /// largest practical web-corpus image we test against. Callers that need
-    /// to compare larger images should tile and aggregate.
+    /// Original or padded pixel count exceeds [`crate::MAX_IMAGE_PIXELS`].
     #[error(
         "Image is too large: {actual} pixels exceeds limit of {} pixels",
         MAX_IMAGE_PIXELS
@@ -345,7 +179,7 @@ pub enum Ssimulacra2Error {
     GaussianBlurError,
 
     /// The computation was cooperatively cancelled via the
-    /// [`enough::Stop`] token passed to a `*_with_stop` entry point.
+    /// [`enough::Stop`] token attached with [`crate::Ssimulacra2Config::with_stop`].
     ///
     /// The token is polled at the top of each multi-scale (and, in the
     /// strip APIs, per-strip) outer-loop iteration, never inside the
@@ -355,16 +189,11 @@ pub enum Ssimulacra2Error {
     Cancelled(enough::StopReason),
 }
 
-/// Maximum supported image size in pixels (`width * height`).
+/// Maximum supported original or padded image size in pixels.
 ///
-/// SSIMULACRA2 allocates O(24 * width * height * 4 bytes) of working memory
-/// plus downscaled pyramid copies. At this cap, peak working memory stays
-/// under ~6 GiB on 64-bit hosts, which is high but bounded; callers that
-/// embed fast-ssim2 should treat this as the *maximum* trusted-input size.
-/// Untrusted callers should impose a tighter limit upstream.
-///
-/// 16 384 * 16 384 = 268 435 456 pixels, comfortably above any practical
-/// still-image use case (8K UHD = 33 MP, full-frame 100 MP DSLR sensors fit).
+/// This is a pixel-count limit, not a peak-memory guarantee. Input conversion,
+/// full-image processing, and cached references allocate image-sized buffers.
+/// Applications should apply their own resource limits before scoring.
 pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 
 /// Computes the SSIMULACRA2 score from two [`PixelSlice`]s —
@@ -377,17 +206,21 @@ pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 /// callers pass `&buf.as_slice()`.
 ///
 /// # Color space conventions
-/// - Integer types (`u8`, `u16`) are assumed to be sRGB (gamma-encoded)
-/// - Float types (`f32`) are assumed to be linear RGB
-/// - Grayscale types are expanded to RGB (R=G=B)
+/// The descriptor declares transfer function and primaries explicitly.
+/// SDR integer inputs must declare sRGB; f32 may declare sRGB or Linear.
+/// Grayscale types are expanded to RGB (R=G=B).
 ///
 /// # Example
-/// ```ignore
+/// ```
 /// use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
+/// # let (w, h) = (8u32, 8u32);
+/// # let rgb = vec![128; 8 * 8 * 3];
+/// # let rgb2 = rgb.clone();
 ///
-/// let source = PixelSlice::new(&rgb, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
-/// let distorted = PixelSlice::new(&rgb2, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
+/// let source = PixelSlice::new(&rgb, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB)?;
+/// let distorted = PixelSlice::new(&rgb2, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB)?;
 /// let score = compute_ssimulacra2(&source, &distorted)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn compute_ssimulacra2(
     source: &zenpixels::PixelSlice<'_>,
@@ -403,11 +236,8 @@ pub fn compute_ssimulacra2(
 /// cancellation (`stop` — checked once per scale or per strip, never
 /// per-pixel; returns [`Ssimulacra2Error::Cancelled`]).
 ///
-/// ```ignore
-/// // strip mode, 128-row interiors:
-/// let cfg = Ssimulacra2Config::strips(128);
-/// compute_ssimulacra2_with_config(&a, &b, &cfg)
-/// ```
+/// Use [`crate::Ssimulacra2Config::strips`] for default strip options,
+/// or compose options with [`crate::Ssimulacra2Config::with_strip`].
 pub fn compute_ssimulacra2_with_config(
     source: &zenpixels::PixelSlice<'_>,
     distorted: &zenpixels::PixelSlice<'_>,
@@ -433,8 +263,7 @@ pub fn compute_ssimulacra2_with_config(
 ///   system-gamma 1.2 OOTF on a 1000 cd/m² reference display).
 ///
 /// BT.2020 primaries are *not* gamut-converted — the opsin consumes the
-/// declared primaries directly (same convention as zensim's PU path;
-/// SROCC ~0.69 on UPIQ HDR).
+/// declared primaries directly. Both inputs must use the same primaries.
 ///
 /// **Scores are not comparable to [`compute_ssimulacra2`] scores** — this
 /// is a different perceptual-encoding regime for HDR content.
@@ -447,7 +276,7 @@ pub fn compute_ssimulacra2_pu(
 }
 
 /// [`compute_ssimulacra2_pu`] with custom configuration (kernel +
-/// cancellation; `strip` is ignored — HDR strip is not supported).
+/// cancellation). Strip options return [`crate::Ssimulacra2Error::InvalidConfiguration`].
 #[cfg(feature = "hdr-pu")]
 pub fn compute_ssimulacra2_pu_with_config(
     source: &zenpixels::PixelSlice<'_>,
@@ -789,22 +618,6 @@ mod tests {
     /// Construct a mid-gray linear image.
     fn make_linear_rgb(width: usize, height: usize) -> Vec<[f32; 3]> {
         vec![[0.5f32, 0.5, 0.5]; width * height]
-    }
-
-    #[test]
-    fn test_compute_rejects_too_large_input() {
-        // We can't allocate MAX_IMAGE_PIXELS+1 floats in unit tests, so
-        // verify the error variant renders and the constant is sane.
-        const { assert!(MAX_IMAGE_PIXELS >= 8 * 8) };
-        let err = Ssimulacra2Error::ImageTooLarge {
-            actual: MAX_IMAGE_PIXELS + 1,
-        };
-        let msg = format!("{err}");
-        assert!(msg.contains("too large"), "unexpected message: {msg}");
-        assert!(
-            msg.contains(&MAX_IMAGE_PIXELS.to_string()),
-            "message should reference the limit: {msg}"
-        );
     }
 
     #[test]

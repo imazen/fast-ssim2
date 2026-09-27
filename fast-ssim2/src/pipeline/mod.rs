@@ -50,7 +50,7 @@ pub(crate) use score::score as final_score;
 
 /// Encoded sRGB pixel data fed to the pipeline.
 ///
-/// Returned by [`crate::input::ToLinearRgb::to_encoded_srgb`] for inputs
+/// Produced by the descriptor-driven input funnel for inputs
 /// that carry quantized/encoded sRGB values rather than linear data.
 pub enum EncodedData {
     /// Interleaved RGB u8 triples (e.g. PNG-8 decode).
@@ -259,12 +259,6 @@ fn encoded_f32_to_linear(x: f32) -> f32 {
     crate::input::srgb_to_linear(x.clamp(0.0, 1.0))
 }
 
-/// Encoded-f32 linearization is all-poly: [`source::funnel`] converts
-/// images that are entirely on the u8 grid into [`EncodedData::U8`]
-/// upstream, so this path only ever sees real float content. Keeping it
-/// poly-only preserves monotonicity (no per-pixel snap discontinuity)
-/// — quantized callers get the LUT path by quantizing, or automatically
-/// via the funnel's grid check.
 /// Reference `Downsample` — linear RGB, box 2×2, ceil output size,
 /// clamped edge taps, `sum += ` in iy-outer/ix-inner order, `* 0.25`.
 pub fn downsample_planes(
@@ -491,6 +485,8 @@ impl Kernel {
 
 /// Perceptual-encoding flavor for the XYB stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// Without hdr-pu, all experiment variants intentionally name the cube-root family.
+#[allow(clippy::enum_variant_names)]
 pub enum XybFlavor {
     /// Cube-root opsin — the SDR/reference encoding (hwy `CubeRootAndAdd`
     /// port: exponent seed + 3 Newton, ~6 ulp — bit-exact vs binary).

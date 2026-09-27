@@ -6,7 +6,7 @@ description = "Fast SSIMULACRA2 image quality metric with SIMD acceleration"
 repository = "https://github.com/imazen/fast-ssim2"
 homepage = "https://github.com/imazen/fast-ssim2"
 documentation = "https://docs.rs/fast-ssim2"
-readme = "../README.crates.md"
+readme = "README.md"
 exclude = [
     "test_data",
     "CLAUDE.md",
@@ -50,7 +50,7 @@ sha2 = "0.11.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }
-zenjpeg = { path = "../../zenjpeg/zenjpeg" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "8f703a6eeaad080045aa4c1b3713a25df2e15529" }
 enough = "0.4.4"
 iai-callgrind = "0.16.1"
 # `testable_dispatch` lets benches/tier_isolation.rs disable the baseline SIMD

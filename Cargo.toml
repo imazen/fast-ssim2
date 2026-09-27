@@ -20,4 +20,3 @@ opt-level = 2
 # zenanalyze 0.2.0 isn't on crates.io — zenjpeg resolves it via the
 # upstream git rev (same pin as zenjpeg's own workspace).
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
-zenanalyze-api = { git = "https://github.com/imazen/zenanalyze" }

@@ -1,5 +1,8 @@
 # fast-ssim2 Public API Ablation Report
 
+Historical review of 0.8.2. The current API is described in [README.md](../../README.md);
+this report does not describe the config-driven PixelSlice migration.
+
 **Date:** 2026-06-11
 **Snapshot commit:** 73873c51c5a2 (main) — "fix(package): exclude the api-snapshot test from the published crate"
 **Released version:** 0.8.2 (published 2026-06-10)

@@ -1,5 +1,5 @@
 # fast-ssim2 public API — additions from non-default features
-# features: hdr-pu,imgref,rayon
+# features: hdr-pu,imgref,rayon,unstable-internals
 # (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
 # Encodings: crate-name prefix stripped; auto traits collapse to a
 # count + exceptions; trait impls collapse to one roster line per
@@ -9,20 +9,12 @@
 
 ## summary
 #
-#   free functions                              1
-#   trait roster entries (type × trait)         5
+#   free functions                              2
 #
 # per-module pub lines:
-#   (root)                            1
+#   (root)                            2
 
-## items (1 lines)
+## items (2 lines)
 
-pub fn compute_ssimulacra2_pu_nits(LinearRgbImage, LinearRgbImage) -> core::result::Result<f64, Ssimulacra2Error>
-
-## trait impls (5 types)
-
-imgref::ImgRef<'_, [f32; 3]>: ToLinearRgb
-imgref::ImgRef<'_, [u16; 3]>: ToLinearRgb
-imgref::ImgRef<'_, [u8; 3]>: ToLinearRgb
-imgref::ImgRef<'_, f32>: ToLinearRgb
-imgref::ImgRef<'_, u8>: ToLinearRgb
+pub fn compute_ssimulacra2_pu(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn compute_ssimulacra2_pu_with_config(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<f64, Ssimulacra2Error>

@@ -2,7 +2,12 @@
 
 ## [Unreleased]
 
-### BREAKING CHANGES — migration guide
+### QUEUED BREAKING CHANGES
+
+- Replace the 0.8 input traits and entry-point variants with `PixelSlice` and config-driven calls (c48f08ee).
+- Make configuration structs non-exhaustive and gate kernel access behind `unstable-internals` (e207edf8).
+
+### Migration guide
 
 **Inputs.** Everything takes `&PixelSlice<'_>` (borrowed, self-describing: bytes + dims + stride + `PixelDescriptor`).
 
@@ -21,7 +26,7 @@
 |---|---|
 | `compute_ssimulacra2_with_stop(a, b, stop)` | `compute_ssimulacra2_with_config(a, b, &Ssimulacra2Config::default().with_stop(&stop))` |
 | `compute_ssimulacra2_strip(a, b, h)` | `compute_ssimulacra2_with_config(a, b, &Ssimulacra2Config::strips(h))` |
-| `compute_ssimulacra2_strip_with_config(...)` | `Ssimulacra2Config { strip: Some(StripConfig{..}), .. }` |
+| `compute_ssimulacra2_strip_with_config(...)` | `Ssimulacra2Config::default().with_strip(StripConfig::new(h))` |
 | `ref.compare_with_stop(d, stop)` | `ref.compare_with_config(d, &cfg.with_stop(&stop))` |
 | `ref.compare_strip(d, h)` / `compare_strip_with_*` | `ref.compare_with_config(d, &Ssimulacra2Config::strips(h))` |
 | `compute_frame_ssimulacra2*` (deprecated) | removed — decode to `RGBF32_LINEAR` upstream |
@@ -33,15 +38,22 @@
 **Descriptor gating.** PQ/HLG transfers, narrow signal range, non-BT.709 primaries, and unmapped layouts error with `Ssimulacra2Error::UnsupportedInput` instead of being silently mis-scored — convert via `zenpixels-convert` upstream, or use the PU21 path (`hdr-pu`).
 
 ### Added
-- `zenpixels` mandatory dep; `PixelSlice`/`PixelBuffer`/`PixelDescriptor`/`TransferFunction` re-exported.
-- `Ssimulacra2Config::{strip, stop}` + `StripConfig`; `Ssimulacra2Config::strips(h)` / `.with_stop(&token)` conveniences.
-- Alpha everywhere: RGBA/BGRA/RGBX/BGRX/GrayA layouts; premultiplied alpha un-multiplied on ingest; straight alpha composited onto the reference's 0.1/0.9 dual backgrounds — including cached (`Ssimulacra2Reference`) and linear-f32 inputs.
-- `hdr-pu` feature: `compute_ssimulacra2_pu` — PU21 `banding_glare` replaces the cube-root on absolute-nits planes. Accepts `Linear` f32 (cd/m²) plus `Pq`/`Hlg` u8/u16/f32 descriptors (EOTF-decoded internally; BT.2100 system-gamma 1.2 at a 1000-nit display for HLG). Scores are not comparable to SDR scores. Alpha composites at 20/200 cd/m².
-- `Ssimulacra2Error::{Cancelled, UnsupportedInput}`; `Ssimulacra2Error` is `#[non_exhaustive]`.
+- `zenpixels` mandatory dep; `PixelSlice`/`PixelBuffer`/`PixelDescriptor`/`TransferFunction` re-exported. (c48f08ee)
+- `Ssimulacra2Config::{strip, stop}` + `StripConfig`; `Ssimulacra2Config::strips(h)` / `.with_stop(&token)` conveniences. (c48f08ee)
+- Alpha everywhere: RGBA/BGRA/RGBX/BGRX/GrayA layouts; premultiplied alpha un-multiplied on ingest; straight alpha composited onto the reference's 0.1/0.9 dual backgrounds — including cached (`Ssimulacra2Reference`) and linear-f32 inputs. (c48f08ee)
+- `hdr-pu` feature: `compute_ssimulacra2_pu` — PU21 `banding_glare` replaces the cube-root on absolute-nits planes. Accepts `Linear` f32 (cd/m²) plus `Pq`/`Hlg` u8/u16/f32 descriptors (EOTF-decoded internally; BT.2100 system-gamma 1.2 at a 1000-nit display for HLG). Scores are not comparable to SDR scores. Alpha composites at 20/200 cd/m². (c48f08ee)
+- `Ssimulacra2Error::{Cancelled, UnsupportedInput}`; `Ssimulacra2Error` is `#[non_exhaustive]`. (c48f08ee)
 
-### Internal
-- `pipeline` module is `#[doc(hidden)] pub` for conformance tooling — internals are version-locked and unstable. `XybFlavor::{CubeRootHi,CubeRootLo}` exist as divergence-probe knobs only (measured: no scoring benefit; the near-99 flat-field sawtooth is structural LUT-step geometry, not cbrt error — see `examples/flat_probe.rs`).
+### Changed
+- `pipeline` module is private by default and exposed by `unstable-internals` for conformance tooling — internals are version-locked and unstable. `XybFlavor::{CubeRootHi,CubeRootLo}` exist as divergence-probe knobs only (measured: no scoring benefit; the near-99 flat-field sawtooth is structural LUT-step geometry, not cbrt error — see `examples/flat_probe.rs`).
 - `ssimulacra2_bin` keeps `yuvxyb` (it owns YUV decode → linear); library is yuvxyb-free.
+
+
+### Fixed
+- Decode HDR RGB channel sizes, BGR order, strided alpha, and premultiplied grayscale correctly (65bbce16).
+- Reject original dimension mismatches before padding, honor cached backend/cancellation options, and reject unsupported options (e207edf8).
+- Composite HDR backgrounds in nits and use both backgrounds when only the distorted image has alpha (e207edf8).
+- Expand integer grayscale correctly and preserve RGB8 conversion for fully opaque RGBA8 pixels (e207edf8).
 
 ## [0.8.2] - 2026-06-10
 

@@ -9,51 +9,145 @@
 
 ## summary
 #
-#   pub modules                                 1
-#   pub types (struct/enum/trait/alias)         2
-#   pub consts/statics                          1
-#   inherent methods                            6
-#   struct fields                              11
-#   trait roster entries (type × trait)         7
-#   auto-trait-complete types                   1
+#   pub modules                                 9
+#   pub types (struct/enum/trait/alias)         8
+#   pub consts/statics                          3
+#   free functions                             40
+#   inherent methods                           28
+#   struct fields                              14
+#   enum variants                               9
+#   trait roster entries (type × trait)        22
+#   auto-trait-complete types                   8
 #
 # per-module pub lines:
-#   (root)                           11
-#   reference_data                   10
+#   (root)                            4
+#   pipeline                        107
 
-## items (21 lines)
+## items (111 lines)
 
-pub const reference_data::REFERENCE_CASES: &[reference_data::ReferenceCase]
-pub ScalePlanesView::height: usize
-pub ScalePlanesView::img1_planar: &'a [alloc::vec::Vec<f32>; 3]
-pub ScalePlanesView::mu1: &'a [alloc::vec::Vec<f32>; 3]
-pub ScalePlanesView::sigma1_sq: &'a [alloc::vec::Vec<f32>; 3]
-pub ScalePlanesView::width: usize
-pub reference_data::ReferenceCase::distorted_hash: &'static str
-pub reference_data::ReferenceCase::expected_score: f64
-pub reference_data::ReferenceCase::height: usize
-pub reference_data::ReferenceCase::name: &'static str
-pub reference_data::ReferenceCase::source_hash: &'static str
-pub reference_data::ReferenceCase::width: usize
-pub fn LinearRgbImageError::assert_fields_are_eq(&self)
+pub const pipeline::Kernel::SIMD: Self
+pub const pipeline::Opts::SCALAR: Self
+pub const pipeline::Opts::SIMD: Self
+pub enum pipeline::EncodedData
+pub enum pipeline::Kernel
+pub enum pipeline::XybFlavor
+pub pipeline::EncodedData::F32(alloc::vec::Vec<f32>)
+pub pipeline::EncodedData::U16(alloc::vec::Vec<u16>)
+pub pipeline::EncodedData::U8(alloc::vec::Vec<u8>)
+pub pipeline::EncodedSrgb::alpha: core::option::Option<alloc::vec::Vec<f32>>
+pub pipeline::EncodedSrgb::data: pipeline::EncodedData
+pub pipeline::EncodedSrgb::height: usize
+pub pipeline::EncodedSrgb::width: usize
+pub pipeline::Kernel::Scalar
+pub pipeline::Kernel::Simd
+pub pipeline::Opts::flavor: pipeline::XybFlavor
+pub pipeline::Opts::kernel: pipeline::Kernel
+pub pipeline::XybFlavor::CubeRoot
+pub pipeline::XybFlavor::CubeRootHi
+pub pipeline::XybFlavor::CubeRootLo
+pub pipeline::XybFlavor::Pu21
+pub pipeline::gauss::RecursiveGaussian::d1: [f32; 3]
+pub pipeline::gauss::RecursiveGaussian::mul_in: [[f32; 4]; 3]
+pub pipeline::gauss::RecursiveGaussian::mul_prev2: [[f32; 4]; 3]
+pub pipeline::gauss::RecursiveGaussian::mul_prev: [[f32; 4]; 3]
+pub pipeline::gauss::RecursiveGaussian::n2: [f32; 3]
+pub pipeline::gauss::RecursiveGaussian::radius: i32
+pub pipeline::score::ScaleAggregates::avg_edgediff: [f64; 12]
+pub pipeline::score::ScaleAggregates::avg_ssim: [f64; 6]
 pub fn SimdImpl::assert_fields_are_eq(&self)
 pub fn Ssimulacra2Error::assert_fields_are_eq(&self)
-pub fn Ssimulacra2Reference::scale_planes(&self, usize) -> core::option::Option<ScalePlanesView<'_>>
-pub fn reference_data::ReferenceCase::clone(&self) -> reference_data::ReferenceCase
-pub fn reference_data::ReferenceCase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub mod reference_data
-pub struct ScalePlanesView<'a>
-pub struct reference_data::ReferenceCase
+pub fn StripConfig::assert_fields_are_eq(&self)
+pub fn pipeline::EncodedSrgb::reflect_padded(&self, usize) -> Self
+pub fn pipeline::EncodedSrgb::strip_rows(&self, usize, usize) -> Self
+pub fn pipeline::Kernel::assert_fields_are_eq(&self)
+pub fn pipeline::Kernel::clone(&self) -> pipeline::Kernel
+pub fn pipeline::Kernel::eq(&self, &pipeline::Kernel) -> bool
+pub fn pipeline::Kernel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn pipeline::Kernel::from_impl(SimdImpl) -> Self
+pub fn pipeline::Opts::clone(&self) -> pipeline::Opts
+pub fn pipeline::Opts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn pipeline::XybFlavor::assert_fields_are_eq(&self)
+pub fn pipeline::XybFlavor::clone(&self) -> pipeline::XybFlavor
+pub fn pipeline::XybFlavor::eq(&self, &pipeline::XybFlavor) -> bool
+pub fn pipeline::XybFlavor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn pipeline::blur_planes(&pipeline::gauss::RecursiveGaussian, &[alloc::vec::Vec<f32>; 3], usize, usize) -> [alloc::vec::Vec<f32>; 3]
+pub fn pipeline::blur_planes_into(&pipeline::gauss::RecursiveGaussian, &[alloc::vec::Vec<f32>; 3], usize, usize, &mut [alloc::vec::Vec<f32>; 3], &mut [alloc::vec::Vec<f32>; 3])
+pub fn pipeline::compute_encoded(&pipeline::EncodedSrgb, &pipeline::EncodedSrgb, pipeline::Kernel) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::compute_encoded_stop(&pipeline::EncodedSrgb, &pipeline::EncodedSrgb, pipeline::Kernel, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::compute_planar([alloc::vec::Vec<f32>; 3], [alloc::vec::Vec<f32>; 3], usize, usize) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::compute_planar_stop([alloc::vec::Vec<f32>; 3], [alloc::vec::Vec<f32>; 3], usize, usize, pipeline::Opts, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::compute_planar_with([alloc::vec::Vec<f32>; 3], [alloc::vec::Vec<f32>; 3], usize, usize, pipeline::Kernel) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::downsample_planes(&[alloc::vec::Vec<f32>; 3], usize, usize) -> ([alloc::vec::Vec<f32>; 3], usize, usize)
+pub fn pipeline::gauss::RecursiveGaussian::fast_gaussian_1d(&self, &[f32], &mut [f32])
+pub fn pipeline::gauss::RecursiveGaussian::fast_gaussian_vertical_1d(&self, usize, usize, impl core::ops::function::Fn(usize, usize) -> f32, &mut impl core::ops::function::FnMut(usize, usize, f32))
+pub fn pipeline::gauss::create_recursive_gaussian(f64) -> pipeline::gauss::RecursiveGaussian
+pub fn pipeline::gauss::multiply_planes(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &mut [alloc::vec::Vec<f32>; 3])
+pub fn pipeline::linearize(&pipeline::EncodedSrgb, f32) -> [alloc::vec::Vec<f32>; 3]
+pub fn pipeline::maps::edge_diff_map(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize) -> [f64; 12]
+pub fn pipeline::maps::edge_diff_map_ch(&[f32], &[f32], &[f32], &[f32], &mut [f64; 4])
+pub fn pipeline::maps::maps_fused(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize) -> ([f64; 6], [f64; 12])
+pub fn pipeline::maps::ssim_map(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize) -> [f64; 6]
+pub fn pipeline::maps::ssim_map_opts(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize, bool) -> [f64; 6]
+pub fn pipeline::planes_to_positive_xyb(&mut [alloc::vec::Vec<f32>; 3], usize)
+pub fn pipeline::planes_to_positive_xyb_hi(&mut [alloc::vec::Vec<f32>; 3], usize)
+pub fn pipeline::planes_to_positive_xyb_lo(&mut [alloc::vec::Vec<f32>; 3], usize)
+pub fn pipeline::precompute::ReferenceCache::clone(&self) -> pipeline::precompute::ReferenceCache
+pub fn pipeline::precompute::ReferenceCache::compare(&self, &pipeline::EncodedSrgb) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::precompute::ReferenceCache::compare_stop(&self, &pipeline::EncodedSrgb, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::precompute::ReferenceCache::compare_strip(&self, &pipeline::EncodedSrgb, usize, usize, bool) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::precompute::ReferenceCache::compare_strip_stop(&self, &pipeline::EncodedSrgb, usize, usize, bool, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::precompute::ReferenceCache::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn pipeline::precompute::ReferenceCache::height(&self) -> usize
+pub fn pipeline::precompute::ReferenceCache::new(&pipeline::EncodedSrgb) -> core::result::Result<Self, Ssimulacra2Error>
+pub fn pipeline::precompute::ReferenceCache::new_linear_sets(alloc::vec::Vec<[alloc::vec::Vec<f32>; 3]>, usize, usize, bool) -> core::result::Result<Self, Ssimulacra2Error>
+pub fn pipeline::precompute::ReferenceCache::width(&self) -> usize
+pub fn pipeline::pu21::planes_to_pu_xyb(&mut [alloc::vec::Vec<f32>; 3], usize)
+pub fn pipeline::score::score(&[pipeline::score::ScaleAggregates]) -> f64
+pub fn pipeline::simd::blur_planes_simd(&pipeline::gauss::RecursiveGaussian, &[alloc::vec::Vec<f32>; 3], usize, usize) -> [alloc::vec::Vec<f32>; 3]
+pub fn pipeline::simd::blur_planes_simd_into(&pipeline::gauss::RecursiveGaussian, &[alloc::vec::Vec<f32>; 3], usize, usize, &mut [alloc::vec::Vec<f32>; 3], &mut [alloc::vec::Vec<f32>; 3])
+pub fn pipeline::simd::edge_diff_map_simd(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize) -> [f64; 12]
+pub fn pipeline::simd::edge_sums_fast(usize, usize, usize, &[f32], &[f32], &[f32], &[f32], &mut [f64; 4])
+pub fn pipeline::simd::fast_gaussian_simd(&pipeline::gauss::RecursiveGaussian, &[f32], core::option::Option<&[f32]>, usize, usize, &mut [f32], &mut [f32])
+pub fn pipeline::simd::maps_fused_simd(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize) -> ([f64; 6], [f64; 12])
+pub fn pipeline::simd::planes_to_positive_xyb_hi_simd(&mut [alloc::vec::Vec<f32>; 3])
+pub fn pipeline::simd::planes_to_positive_xyb_lo_simd(&mut [alloc::vec::Vec<f32>; 3])
+pub fn pipeline::simd::planes_to_positive_xyb_simd(&mut [alloc::vec::Vec<f32>; 3])
+pub fn pipeline::simd::ssim_map_inner_scalar(archmage::tokens::ScalarToken, &[f32], &[f32], &[f32], &[f32], &[f32], &mut f64, &mut f64)
+pub fn pipeline::simd::ssim_map_inner_v3(archmage::tokens::generated::x86::X64V3Token, &[f32], &[f32], &[f32], &[f32], &[f32], &mut f64, &mut f64)
+pub fn pipeline::simd::ssim_map_simd(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize) -> [f64; 6]
+pub fn pipeline::strip::compute_encoded_strip(&pipeline::EncodedSrgb, &pipeline::EncodedSrgb, usize, usize, pipeline::Opts, bool) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::strip::compute_encoded_strip_stop(&pipeline::EncodedSrgb, &pipeline::EncodedSrgb, usize, usize, pipeline::Opts, bool, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::strip::compute_linear_strip(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize, usize, usize, pipeline::Opts, bool) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::strip::compute_linear_strip_stop(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize, usize, usize, pipeline::Opts, bool, &dyn enough::Stop) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn pipeline::xyb::linear_rgb_to_xyb_pixel([f32; 3]) -> [f32; 3]
+pub fn pipeline::xyb::linear_rgb_to_xyb_pixel_hi([f32; 3]) -> [f32; 3]
+pub fn pipeline::xyb::linear_rgb_to_xyb_pixel_lo([f32; 3]) -> [f32; 3]
+pub mod pipeline
+pub mod pipeline::gauss
+pub mod pipeline::maps
+pub mod pipeline::precompute
+pub mod pipeline::pu21
+pub mod pipeline::score
+pub mod pipeline::simd
+pub mod pipeline::strip
+pub mod pipeline::xyb
+pub struct pipeline::EncodedSrgb
+pub struct pipeline::Opts
+pub struct pipeline::gauss::RecursiveGaussian
+pub struct pipeline::precompute::ReferenceCache
+pub struct pipeline::score::ScaleAggregates
 
-## trait impls (6 types)
+## trait impls (8 types)
 
-LinearRgbImageError: TrivialClone
 SimdImpl: TrivialClone
-Ssimulacra2Config: TrivialClone
+Ssimulacra2Config<'a>: TrivialClone
 Ssimulacra2Error: TrivialClone
-Ssimulacra2StripConfig: TrivialClone
-reference_data::ReferenceCase: Clone, Debug
+StripConfig: TrivialClone
+pipeline::Kernel: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
+pipeline::Opts: Clone, Copy, Debug, TrivialClone
+pipeline::XybFlavor: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
+pipeline::precompute::ReferenceCache: Clone, Debug
 
 ## auto traits
 
-1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+8 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe

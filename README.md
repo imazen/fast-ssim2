@@ -1,335 +1,198 @@
 # fast-ssim2 [![CI](https://img.shields.io/github/actions/workflow/status/imazen/fast-ssim2/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/fast-ssim2/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/fast-ssim2?style=flat-square)](https://crates.io/crates/fast-ssim2) [![lib.rs](https://img.shields.io/crates/v/fast-ssim2?style=flat-square&label=lib.rs&color=blue)](https://lib.rs/crates/fast-ssim2) [![docs.rs](https://img.shields.io/docsrs/fast-ssim2?style=flat-square)](https://docs.rs/fast-ssim2) [![MSRV](https://img.shields.io/badge/MSRV-1.89-blue?style=flat-square)](https://doc.rust-lang.org/cargo/reference/manifest.html#the-rust-version-field) [![license](https://img.shields.io/crates/l/fast-ssim2?style=flat-square)](#license)
 
-fast-ssim2 is a SIMD-accelerated Rust implementation of [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2), the perceptual image-quality metric developed by Cloudinary and shipped in [libjxl](https://github.com/libjxl/libjxl). It scores a distorted image against a reference on a fixed 0–100 scale. Pure Rust, `#![forbid(unsafe_code)]`, with runtime CPU dispatch (AVX2+FMA on x86-64, NEON on aarch64, SIMD128 on wasm32, scalar elsewhere) via [archmage](https://crates.io/crates/archmage) — no C, no build-time ISA flags. Beyond the one-shot call it offers a precomputed-reference batch path, a bounded-memory strip path for very large images, and cooperative cancellation for servers.
+Fast SIMD-accelerated [SSIMULACRA2](https://github.com/cloudinary/ssimulacra2)
+image quality scoring in safe Rust. Compare two images, or cache a reference
+for repeated comparisons. Runtime dispatch selects SIMD where available;
+`SimdImpl::Scalar` selects the scalar kernels.
 
-## Quick Start
+## Compare images
 
-```toml
-[dependencies]
-fast-ssim2 = { version = "0.8.2", features = ["imgref"] }
-imgref = "1.12"   # for ImgVec/ImgRef — the input container fast-ssim2 takes
-```
-
-Most callers start from a flat, interleaved `Vec<u8>` (RGB8, row-major, no
-padding). Wrap it in an `ImgVec<[u8; 3]>` and pass `.as_ref()`:
+Inputs are borrowed `PixelSlice` views. The descriptor declares the pixel
+layout and color semantics; stride is **bytes per row**, including padding.
+Dimensions are `u32`; stride is `usize`. Both images must have the same original
+width and height, even when they are smaller than 8×8.
 
 ```rust
-use fast_ssim2::compute_ssimulacra2;
-use imgref::ImgVec;
+use fast_ssim2::{PixelDescriptor, PixelSlice, compute_ssimulacra2};
 
-// Your decoded pixels: width * height * 3 bytes, R,G,B,R,G,B, ...
-let source_bytes: Vec<u8> = /* decoded RGB8 of the original */;
-let distorted_bytes: Vec<u8> = /* decoded RGB8 of the compressed/modified version */;
-let (width, height) = (1920, 1080);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (width, height) = (16u32, 16u32);
+    let source_bytes = vec![128u8; width as usize * height as usize * 3];
+    let distorted_bytes = vec![120u8; source_bytes.len()];
+    let stride = width as usize * 3;
+    let source = PixelSlice::new(
+        &source_bytes, width, height, stride, PixelDescriptor::RGB8_SRGB,
+    )?;
+    let distorted = PixelSlice::new(
+        &distorted_bytes, width, height, stride, PixelDescriptor::RGB8_SRGB,
+    )?;
+    let score = compute_ssimulacra2(&source, &distorted)?;
+    println!("SSIMULACRA2: {score}");
+    Ok(())
+}
+```
 
-// Group the flat byte stream into [R, G, B] pixels, then wrap with dimensions.
-let to_img = |bytes: &[u8]| -> ImgVec<[u8; 3]> {
-    let pixels: Vec<[u8; 3]> = bytes
-        .chunks_exact(3)
-        .map(|c| [c[0], c[1], c[2]])
-        .collect();
-    ImgVec::new(pixels, width, height)
+Higher scores indicate closer agreement. Identical images score 100; severe
+distortions can produce negative scores. Scores are not percentages, and a
+single threshold does not guarantee that a difference is invisible.
+
+`PixelBuffer` owners pass `&buffer.as_slice()`. With the `imgref` feature,
+`zenpixels` provides conversions from supported `imgref`/`rgb` pixel types.
+Raw interleaved bytes need no intermediate pixel vector.
+
+## Configure a comparison
+
+`Ssimulacra2Config` combines backend selection, strip options, and cancellation.
+Builders retain the other options. Configuration and error types are
+non-exhaustive so callers can adopt future additions without exhaustive matches
+or struct literals.
+
+```rust
+use fast_ssim2::{
+    PixelDescriptor, PixelSlice, SimdImpl, Ssimulacra2Config, StripConfig,
+    compute_ssimulacra2_with_config,
 };
-let source = to_img(&source_bytes);
-let distorted = to_img(&distorted_bytes);
 
-let score: f64 = compute_ssimulacra2(source.as_ref(), distorted.as_ref())?;
-// 100 = identical, 90+ = imperceptible, <50 = significant degradation
-```
-
-The score is an `f64` on a **fixed 0–100 scale where higher is better** and
-100 is a pixel-identical match (negative scores are possible for severe
-distortion). It is *not* normalized to your inputs — the same number means the
-same perceptual quality across every image pair. `u8`/`u16` pixels are treated
-as **sRGB (gamma-encoded)**; `f32` pixels as **linear RGB** (see
-[Input Types](#input-types)).
-
-## Score Interpretation
-
-| Score | Quality |
-|-------|---------|
-| **100** | Identical |
-| **90+** | Imperceptible difference |
-| **70-90** | Minor, subtle difference |
-| **50-70** | Noticeable difference |
-| **<50** | Significant degradation |
-
-## API Overview
-
-### Primary Functions
-
-All comparison functions return `Result<f64, `[`Ssimulacra2Error`](https://docs.rs/fast-ssim2/latest/fast_ssim2/enum.Ssimulacra2Error.html)`>` — the score is an `f64` on the 0–100 scale above.
-
-| Function | Use Case |
-|----------|----------|
-| [`compute_ssimulacra2`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2.html) | Compare two images (recommended) |
-| [`Ssimulacra2Reference::new`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.Ssimulacra2Reference.html) | Precompute for batch comparisons (~2x faster) |
-| [`compute_ssimulacra2_strip`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2_strip.html) | Very large images with bounded peak memory (horizontal strips) — see [Bounded-Memory Strips](#bounded-memory-strips-very-large-images) |
-| [`compute_ssimulacra2_with_stop`](https://docs.rs/fast-ssim2/latest/fast_ssim2/fn.compute_ssimulacra2_with_stop.html) | Cancellable comparison for servers (and the `*_strip_with_stop` / `compare_with_stop` variants) — see [Cooperative Cancellation](#cooperative-cancellation) |
-
-### Input Types
-
-The input is a [`PixelSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.PixelSlice.html)
-(re-exported `zenpixels::PixelSlice`) — a borrowed view: `bytes + w + h +
-stride + PixelDescriptor`. The descriptor's transfer function picks the path:
-
-| Descriptor | Data | Path |
-|------------|------|------|
-| `*_SRGB` (u8/u16) | gamma-encoded | **LUT-exact** — captured lcms table |
-| `RGBF32`/`RGBAF32` + `TransferFunction::Srgb` | f32 encoded | on-grid values snap to the u8 LUT |
-| `*_LINEAR` (f32) | linear | used as-is |
-
-**Conformance lane:** only the `*_8_SRGB` descriptors are *bit-exact*
-against the `ssimulacra2` reference binary — it decodes everything to
-8-bit sRGB. u16/f32/linear inputs take the sane path (poly/direct) —
-approximate parity, no reference behavior exists to match.
-
-`Rgb`/`Rgba`/`Bgra`/`Rgbx`/`Bgrx`/`Gray`/`GrayA` layouts are all mapped; BGR
-is swapped on ingest. **Alpha** channels composite onto the reference's two
-backgrounds (0.1 / 0.9) — matching the reference binary's behavior — and
-premultiplied alpha is un-multiplied first. HDR transfers (PQ/HLG), narrow
-signal range, and non-BT.709 primaries error with `UnsupportedInput` —
-convert upstream (e.g. `zenpixels-convert`) before scoring.
-
-The input type is [`PixelSlice`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.PixelSlice.html)
-(re-exported `zenpixels::PixelSlice`) — a borrowed, self-describing view:
-bytes + width/height/stride + a
-[`PixelDescriptor`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.PixelDescriptor.html)
-carrying layout, transfer, primaries, alpha mode, and signal range.
-`PixelBuffer` callers pass `&buf.as_slice()`; `imgref`/`rgb`-crate images
-convert via `PixelSlice::from` (the `imgref` feature forwards to
-`zenpixels/imgref`). Non-sRGB sources (YUV video, wide-gamut, HDR) should
-be converted upstream — e.g. with `zenpixels-convert` — before scoring;
-unsupported descriptors error with
-[`Ssimulacra2Error::UnsupportedInput`](https://docs.rs/fast-ssim2/latest/fast_ssim2/enum.Ssimulacra2Error.html)
-rather than silently mis-scoring. The `hdr-pu` feature adds
-`compute_ssimulacra2_pu` — the same pipeline with PU21 encoding of
-absolute luminance (accepts Linear-f32 nits, PQ, and HLG inputs;
-scores are a different regime and not comparable to SDR scores).
-
-## Batch Comparisons
-
-When comparing multiple images against the same reference (e.g., testing compression levels), precompute the reference:
-
-```rust
-use fast_ssim2::Ssimulacra2Reference;
-
-let reference = Ssimulacra2Reference::new(source.as_ref())?;
-
-for distorted in compressed_variants {
-    let score = reference.compare(distorted.as_ref())?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pixels = vec![128u8; 16 * 16 * 3];
+    let image = PixelSlice::new(&pixels, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+    let config = Ssimulacra2Config::default()
+        .with_impl(SimdImpl::Scalar)
+        .with_strip(StripConfig::new(128).with_halo_rows(96));
+    let score = compute_ssimulacra2_with_config(&image, &image, &config)?;
+    assert_eq!(score, 100.0);
+    Ok(())
 }
 ```
 
-For tight loops (encoder RD search, picker training), reuse a
-[`CompareContext`](https://docs.rs/fast-ssim2/latest/fast_ssim2/struct.CompareContext.html)
-so each call after the first allocates nothing:
+`Ssimulacra2Config::strips(rows)` is shorthand for SIMD strip evaluation.
+`StripConfig::default()` requests 256 interior rows and 96 halo rows.
+Interior boundaries are rounded to the pipeline's 32-row alignment.
+A requested height below eight returns `InvalidConfiguration`.
+
+Strip processing reduces the size of intermediate blur and metric buffers.
+**It is not a streaming input API:** input conversion still materializes
+whole-image buffers, and cached comparisons retain the full reference pyramid.
+Total memory therefore still includes terms proportional to image size.
+Strip boundaries and reduction order can change the score slightly; use
+whole-image mode when exact agreement with that mode is required. Increasing
+the halo trades more work for smaller boundary effects.
+
+Parallel strips require `rayon` and explicit
+`StripConfig::with_parallel_strips(true)`. Without the feature this option
+returns `InvalidConfiguration`. Parallel processing runs up to eight strips at
+once and increases intermediate memory use. Results merge in fixed strip order.
+
+## Reuse a reference
 
 ```rust
-let reference = Ssimulacra2Reference::new(source.as_ref())?;
-let mut ctx = reference.compare_context();
+use fast_ssim2::{PixelDescriptor, PixelSlice, Ssimulacra2Reference};
 
-for distorted in compressed_variants {
-    let score = reference.compare_with(&mut ctx, distorted.as_ref())?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let source_bytes = vec![128u8; 16 * 16 * 3];
+    let source = PixelSlice::new(&source_bytes, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+    let reference = Ssimulacra2Reference::new(&source)?;
+    for value in [120u8, 124, 128] {
+        let bytes = vec![value; source_bytes.len()];
+        let distorted = PixelSlice::new(&bytes, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+        println!("{value}: {}", reference.compare(&distorted)?);
+    }
+    Ok(())
 }
 ```
 
-## Cooperative Cancellation
+`new_with_config` accepts backend selection and cancellation. It rejects strip
+options because construction stores a full reference pyramid. Use
+`compare_with_config` to select strips for subsequent comparisons. The reference
+owns its data and can be shared across threads; cloning it copies its buffers.
+Comparisons allocate temporary storage; there is no zero-allocation scratch API.
 
-A server scoring untrusted or large images needs to abort an in-flight
-comparison (request timeout, client disconnect, shutdown). Every slow path has
-a `*_with_stop` variant that takes a cancellation token and returns
-[`Ssimulacra2Error::Cancelled`] if it fires. The token is polled at the
-per-scale (one-shot) / per-strip (strip) **outer-loop boundary — never
-per-pixel** — so cancellation is responsive without adding any cost to the hot
-path.
+## Cancellation
 
-```toml
-[dependencies]
-enough = "0.4.4"          # the Stop trait + Unstoppable no-op
-almost-enough = "0.4.4"   # a concrete, thread-safe Stopper you can cancel
-```
-
-The token is `&dyn enough::Stop`. Pass [`enough::Unstoppable`] for the
-never-cancel path — it is indistinguishable in cost from the plain function:
+Pass an `enough::Stop` token through `with_stop`. Cancellation is checked before
+input conversion and at scale or strip boundaries, including reference
+construction. It does not interrupt an individual conversion or kernel.
+An already-cancelled token returns `Ssimulacra2Error::Cancelled`.
 
 ```rust
-use fast_ssim2::compute_ssimulacra2_with_stop;
-use enough::Unstoppable;
+use fast_ssim2::{PixelDescriptor, PixelSlice, Ssimulacra2Config, compute_ssimulacra2_with_config};
 
-let score: f64 = compute_ssimulacra2_with_stop(
-    source.as_ref(),
-    distorted.as_ref(),
-    &Unstoppable, // never cancels — same result as compute_ssimulacra2
-)?;
-```
-
-For a real cancellation, use an `almost_enough::Stopper` — it is `Clone` (an
-8-byte `Arc<AtomicBool>` handle), so you score on one thread and cancel from
-another (a timeout task, a signal handler, the request's drop guard):
-
-```rust
-use fast_ssim2::{compute_ssimulacra2_with_stop, Ssimulacra2Error};
-use almost_enough::Stopper;
-
-let stopper = Stopper::new();          // live; not yet cancelled
-let cancel_handle = stopper.clone();   // hand this to your timeout/abort logic
-
-// ... on timeout / client disconnect, from any thread:
-// cancel_handle.cancel();
-
-match compute_ssimulacra2_with_stop(source.as_ref(), distorted.as_ref(), &stopper) {
-    Ok(score)                          => { /* use score: f64 */ }
-    Err(Ssimulacra2Error::Cancelled(_)) => { /* aborted early */ }
-    Err(e)                             => return Err(e),
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = vec![128u8; 16 * 16 * 3];
+    let image = PixelSlice::new(&bytes, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+    // Replace Unstoppable with your application's enough::Stop implementation.
+    let stop = enough::Unstoppable;
+    let config = Ssimulacra2Config::default().with_stop(&stop);
+    assert_eq!(compute_ssimulacra2_with_config(&image, &image, &config)?, 100.0);
+    Ok(())
 }
 ```
 
-> `Stopper::cancelled()` builds an already-fired token (handy for tests).
-> For stronger cross-thread ordering guarantees use `almost_enough::SyncStopper`
-> (same `new()` / `cancel()` shape, Acquire/Release instead of Relaxed).
+## Input semantics
 
-The `*_with_stop` variants mirror the whole API surface:
+The descriptor controls interpretation; sample type alone does not determine
+transfer function. SDR entry points require full-range BT.709 primaries and
+support these layouts:
 
-| Cancellable function | Non-cancellable equivalent |
-|----------------------|-----------------------------|
-| `compute_ssimulacra2_with_stop(source, distorted, &stop)` | `compute_ssimulacra2` |
-| `compute_ssimulacra2_strip_with_stop(source, distorted, strip_height, &stop)` | `compute_ssimulacra2_strip` |
-| `Ssimulacra2Reference::compare_with_stop(&self, distorted, &stop)` | `compare` |
-| `Ssimulacra2Reference::compare_strip_with_stop(&self, distorted, strip_height, &stop)` | `compare_strip` |
+| Layout | Transfer | Conversion |
+|---|---|---|
+| RGB8, RGBA8, BGRA8, RGBX8, BGRX8, Gray8 | sRGB | Captured u8 LUT for opaque pixels |
+| RGB16, RGBA16, Gray16 | sRGB | sRGB polynomial |
+| RGBF32, RGBAF32 | sRGB | sRGB polynomial |
+| RGBF32, RGBAF32, GrayF32, GrayAF32 | Linear | Used directly |
 
-All return `Result<f64, Ssimulacra2Error>`. Because `Ssimulacra2Error` is
-`#[non_exhaustive]`, `match` arms over it need a wildcard `_ =>`.
+Integer samples span their full type range. SDR float inputs use normalized
+color values; alpha is normalized to 0–1. Grayscale expands to equal RGB
+channels. Alpha mode comes from the descriptor: straight alpha is composited,
+premultiplied alpha is unmultiplied first, and absent/opaque alpha is ignored.
+Integer unpremultiplication rounds back to integer samples. X channels are
+padding under their standard descriptors.
 
-## Bounded-Memory Strips (very large images)
+If either image has alpha, scoring evaluates two backgrounds and takes the
+lower score. Encoded inputs composite at sRGB values 0.1 and 0.9 before
+linearization; linear inputs composite at the corresponding linear values.
+Only opaque u8 sRGB uses the captured LUT throughout input conversion;
+u16, float, and fractional-alpha conversions do not promise binary-reference
+bit equality.
 
-The full-image path allocates roughly `24 × width × height × 4` bytes of
-working memory (~7 GiB at 40 MP). For very large images, the strip API
-processes the image in horizontal strips and bounds peak memory to
-`~24 × width × (strip_height + halo) × 4` bytes (~220 MiB at 40 MP with
-`strip_height = 256`):
+Unsupported descriptors return `UnsupportedInput`. Convert other color spaces
+upstream, for example with [zenpixels-convert](https://lib.rs/crates/zenpixels-convert).
 
-```rust
-use fast_ssim2::compute_ssimulacra2_strip;
+## HDR
 
-let strip_height: u32 = 256; // rows per strip's interior at scale 0
-let score: f64 = compute_ssimulacra2_strip(source.as_ref(), distorted.as_ref(), strip_height)?;
-```
+The `hdr-pu` feature adds `compute_ssimulacra2_pu` and
+`compute_ssimulacra2_pu_with_config`. These replace the cube-root encoding with
+PU21 and produce **scores that are not interchangeable with SDR scores**.
 
-Signatures:
+Linear f32 inputs are absolute luminance in cd/m² (nits), not normalized SDR.
+PQ inputs decode to nits; HLG uses a 1000-nit reference display with system
+gamma 1.2. Supported layouts include RGB/RGBA, BGRX/BGRA u8, and grayscale
+(u8/u16/f32; grayscale alpha in u16/f32). Signal range must be full.
+Primaries are not converted: callers must supply both images in the same
+primaries. Alpha composites over 20- and 200-nit backgrounds. HDR strip options
+return `InvalidConfiguration`; there is no cached HDR reference API.
 
-```rust
-pub fn compute_ssimulacra2_strip<S, D>(source: S, distorted: D, strip_height: u32)
-    -> Result<f64, Ssimulacra2Error>
-// source/distorted are &PixelSlice (re-exported zenpixels::PixelSlice)
+## Features and limits
 
-// On a precomputed reference (batch):
-impl Ssimulacra2Reference {
-    pub fn compare_strip(&self, distorted: &PixelSlice, strip_height: u32)
-        -> Result<f64, Ssimulacra2Error>;
-}
-```
+| Feature | Purpose |
+|---|---|
+| `imgref` | Forward `zenpixels/imgref` conversions |
+| `rayon` | Parallel kernels and opt-in parallel strips |
+| `hdr-pu` | HDR scoring |
+| `unstable-internals` | Development tools only; exposes kernels without an API stability guarantee |
 
-`strip_height` is the interior row count at scale 0; the working strip is
-`strip_height + 2 * halo_rows` tall (`halo_rows` defaults to `HALO_ROWS_DEFAULT`,
-configurable via `Ssimulacra2StripConfig`). Strip scores match the full-image
-path to within ~1e-3 on the 0–100 scale. Like the one-shot path, strip APIs
-reflect-pad inputs below the 8×8 floor; `strip_height < 8` still errors.
+No features are enabled by default. Runtime SIMD dispatch is available without
+a feature flag. The MSRV is Rust 1.89.
 
-## Features
+Empty images are rejected. Images below 8×8 are reflect-padded, including strip
+and cached paths. Original and padded sizes must fit `MAX_IMAGE_PIXELS`
+(268,435,456 pixels). This is a pixel-count limit, not a memory budget; impose
+smaller application limits where needed. Scoring allocations are infallible.
 
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `imgref` | No | Support for `imgref` image types |
-| `rayon` | No | Parallel computation |
-
-SIMD is always available — runtime CPU detection via [archmage](https://crates.io/crates/archmage) selects the best backend automatically (AVX2+FMA on x86_64, NEON on aarch64, SIMD128 on wasm32, scalar fallback elsewhere).
-
-## Benchmarks
-
-fast-ssim2 picks its SIMD backend at runtime (no `-C target-cpu=native`
-needed — that is what ships). On an AMD Ryzen 9 7950X the SIMD path runs the
-full metric about **3.5× faster than fast-ssim2's own scalar path**, and the
-recursive-Gaussian blur — the dominant kernel — about **7×** faster; on an
-Ampere Altra (Neoverse-N1) the full-metric SIMD speedup is ~1.2×. The batch
-[`compare_with`](#batch-comparisons) path is a further ~1.1–1.25× over
-`compare()` by reusing working buffers.
-
-Reproduce on your own hardware:
-
-```bash
-cargo bench -p fast-ssim2                      # self timings, 320×240 … 4K
-cargo run --release --example benchmark_simd   # scalar vs SIMD, per kernel
-```
-
-Full methodology, environment, the pinned competitor version, and the committed
-result files: **[benchmarks/README.md](https://github.com/imazen/fast-ssim2/blob/main/benchmarks/README.md)**.
-
-<!-- crates.io:skip-start -->
-Measured on a Ryzen 9 7950X (Rust 1.93, runtime dispatch, no `target-cpu=native`)
-with [`examples/precompute_benchmark.rs`](https://github.com/imazen/fast-ssim2/blob/main/fast-ssim2/examples/precompute_benchmark.rs),
-median of two 20-iteration runs (commit `c419b3d`, 2026-05-21):
-
-| Resolution | one-shot | warm `compare` | warm `compare_with` |
-|------------|----------|----------------|---------------------|
-| 256×256    | 7.8 ms   | 6.1 ms   | 4.2 ms   |
-| 512×512    | 33.4 ms  | 25.4 ms  | 20.5 ms  |
-| 1024×1024  | 148.6 ms | 107.6 ms | 90.4 ms  |
-| 1920×1080  | 279.8 ms | 207.4 ms | 160.3 ms |
-
-These figures are transcribed from committed result files under
-[`benchmarks/`](https://github.com/imazen/fast-ssim2/tree/main/benchmarks) — they
-describe those runs, not a fresh measurement on your machine. Run the commands
-above for your own numbers.
-
-To check **score agreement** against the upstream
-[`ssimulacra2`](https://crates.io/crates/ssimulacra2) crate (pinned to 0.5.1),
-the `compare_tool` binary prints both scores and their delta on a pair of images:
-
-```bash
-cd compare_tool && cargo run --release -- source.png distorted.png
-```
-<!-- crates.io:skip-end -->
-
-## Advanced Usage
-
-### Custom Input Types
-
-```rust
-use fast_ssim2::{PixelDescriptor, PixelSlice};
-
-// A borrowed view over any contiguous u8 sRGB buffer:
-let slice = PixelSlice::new(&rgb_bytes, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
-// Non-standard stride or other formats — same constructor, other descriptors.
-```
-
-### Explicit SIMD Backend
-
-```rust
-use fast_ssim2::{compute_ssimulacra2_with_config, Ssimulacra2Config};
-
-// Force scalar (for comparison/debugging)
-let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::scalar())?;
-
-// Use SIMD (default — auto-detects AVX2/NEON/WASM128)
-let score = compute_ssimulacra2_with_config(source, distorted, Ssimulacra2Config::simd())?;
-```
-
-### From Raw Buffers
-
-```rust
-use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
-
-// pixels: &[u8] — flat sRGB u8 RGB rows
-let source = PixelSlice::new(&pixels, w, h, w * 3, PixelDescriptor::RGB8_SRGB)?;
-let score = compute_ssimulacra2(&source, &distorted)?;
-```
-
-
-## Requirements
-
-- **Image size:** 1x1 up to 16384x16384-equivalent pixels (`MAX_IMAGE_PIXELS`); inputs below the metric's 8x8 pyramid floor are reflect(mirror)-padded. The strip APIs (`compute_ssimulacra2_strip`, `compare_strip`) target very large images and require at least 8x8.
-- **MSRV:** 1.89.0
+See [CHANGELOG.md](https://github.com/imazen/fast-ssim2/blob/main/CHANGELOG.md)
+for the 0.8-to-0.9 migration, and
+[benchmarks/README.md](https://github.com/imazen/fast-ssim2/blob/main/benchmarks/README.md)
+for recorded benchmark methodology and results.
 
 ## Credits
 
