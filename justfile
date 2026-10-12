@@ -68,3 +68,19 @@ check-compare:
 # Interleaved RGB8 timings against published 0.7.1 and 0.8.2.
 version-audit:
     cargo run --release --manifest-path tools/version-audit/Cargo.toml
+
+# Inventory breaking changes relative to the latest crates.io release.
+semver-audit:
+    cargo semver-checks check-release -p fast-ssim2 --baseline-version 0.8.2 --release-type patch
+
+# Reproduce SIMD128 conformance failures without relaxing assertions.
+test-wasm:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=/" RUSTFLAGS="-C target-feature=+simd128 -Dwarnings" cargo test --target wasm32-wasip1 -p fast-ssim2 --features imgref --lib -- --nocapture
+
+# Conformance for targets without hardware FMA.
+test-i686:
+    cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu --lib
+
+# Compare published scores with hashed, captured C++ RGB8 fixtures.
+version-parity:
+    AUDIT_PARITY=1 cargo run --release --manifest-path tools/version-audit/Cargo.toml

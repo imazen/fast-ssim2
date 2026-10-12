@@ -1,0 +1,58 @@
+Revision: 99b98cb96928caf37f93aa837180988520b09430
+CPU: AMD Ryzen 9 7900X; Rust 1.99.0; single-threaded; runtime dispatch
+Command: TMPDIR=$HOME/tmp AUDIT_ROUNDS=30 run-heavy --mem 16G --jobs 8 -- tools/version-audit/target/release/ssim2-version-audit --group=320x240
+Note: CLI --group was not applied by this harness; all three sizes ran. The corrected harness uses AUDIT_GROUP.
+
+run-heavy: mem-cap=16G (cgroup, hard) jobs=8/24 avail=23829MiB :: tools/version-audit/target/release/ssim2-version-audit --group=320x240
+score	320	240	0.7.1	95.407835898658
+score	320	240	0.8.2	95.448678048368
+score	320	240	current	95.314412378051
+score	1920	1080	0.7.1	93.130905699999
+score	1920	1080	0.8.2	93.182832784615
+score	1920	1080	current	92.784283201448
+score	3840	2160	0.7.1	91.669499690012
+score	3840	2160	0.8.2	91.645589263393
+score	3840	2160	current	91.079283391822
+[zenbench] calibration: int=0.19ns/iter mem_bw=114.4GiB/s mem_lat=9.5ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.19ns/iter, TSC: 4.691 ticks/ns (invariant)
+[zenbench] results → /home/lilith/tmp/zenbench/zenbench-1791793063-349d55.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1791793063-349d55
+  git: 4d66e3a039a2ac4ee237d0c70a55d917f9a25e46
+═══════════════════════════════════════════════════════════════
+
+  rgb8_320x240  30 rounds × 1 calls
+              mean ±mad ms  95% CI vs base  
+  ├─ 0.7.1     4.3 ±0.0ms  [+8.1%–+10.5%]  
+  ├─ 0.8.2     3.9 ±0.1ms  [3.8–3.9]ms     
+  ╰─ current   4.2 ±0.0ms  [+7.6%–+9.8%]   
+
+  0.8.2    █████████████████████████████████████████████████████████ 3.89ms
+  current  ██████████████████████████████████████████████████████████████ 4.23ms
+  0.7.1    ██████████████████████████████████████████████████████████████ 4.25ms
+
+  rgb8_1920x1080  30 rounds × 1 calls
+               mean ±mad ms  95% CI vs base   
+  ├─ 0.7.1     229.6 ±6.5ms  [+3.9%–+6.4%]    
+  ├─ 0.8.2     218.5 ±5.3ms  [216.5–220.4]ms  
+  ╰─ current   194.9 ±0.9ms  [-11.8%–-9.7%]   
+
+  current  ███████████████████████████████████████████████████ 194.87ms
+  0.8.2    █████████████████████████████████████████████████████████ 218.49ms
+  0.7.1    ████████████████████████████████████████████████████████████ 229.63ms
+
+  rgb8_3840x2160  30 rounds × 1 calls
+                mean ±mad ms  95% CI vs base   
+  ├─ 0.7.1     994.3 ±12.4ms  [+4.8%–+5.4%]    
+  ├─ 0.8.2      948.0 ±7.9ms  [945.7–950.2]ms  
+  ╰─ current    883.6 ±5.8ms  [-7.0%–-6.6%]    
+
+  current  █████████████████████████████████████████████████████ 883.55ms
+  0.8.2    █████████████████████████████████████████████████████████ 947.99ms
+  0.7.1    ████████████████████████████████████████████████████████████ 994.27ms
+
+  total: 112.5s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+run-heavy: done rc=0 116s | peak-RSS 1.22GiB | min-avail 22488MiB | peak-load 2.21

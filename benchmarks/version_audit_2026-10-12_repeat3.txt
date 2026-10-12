@@ -1,0 +1,36 @@
+Revision: 4d66e3a039a2ac4ee237d0c70a55d917f9a25e46
+Command: TMPDIR=$HOME/tmp AUDIT_GROUP=320x240 AUDIT_ROUNDS=30 run-heavy --mem 16G --jobs 8 -- cargo run --release --manifest-path tools/version-audit/Cargo.toml
+CPU: AMD Ryzen 9 7900X; Rust 1.99.0; single-threaded; runtime dispatch
+
+score	320	240	0.7.1	95.407835898658
+score	320	240	0.8.2	95.448678048368
+score	320	240	current	95.314412378051
+score	1920	1080	0.7.1	93.130905699999
+score	1920	1080	0.8.2	93.182832784615
+score	1920	1080	current	92.784283201448
+score	3840	2160	0.7.1	91.669499690012
+score	3840	2160	0.8.2	91.645589263393
+score	3840	2160	current	91.079283391822
+[zenbench] calibration: int=0.18ns/iter mem_bw=119.3GiB/s mem_lat=9.1ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.18ns/iter, TSC: 4.691 ticks/ns (invariant)
+[zenbench] results → /home/lilith/tmp/zenbench/zenbench-1791793257-34ac0c.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1791793257-34ac0c
+  git: 4d66e3a039a2ac4ee237d0c70a55d917f9a25e46
+═══════════════════════════════════════════════════════════════
+
+  rgb8_320x240  30 rounds × 1 calls
+              mean ±mad ms  95% CI vs base   
+  ├─ 0.7.1     4.3 ±0.1ms  [+16.6%–+18.4%]  
+  ├─ 0.8.2     3.7 ±0.1ms  [3.6–3.9]ms      
+  ╰─ current   4.3 ±0.1ms  [+15.8%–+17.4%]  
+
+  0.8.2    █████████████████████████████████████████████████████ 3.72ms
+  current  █████████████████████████████████████████████████████████████ 4.31ms
+  0.7.1    ██████████████████████████████████████████████████████████████ 4.34ms
+
+  total: 1.1s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+run-heavy: done rc=0 8s | peak-RSS 1.21GiB | min-avail 23023MiB | peak-load 0.81
