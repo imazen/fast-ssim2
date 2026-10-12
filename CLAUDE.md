@@ -57,3 +57,12 @@ The explicit-token SIMD constructors and slice partitioning use magetypes
 0.9.30 `_t` spellings. The previous names are deprecated in 0.9.30 and
 failed CI under `-D warnings`; their replacements delegate to the same
 operations. Keep the manifest minimum at the version providing these methods.
+
+## Known Bugs: portable fused arithmetic (2026-10-12)
+
+Fixed: the pipeline's vector multiply-add used non-fused arithmetic on WASM
+and scalar SIMD emulation while the scalar backend used fused `f32::mul_add`.
+The unchanged exact cached-reference assertion failed on WASM and i686 CI.
+Using magetypes 0.9.30 `mul_add_portable` preserves native FMA and supplies
+fused software arithmetic on these targets. Native, WASM SIMD128 and cross
+i686 library tests pass with the original assertions.

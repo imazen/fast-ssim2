@@ -200,12 +200,12 @@ macro_rules! cube_root_and_add_x8 {
         let mut r = m2;
         for _ in 0..3 {
             let r2 = r * r;
-            r = (-xa_3).mul_add(r2 * r2, k4_3 * r);
+            r = (-xa_3).mul_add_portable(r2 * r2, k4_3 * r);
         }
         let r2 = r * r;
-        r = k1_3.mul_add((-xa).mul_add(r2 * r2, r), r);
+        r = k1_3.mul_add_portable((-xa).mul_add_portable(r2 * r2, r), r);
         let r2 = r * r;
-        r2.mul_add($x, $add)
+        r2.mul_add_portable($x, $add)
     }};
 }
 
@@ -246,9 +246,9 @@ fn planes_to_positive_xyb_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2
         let g = f32x8::load_t(token, &p1c[i]);
         let b = f32x8::load_t(token, &p2c[i]);
 
-        let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
-        let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
-        let mx2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias)));
+        let mx0 = m00.mul_add_portable(r, m01.mul_add_portable(g, m02.mul_add_portable(b, bias)));
+        let mx1 = m10.mul_add_portable(r, m11.mul_add_portable(g, m12.mul_add_portable(b, bias)));
+        let mx2 = m20.mul_add_portable(r, m21.mul_add_portable(g, m22.mul_add_portable(b, bias)));
 
         let m0 = cube_root_and_add_x8!(token, mx0.max(zero), add_bias);
         let m1 = cube_root_and_add_x8!(token, mx1.max(zero), add_bias);
@@ -304,9 +304,9 @@ fn planes_to_positive_xyb_lo_inner(token: Token, p0: &mut [f32], p1: &mut [f32],
         let g = f32x8::load_t(token, &p1c[i]);
         let b = f32x8::load_t(token, &p2c[i]);
 
-        let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
-        let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
-        let mx2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias)));
+        let mx0 = m00.mul_add_portable(r, m01.mul_add_portable(g, m02.mul_add_portable(b, bias)));
+        let mx1 = m10.mul_add_portable(r, m11.mul_add_portable(g, m12.mul_add_portable(b, bias)));
+        let mx2 = m20.mul_add_portable(r, m21.mul_add_portable(g, m22.mul_add_portable(b, bias)));
 
         let m0 = mx0.max(zero).cbrt_lowp() + add_bias;
         let m1 = mx1.max(zero).cbrt_lowp() + add_bias;
@@ -360,9 +360,9 @@ fn planes_to_positive_xyb_hi_inner(token: Token, p0: &mut [f32], p1: &mut [f32],
         let g = f32x8::load_t(token, &p1c[i]);
         let b = f32x8::load_t(token, &p2c[i]);
 
-        let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
-        let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
-        let mx2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, bias)));
+        let mx0 = m00.mul_add_portable(r, m01.mul_add_portable(g, m02.mul_add_portable(b, bias)));
+        let mx1 = m10.mul_add_portable(r, m11.mul_add_portable(g, m12.mul_add_portable(b, bias)));
+        let mx2 = m20.mul_add_portable(r, m21.mul_add_portable(g, m22.mul_add_portable(b, bias)));
 
         let m0 = mx0.max(zero).cbrt_midp() + add_bias;
         let m1 = mx1.max(zero).cbrt_midp() + add_bias;
@@ -494,9 +494,9 @@ fn fast_gaussian_1d_rows_inner(
             let mut o_arr = [zero; 3];
             for i in 0..3 {
                 let mut o = sum * splat(rg.mul_in[i][0]);
-                o = splat(rg.mul_prev2[i][0]).mul_add(prev2[i], o);
+                o = splat(rg.mul_prev2[i][0]).mul_add_portable(prev2[i], o);
                 prev2[i] = prev[i];
-                o = splat(rg.mul_prev[i][0]).mul_add(prev[i], o);
+                o = splat(rg.mul_prev[i][0]).mul_add_portable(prev[i], o);
                 prev[i] = o;
                 o_arr[i] = o;
             }
@@ -539,16 +539,16 @@ fn fast_gaussian_1d_rows_inner(
             for i in 0..3 {
                 let mut acc = sum[0] * splat(rg.mul_in[i][j]);
                 if j >= 1 {
-                    acc = splat(rg.mul_in[i][j - 1]).mul_add(sum[1], acc);
+                    acc = splat(rg.mul_in[i][j - 1]).mul_add_portable(sum[1], acc);
                 }
                 if j >= 2 {
-                    acc = splat(rg.mul_in[i][j - 2]).mul_add(sum[2], acc);
+                    acc = splat(rg.mul_in[i][j - 2]).mul_add_portable(sum[2], acc);
                 }
                 if j >= 3 {
-                    acc = splat(rg.mul_in[i][j - 3]).mul_add(sum[3], acc);
+                    acc = splat(rg.mul_in[i][j - 3]).mul_add_portable(sum[3], acc);
                 }
-                acc = splat(rg.mul_prev2[i][j]).mul_add(prev2[i], acc);
-                acc = splat(rg.mul_prev[i][j]).mul_add(prev[i], acc);
+                acc = splat(rg.mul_prev2[i][j]).mul_add_portable(prev2[i], acc);
+                acc = splat(rg.mul_prev[i][j]).mul_add_portable(prev[i], acc);
                 o4[j][i] = acc;
             }
         }
@@ -623,12 +623,18 @@ fn fast_gaussian_vertical_x8_inner(
         let n_1 = (ctr.wrapping_sub(1)) % 4;
         let n_2 = (ctr.wrapping_sub(2)) % 4;
 
-        let y1 =
-            splat(rg.n2[0]).mul_add(sum, splat(-rg.d1[0]).mul_add(y1_hist[n_1], -y1_hist[n_2]));
-        let y3 =
-            splat(rg.n2[1]).mul_add(sum, splat(-rg.d1[1]).mul_add(y3_hist[n_1], -y3_hist[n_2]));
-        let y5 =
-            splat(rg.n2[2]).mul_add(sum, splat(-rg.d1[2]).mul_add(y5_hist[n_1], -y5_hist[n_2]));
+        let y1 = splat(rg.n2[0]).mul_add_portable(
+            sum,
+            splat(-rg.d1[0]).mul_add_portable(y1_hist[n_1], -y1_hist[n_2]),
+        );
+        let y3 = splat(rg.n2[1]).mul_add_portable(
+            sum,
+            splat(-rg.d1[1]).mul_add_portable(y3_hist[n_1], -y3_hist[n_2]),
+        );
+        let y5 = splat(rg.n2[2]).mul_add_portable(
+            sum,
+            splat(-rg.d1[2]).mul_add_portable(y5_hist[n_1], -y5_hist[n_2]),
+        );
         y1_hist[n_0] = y1;
         y3_hist[n_0] = y3;
         y5_hist[n_0] = y5;
@@ -895,7 +901,7 @@ pub fn ssim_map_inner(
         let mu12 = a * b;
         let dm = a - b;
         // official f32 sequence, lane-wise
-        let num_m = (-dm).mul_add(dm, one);
+        let num_m = (-dm).mul_add_portable(dm, one);
         let num_s = two * (f32x8::load_t(token, &s12c[i]) - mu12) + kc2;
         let denom_s =
             (f32x8::load_t(token, &s11c[i]) - mu11) + (f32x8::load_t(token, &s22c[i]) - mu22) + kc2;
@@ -1080,7 +1086,7 @@ fn maps_fused_inner(
         let mu22 = b * b;
         let mu12 = a * b;
         let dm = a - b;
-        let num_m = (-dm).mul_add(dm, one);
+        let num_m = (-dm).mul_add_portable(dm, one);
         let num_s = two * (f32x8::load_t(token, &s12c[i]) - mu12) + kc2;
         let denom_s =
             (f32x8::load_t(token, &s11c[i]) - mu11) + (f32x8::load_t(token, &s22c[i]) - mu22) + kc2;
