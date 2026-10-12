@@ -73,3 +73,11 @@ Current release/API/configuration findings and committed measurements live in
 `docs/release-audit-2026-10-12.md`. RGB8 agrees much more closely with the stored
 C++ fixtures; normalized f32 input does not have the same residual. Small-image
 and removed scratch-reuse performance regressions are measured there.
+
+## Registry release: 0.9.0 (2026-10-12)
+
+Published to crates.io from `76131b44350aac1a1a68e2c9493945f9cd9ea9eb`,
+tagged `v0.9.0-release`. GitHub release was created before publication; all
+12 CI jobs passed, including Intel macOS. A fresh registry download's VCS
+metadata and SIMD source match the release commit. The older August `v0.9.0`
+GitHub tag is preserved and was never the registry release source.

@@ -1,5 +1,9 @@
 # Release audit: 2026-10-12
 
+**Published:** [fast-ssim2 0.9.0](https://crates.io/crates/fast-ssim2/0.9.0),
+with the [GitHub release](https://github.com/imazen/fast-ssim2/releases/tag/v0.9.0-release).
+The findings below include observations taken before publication.
+
 Issue [8](https://github.com/imazen/fast-ssim2/issues/8) was already fixed by
 96ad1ab: the HDR path supplies an `Unstoppable` when no stop token is configured.
 The HDR feature compiles and its library tests pass. The issue is closed.
@@ -127,3 +131,15 @@ The approved release is 0.9.0, relative to the published 0.8.2 baseline. The
 existing August `v0.9.0` GitHub tag is preserved; `v0.9.0-release` identifies
 the registry release source. The user approved README review, documentation
 corrections and publication, and explicitly waived the macOS Intel CI gate.
+
+## Publication verification
+
+Release source: `76131b44350aac1a1a68e2c9493945f9cd9ea9eb`.
+All 12 jobs in [release-commit CI](https://github.com/imazen/fast-ssim2/actions/runs/38230095777)
+passed, including macOS Intel, so the authorized waiver was not needed.
+
+`cargo publish -p fast-ssim2` completed successfully. A fresh
+`cargo read fast-ssim2==0.9.0 --path-only` download records the same commit in
+`.cargo_vcs_info.json`; its SIMD source matches the released tree byte for byte.
+`cargo search fast-ssim2 --limit 1` reports 0.9.0. The GitHub release existed
+before the registry upload. The August `v0.9.0` tag remains unchanged.

@@ -84,3 +84,12 @@ test-i686:
 # Compare published scores with hashed, captured C++ RGB8 fixtures.
 version-parity:
     AUDIT_PARITY=1 cargo run --release --manifest-path tools/version-audit/Cargo.toml
+
+# Package and verify library contents without uploading.
+package-check:
+    cargo publish -p fast-ssim2 --dry-run
+
+# Permit the audited breaking transition from the published 0.8.2 baseline.
+# Rust 1.98.1 emits the rustdoc JSON format supported by semver-checks 0.49.
+semver-major-audit:
+    RUSTUP_TOOLCHAIN=1.98.1 cargo semver-checks check-release -p fast-ssim2 --baseline-version 0.8.2 --release-type major
