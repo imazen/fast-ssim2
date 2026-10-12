@@ -66,3 +66,10 @@ The unchanged exact cached-reference assertion failed on WASM and i686 CI.
 Using magetypes 0.9.30 `mul_add_portable` preserves native FMA and supplies
 fused software arithmetic on these targets. Native, WASM SIMD128 and cross
 i686 library tests pass with the original assertions.
+
+## Release and performance audit (2026-10-12)
+
+Current release/API/configuration findings and committed measurements live in
+`docs/release-audit-2026-10-12.md`. RGB8 agrees much more closely with the stored
+C++ fixtures; normalized f32 input does not have the same residual. Small-image
+and removed scratch-reuse performance regressions are measured there.
