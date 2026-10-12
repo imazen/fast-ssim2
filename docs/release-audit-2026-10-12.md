@@ -113,3 +113,16 @@ Before publishing:
 The optional CLI video feature remains a separate release check: it requires
 system decoder libraries and is not exercised by default CLI CI. Historical
 build-break notes are not evidence that the current feature builds.
+
+## Final preparation checks
+
+At 52d8ed30, `cargo test --all-targets` and `cargo test --doc` pass. The full
+[gate output](../benchmarks/release_gate_2026-10-12.txt) is retained; its
+development-profile benchmark samples are not used as regression evidence.
+Resource record: `peak-RSS 1.29GiB | min-avail 19213MiB | peak-load 5.46`.
+The public API snapshots pass `ZEN_API_DOC=check`. Library publication dry-run
+packages and verifies successfully; no upload occurred.
+
+The release proposal is 0.10.0, with CLI dependency update 0.6.2. The user
+explicitly waived the macOS Intel CI gate for this release. README review and
+version approval remain required before applying that proposal and publishing.

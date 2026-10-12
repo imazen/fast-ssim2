@@ -1,0 +1,302 @@
+Revision: 52d8ed30c87abdf8f7f992fa37a4f408f3f91447; source changes match dfd9bc1.
+Host: Ryzen 9 7900X; development profile.
+Bench output is retained for validation, not performance comparisons: zero completed rounds.
+run-heavy: mem-cap=16G (cgroup, hard) jobs=8/24 avail=23776MiB :: bash -c cargo fmt -p fast-ssim2 -p fast-ssim2-cli --check && cargo fmt --manifest-path tools/version-audit/Cargo.toml && cargo test --all-targets && cargo test --doc
+   Compiling rustix v1.1.4
+   Compiling derive_more-impl v2.1.1
+   Compiling itoa v1.0.18
+   Compiling av-data v0.4.4
+   Compiling serde_json v1.0.151
+   Compiling yuvxyb v0.5.0
+   Compiling terminal_size v0.4.4
+   Compiling fs4 v1.1.0
+   Compiling derive_more v2.1.1
+   Compiling zenbench v0.1.9
+   Compiling iai-callgrind-macros v0.6.1
+   Compiling crossterm v0.29.0
+   Compiling iai-callgrind v0.16.1
+   Compiling fast-ssim2-cli v0.6.1 (/home/lilith/work/zen/fast-ssim2/ssimulacra2_bin)
+   Compiling fast-ssim2 v0.9.0 (/home/lilith/work/zen/fast-ssim2/fast-ssim2)
+    Finished `test` profile [optimized + debuginfo] target(s) in 9.58s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/fast_ssim2-56ae5073d5b57ae4)
+
+running 15 tests
+test pipeline::simd::stop_tests::cancelled_blur_does_not_start_horizontal_pass ... ok
+test source::tests::dimensions_validate_before_allocation ... ok
+test source::tests::linear_alpha_and_gray_respect_layout_and_stride ... ok
+test precompute::tests::test_sub_8_reference_rejects_mismatched_dims ... ok
+test tests::test_compute_accepts_small_input ... ok
+test precompute::tests::test_sub_8_reference_pads_and_matches_one_shot ... ok
+test tests::test_sub_8_reflect_pads_instead_of_rejecting ... ok
+test precompute::tests::test_precompute_linear_source ... ok
+test precompute::tests::test_precompute_metadata ... ok
+test precompute::tests::test_precompute_dimension_mismatch ... ok
+test tests::test_ssimulacra2 ... ok
+test tests::test_u8_and_f32_encoded_nearly_agree ... ok
+test precompute::tests::test_precompute_matches_full_compute ... ok
+test precompute::tests::test_precompute_scalar_matches_default ... ok
+test tests::test_scalar_kernels_bit_identical ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s
+
+     Running tests/api_contracts.rs (target/debug/deps/api_contracts-961c02295122b6af)
+
+running 6 tests
+test cancelled_reference_construction_and_unsupported_options_error ... ok
+test parallel_strips_require_rayon ... ok
+test original_dimensions_must_match_on_every_path ... ok
+test extreme_strip_height_is_clamped_without_overflow ... ok
+test integer_grayscale_matches_expanded_rgb ... ok
+test alpha_only_on_distorted_side_matches_explicit_opaque_reference ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/cancellation.rs (target/debug/deps/cancellation-141188463c894b6a)
+
+running 8 tests
+test strip_cancelled_token_returns_cancelled ... ok
+test one_shot_cancelled_token_returns_cancelled ... ok
+test cached_ref_compare_cancelled_returns_cancelled ... ok
+test cached_ref_strip_cancelled_returns_cancelled ... ok
+test cached_ref_compare_unstoppable_computes_score ... ok
+test one_shot_unstoppable_token_computes_score ... ok
+test cached_ref_strip_unstoppable_computes_score ... ok
+test strip_unstoppable_token_computes_score ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hdr_pu.rs (target/debug/deps/hdr_pu-73955a04f10b6623)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/implementation_parity.rs (target/debug/deps/implementation_parity-3e05592907ed666d)
+
+running 6 tests
+test test_identical_images_exact_score_simd ... ok
+test test_jpeg_quality_ordering_preserved ... ok
+test test_simd_scores_pinned_real_images ... ok
+test test_identical_images_exact_score_scalar ... ok
+test test_scalar_vs_simd_real_images ... ok
+test test_scalar_vs_simd_synthetic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/jpeg_quality_reference.rs (target/debug/deps/jpeg_quality_reference-0dba61b68297673d)
+
+running 3 tests
+test test_jpeg_quality_vs_cpp_reference ... ok
+test test_jpeg_quality_ordering ... ok
+test test_jpeg_quality_with_configs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/reference_parity.rs (target/debug/deps/reference_parity-af43af029fe9a180)
+
+running 1 test
+test test_reference_parity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests/simd_consistency.rs (target/debug/deps/simd_consistency-011b3887de28cb9e)
+
+running 2 tests
+test ssimulacra2_roundtrip_stability ... ok
+test ssimulacra2_all_tiers_within_tolerance ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/strip_parity.rs (target/debug/deps/strip_parity-008e65a85a38bc7c)
+
+running 11 tests
+test strip_height_below_minimum_errors ... ok
+test strip_height_zero_errors ... ok
+test strip_mismatched_dimensions_errors ... ok
+test strip_parity_identical_64x64 ... ok
+test strip_parity_different_64x64 ... ok
+test warm_ref_strip_matches_compare ... ok
+test warm_ref_strip_parity_512x512 ... ok
+test strip_parallel_deterministic ... ok
+test strip_parity_512x512_jpeg_like ... ok
+test strip_parity_official_512x512 ... ok
+test strip_parity_1024x1024_jpeg_like ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running benches/benches.rs (target/debug/deps/benches-a6ad9506f90a09da)
+
+  ssimulacra2_320x240  0 rounds ⚠ only 0 rounds
+           mean ±mad ms  95% CI vs base 
+  ╰─ _      11.6 ±0.0ms  [11.4–11.8]ms  
+
+  ssimulacra2_1920x1080  0 rounds ⚠ only 0 rounds
+            mean ±mad ms  95% CI vs base   
+  ╰─ _      418.9 ±7.4ms  [416.5–421.4]ms  
+
+  ssimulacra2_3840x2160  0 rounds ⚠ only 0 rounds
+            mean ±mad s  95% CI vs base
+  ╰─ _      1.69 ±0.02s  [1.68–1.70]s  
+[zenbench] calibration: int=0.18ns/iter mem_bw=39.5GiB/s mem_lat=9.3ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.18ns/iter, TSC: 4.691 ticks/ns (invariant)
+[zenbench] results → /home/lilith/tmp/zenbench/zenbench-1791794253-352998.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1791794253-352998
+  git: 52d8ed30c87abdf8f7f992fa37a4f408f3f91447
+═══════════════════════════════════════════════════════════════
+
+  total: 0.0s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+     Running benches/blur_stride.rs (target/debug/deps/blur_stride-4d4b4a7e6a0dc8b3)
+
+  stride_1024x512  0 rounds ⚠ only 0 rounds
+                          mean ±mad ms  95% CI vs base 
+  ╰─ compute_ssimulacra2   50.1 ±0.1ms  [50.0–50.1]ms  
+
+  stride_1032x512  0 rounds ⚠ only 0 rounds
+                          mean ±mad ms  95% CI vs base 
+  ╰─ compute_ssimulacra2   80.5 ±2.9ms  [79.7–81.2]ms  
+
+  stride_4096x256  0 rounds ⚠ only 0 rounds
+                           mean ±mad ms  95% CI vs base   
+  ╰─ compute_ssimulacra2   120.5 ±0.3ms  [120.4–120.5]ms  
+
+  stride_4104x256  0 rounds ⚠ only 0 rounds
+                           mean ±mad ms  95% CI vs base   
+  ╰─ compute_ssimulacra2   156.2 ±1.1ms  [155.8–156.5]ms  
+[zenbench] calibration: int=0.18ns/iter mem_bw=40.9GiB/s mem_lat=9.3ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.18ns/iter, TSC: 4.691 ticks/ns (invariant)
+[zenbench] results → /home/lilith/tmp/zenbench/zenbench-1791794294-354e0e.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1791794294-354e0e
+  git: 52d8ed30c87abdf8f7f992fa37a4f408f3f91447
+═══════════════════════════════════════════════════════════════
+
+  total: 0.0s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+     Running benches/tier_isolation.rs (target/debug/deps/tier_isolation-951359788d114e03)
+[tier_isolation] comparing v3(avx2) vs forced scalar
+
+  ssimulacra2/320x240  0 rounds ⚠ only 0 rounds
+               mean ±mad ms  95% CI vs base 
+  ├─ v3(avx2)   13.0 ±0.0ms  [13.0–13.0]ms  
+  ╰─ scalar     77.2 ±0.1ms                 
+
+  v3(avx2)  ██████████ 12.97ms
+  scalar    ████████████████████████████████████████████████████████████ 77.21ms
+
+  ssimulacra2/1920x1080  0 rounds ⚠ only 0 rounds
+                 mean ±mad ms  95% CI vs base   
+  ├─ v3(avx2)    386.8 ±1.0ms  [386.5–387.0]ms  
+  ╰─ scalar     2147.2 ±3.0ms                   
+
+  v3(avx2)  ███████████ 386.77ms
+  scalar    ███████████████████████████████████████████████████████████ 2.15s
+
+  ssimulacra2/3840x2160  0 rounds ⚠ only 0 rounds
+                mean ±mad s  95% CI vs base
+  ├─ v3(avx2)   1.64 ±0.00s  [1.63–1.64]s  
+  ╰─ scalar     8.65 ±0.04s                
+
+  v3(avx2)  ████████████ 1.64s
+  scalar    ██████████████████████████████████████████████████████████████ 8.65s
+[zenbench] calibration: int=0.18ns/iter mem_bw=38.8GiB/s mem_lat=9.3ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.18ns/iter, TSC: 4.690 ticks/ns (invariant)
+[zenbench] results → /home/lilith/tmp/zenbench/zenbench-1791795599-3550a0.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1791795599-3550a0
+  git: 52d8ed30c87abdf8f7f992fa37a4f408f3f91447
+═══════════════════════════════════════════════════════════════
+
+  total: 0.0s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+     Running unittests examples/arch_scores.rs (target/debug/examples/arch_scores-0f5ef00285596cd0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/bench4k.rs (target/debug/examples/bench4k-d7671746476046a0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/capture_cpp_reference.rs (target/debug/examples/capture_cpp_reference-d56eeacbbb64141f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/flat_field_probe.rs (target/debug/examples/flat_field_probe-9c35cac5095c3582)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/mem_strip.rs (target/debug/examples/mem_strip-5788925539eb0750)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/parity_report.rs (target/debug/examples/parity_report-37139e7249d342c8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/peak_memory.rs (target/debug/examples/peak_memory-ca3483d8ba819d57)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/photo_parity.rs (target/debug/examples/photo_parity-d8f693e29796303e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/precompute_benchmark.rs (target/debug/examples/precompute_benchmark-ba17d17bbfc47be3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/strip_memory.rs (target/debug/examples/strip_memory-e0e6d0b26a08baf8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/fast_ssim2_cli-7bc98ba98b65747a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.10s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+   Doc-tests fast_ssim2
+
+running 5 tests
+test fast-ssim2/src/../README.md - (line 117) ... ok
+test fast-ssim2/src/../README.md - (line 15) ... ok
+test fast-ssim2/src/../README.md - (line 50) ... ok
+test fast-ssim2/src/lib.rs - compute_ssimulacra2 (line 216) ... ok
+test fast-ssim2/src/../README.md - (line 88) ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.15s; merged doctests compilation took 0.14s
+run-heavy: done rc=0 1575s | peak-RSS 1.29GiB | min-avail 19213MiB | peak-load 5.46
