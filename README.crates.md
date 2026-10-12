@@ -110,8 +110,9 @@ Comparisons allocate temporary storage; there is no zero-allocation scratch API.
 ## Cancellation
 
 Pass an `enough::Stop` token through `with_stop`. Cancellation is checked before
-input conversion and at scale or strip boundaries, including reference
-construction. It does not interrupt an individual conversion or kernel.
+input conversion, between row or pixel chunks inside expensive passes, and at
+scale or strip boundaries, including reference construction. It does not
+interrupt a pixel operation already in progress.
 An already-cancelled token returns `Ssimulacra2Error::Cancelled`.
 
 ```rust

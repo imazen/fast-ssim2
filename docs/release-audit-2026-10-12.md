@@ -123,6 +123,7 @@ Resource record: `peak-RSS 1.29GiB | min-avail 19213MiB | peak-load 5.46`.
 The public API snapshots pass `ZEN_API_DOC=check`. Library publication dry-run
 packages and verifies successfully; no upload occurred.
 
-The release proposal is 0.10.0, with CLI dependency update 0.6.2. The user
-explicitly waived the macOS Intel CI gate for this release. README review and
-version approval remain required before applying that proposal and publishing.
+The approved release is 0.9.0, relative to the published 0.8.2 baseline. The
+existing August `v0.9.0` GitHub tag is preserved; `v0.9.0-release` identifies
+the registry release source. The user approved README review, documentation
+corrections and publication, and explicitly waived the macOS Intel CI gate.

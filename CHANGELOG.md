@@ -4,6 +4,13 @@
 
 ### QUEUED BREAKING CHANGES
 
+## [0.9.0] - 2026-10-12
+
+Published from the `v0.9.0-release` tag. The earlier `v0.9.0` GitHub tag
+remains as a historical development snapshot; it was not published to crates.io.
+
+### Breaking changes
+
 - Replace the released input traits and entry-point variants with `PixelSlice` and config-driven calls (84b9cf81).
 - Make configuration structs non-exhaustive and gate kernel access behind `unstable-internals` (cb966fd6).
 
@@ -11,7 +18,7 @@
 
 **Inputs.** Everything takes `&PixelSlice<'_>` (borrowed, self-describing: bytes + dims + stride + `PixelDescriptor`).
 
-| Released API | Upcoming API |
+| 0.8.2 / earlier development API | 0.9.0 API |
 |---|---|
 | `imgref::ImgRef<[u8;3]>` | `PixelSlice::new(&bytes, w, h, w*3, PixelDescriptor::RGB8_SRGB)` or `PixelSlice::from(img)` (imgref feature → `zenpixels/imgref`, rgb-crate pixels) |
 | `yuvxyb::Rgb<f32>` | `PixelSlice`/`PixelBuffer` + `RGBF32.with_transfer(TransferFunction::Srgb)` — or quantize to u8 for the bit-exact LUT path |
@@ -22,7 +29,7 @@
 
 **Calls.** The `_with_stop` / `_strip*` matrix collapsed into `Ssimulacra2Config`:
 
-| Released API | Upcoming API |
+| 0.8.2 / earlier development API | 0.9.0 API |
 |---|---|
 | `compute_ssimulacra2_with_stop(a, b, stop)` | `compute_ssimulacra2_with_config(a, b, &Ssimulacra2Config::default().with_stop(&stop))` |
 | `compute_ssimulacra2_strip(a, b, h)` | `compute_ssimulacra2_with_config(a, b, &Ssimulacra2Config::strips(h))` |
@@ -61,7 +68,7 @@
 Previous-engine development measurements and implementation notes are preserved
 in [the historical record](docs/history/pre-pixelslice-development.md).
 
-## [0.9.0] - 2026-08-31
+## Historical development snapshot - 2026-08-31
 
 `fast-ssim2-cli` goes to **0.6.1** in the same commit. Its own surface — the `image <source> <distorted>` command and the score it prints — is unchanged, so it takes a patch bump, not a leading-digit one; only its `fast-ssim2` requirement moved (`0.8` → `0.9.0`).
 
