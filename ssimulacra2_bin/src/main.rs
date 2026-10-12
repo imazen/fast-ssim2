@@ -170,11 +170,7 @@ fn compare_images(source: &Path, distorted: &Path) {
     let source = image::open(source).expect("Failed to open source file");
     let distorted = image::open(distorted).expect("Failed to open distorted file");
 
-    let source_data = source
-        .to_rgb32f()
-        .chunks_exact(3)
-        .map(|chunk| [chunk[0], chunk[1], chunk[2]])
-        .collect::<Vec<_>>();
+    let source_data = source.to_rgb32f().as_chunks::<3>().0.to_vec();
 
     let source_data = zenpixels::PixelSlice::new(
         bytemuck::cast_slice::<f32, u8>(source_data.as_flattened()),
@@ -185,11 +181,7 @@ fn compare_images(source: &Path, distorted: &Path) {
     )
     .expect("Failed to build source PixelSlice");
 
-    let distorted_data = distorted
-        .to_rgb32f()
-        .chunks_exact(3)
-        .map(|chunk| [chunk[0], chunk[1], chunk[2]])
-        .collect::<Vec<_>>();
+    let distorted_data = distorted.to_rgb32f().as_chunks::<3>().0.to_vec();
 
     let distorted_data = zenpixels::PixelSlice::new(
         bytemuck::cast_slice::<f32, u8>(distorted_data.as_flattened()),

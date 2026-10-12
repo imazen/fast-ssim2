@@ -50,3 +50,10 @@ dimension checks, and ignored-configuration bugs have regression coverage and
 fixes in this migration. No unresolved instance of those review findings is
 being carried as a limitation. Strip/full numerical differences remain an
 explicit property of the strip algorithm, not a bit-equality guarantee.
+
+## Dependency compatibility (2026-10-12)
+
+The explicit-token SIMD constructors and slice partitioning use magetypes
+0.9.30 `_t` spellings. The previous names are deprecated in 0.9.30 and
+failed CI under `-D warnings`; their replacements delegate to the same
+operations. Keep the manifest minimum at the version providing these methods.

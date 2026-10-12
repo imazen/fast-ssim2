@@ -184,16 +184,16 @@ macro_rules! cube_root_and_add_x8 {
         const K4_3: f32 = 4.0 / 3.0;
         let token = $token;
         let xa = $x;
-        let xa_3 = GenericF32x8::splat(token, K1_3) * xa;
-        let k4_3 = GenericF32x8::splat(token, K4_3);
-        let k1_3 = GenericF32x8::splat(token, K1_3);
+        let xa_3 = GenericF32x8::splat_t(token, K1_3) * xa;
+        let k4_3 = GenericF32x8::splat_t(token, K4_3);
+        let k1_3 = GenericF32x8::splat_t(token, K1_3);
 
         let m1 = xa.bitcast_to_i32();
-        let m2 = GenericI32x8::splat(token, K_EXP_BIAS)
-            - (m1.shr_arithmetic::<23>() * GenericI32x8::splat(token, K_EXP_MUL));
+        let m2 = GenericI32x8::splat_t(token, K_EXP_BIAS)
+            - (m1.shr_arithmetic::<23>() * GenericI32x8::splat_t(token, K_EXP_MUL));
         let m2 = GenericF32x8::blend(
-            m1.simd_eq(GenericI32x8::zero(token)).bitcast_f32x8(),
-            GenericI32x8::zero(token).bitcast_f32x8(),
+            m1.simd_eq(GenericI32x8::zero_t(token)).bitcast_f32x8(),
+            GenericI32x8::zero_t(token).bitcast_f32x8(),
             m2.bitcast_f32x8(),
         );
 
@@ -218,33 +218,33 @@ fn planes_to_positive_xyb_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2
     type f32x8 = GenericF32x8<Token>;
     let n = p0.len();
     let chunks = n / 8;
-    let (p0c, p0r) = f32x8::partition_slice_mut(token, p0);
-    let (p1c, p1r) = f32x8::partition_slice_mut(token, p1);
-    let (p2c, p2r) = f32x8::partition_slice_mut(token, p2);
+    let (p0c, p0r) = f32x8::partition_slice_mut_t(token, p0);
+    let (p1c, p1r) = f32x8::partition_slice_mut_t(token, p1);
+    let (p2c, p2r) = f32x8::partition_slice_mut_t(token, p2);
     let _ = chunks;
 
-    let m00 = f32x8::splat(token, M00);
-    let m01 = f32x8::splat(token, M01);
-    let m02 = f32x8::splat(token, M02);
-    let m10 = f32x8::splat(token, M10);
-    let m11 = f32x8::splat(token, M11);
-    let m12 = f32x8::splat(token, M12);
-    let m20 = f32x8::splat(token, M20);
-    let m21 = f32x8::splat(token, M21);
-    let m22 = f32x8::splat(token, M22);
-    let bias = f32x8::splat(token, BIAS);
-    let zero = f32x8::zero(token);
-    let half = f32x8::splat(token, 0.5);
-    let add_bias = f32x8::splat(token, NEG_CBRT_BIAS);
-    let c055 = f32x8::splat(token, 0.55);
-    let c14 = f32x8::splat(token, 14.0);
-    let c042 = f32x8::splat(token, 0.42);
-    let c001 = f32x8::splat(token, 0.01);
+    let m00 = f32x8::splat_t(token, M00);
+    let m01 = f32x8::splat_t(token, M01);
+    let m02 = f32x8::splat_t(token, M02);
+    let m10 = f32x8::splat_t(token, M10);
+    let m11 = f32x8::splat_t(token, M11);
+    let m12 = f32x8::splat_t(token, M12);
+    let m20 = f32x8::splat_t(token, M20);
+    let m21 = f32x8::splat_t(token, M21);
+    let m22 = f32x8::splat_t(token, M22);
+    let bias = f32x8::splat_t(token, BIAS);
+    let zero = f32x8::zero_t(token);
+    let half = f32x8::splat_t(token, 0.5);
+    let add_bias = f32x8::splat_t(token, NEG_CBRT_BIAS);
+    let c055 = f32x8::splat_t(token, 0.55);
+    let c14 = f32x8::splat_t(token, 14.0);
+    let c042 = f32x8::splat_t(token, 0.42);
+    let c001 = f32x8::splat_t(token, 0.01);
 
     for i in 0..p0c.len() {
-        let r = f32x8::load(token, &p0c[i]);
-        let g = f32x8::load(token, &p1c[i]);
-        let b = f32x8::load(token, &p2c[i]);
+        let r = f32x8::load_t(token, &p0c[i]);
+        let g = f32x8::load_t(token, &p1c[i]);
+        let b = f32x8::load_t(token, &p2c[i]);
 
         let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
         let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
@@ -277,32 +277,32 @@ fn planes_to_positive_xyb_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2
 #[magetypes(v3, neon, wasm128, scalar)]
 fn planes_to_positive_xyb_lo_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2: &mut [f32]) {
     type f32x8 = GenericF32x8<Token>;
-    let (p0c, p0r) = f32x8::partition_slice_mut(token, p0);
-    let (p1c, p1r) = f32x8::partition_slice_mut(token, p1);
-    let (p2c, p2r) = f32x8::partition_slice_mut(token, p2);
+    let (p0c, p0r) = f32x8::partition_slice_mut_t(token, p0);
+    let (p1c, p1r) = f32x8::partition_slice_mut_t(token, p1);
+    let (p2c, p2r) = f32x8::partition_slice_mut_t(token, p2);
 
-    let m00 = f32x8::splat(token, M00);
-    let m01 = f32x8::splat(token, M01);
-    let m02 = f32x8::splat(token, M02);
-    let m10 = f32x8::splat(token, M10);
-    let m11 = f32x8::splat(token, M11);
-    let m12 = f32x8::splat(token, M12);
-    let m20 = f32x8::splat(token, M20);
-    let m21 = f32x8::splat(token, M21);
-    let m22 = f32x8::splat(token, M22);
-    let bias = f32x8::splat(token, BIAS);
-    let zero = f32x8::zero(token);
-    let half = f32x8::splat(token, 0.5);
-    let add_bias = f32x8::splat(token, NEG_CBRT_BIAS);
-    let c055 = f32x8::splat(token, 0.55);
-    let c14 = f32x8::splat(token, 14.0);
-    let c042 = f32x8::splat(token, 0.42);
-    let c001 = f32x8::splat(token, 0.01);
+    let m00 = f32x8::splat_t(token, M00);
+    let m01 = f32x8::splat_t(token, M01);
+    let m02 = f32x8::splat_t(token, M02);
+    let m10 = f32x8::splat_t(token, M10);
+    let m11 = f32x8::splat_t(token, M11);
+    let m12 = f32x8::splat_t(token, M12);
+    let m20 = f32x8::splat_t(token, M20);
+    let m21 = f32x8::splat_t(token, M21);
+    let m22 = f32x8::splat_t(token, M22);
+    let bias = f32x8::splat_t(token, BIAS);
+    let zero = f32x8::zero_t(token);
+    let half = f32x8::splat_t(token, 0.5);
+    let add_bias = f32x8::splat_t(token, NEG_CBRT_BIAS);
+    let c055 = f32x8::splat_t(token, 0.55);
+    let c14 = f32x8::splat_t(token, 14.0);
+    let c042 = f32x8::splat_t(token, 0.42);
+    let c001 = f32x8::splat_t(token, 0.01);
 
     for i in 0..p0c.len() {
-        let r = f32x8::load(token, &p0c[i]);
-        let g = f32x8::load(token, &p1c[i]);
-        let b = f32x8::load(token, &p2c[i]);
+        let r = f32x8::load_t(token, &p0c[i]);
+        let g = f32x8::load_t(token, &p1c[i]);
+        let b = f32x8::load_t(token, &p2c[i]);
 
         let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
         let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
@@ -333,32 +333,32 @@ fn planes_to_positive_xyb_lo_inner(token: Token, p0: &mut [f32], p1: &mut [f32],
 #[magetypes(v3, neon, wasm128, scalar)]
 fn planes_to_positive_xyb_hi_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2: &mut [f32]) {
     type f32x8 = GenericF32x8<Token>;
-    let (p0c, p0r) = f32x8::partition_slice_mut(token, p0);
-    let (p1c, p1r) = f32x8::partition_slice_mut(token, p1);
-    let (p2c, p2r) = f32x8::partition_slice_mut(token, p2);
+    let (p0c, p0r) = f32x8::partition_slice_mut_t(token, p0);
+    let (p1c, p1r) = f32x8::partition_slice_mut_t(token, p1);
+    let (p2c, p2r) = f32x8::partition_slice_mut_t(token, p2);
 
-    let m00 = f32x8::splat(token, M00);
-    let m01 = f32x8::splat(token, M01);
-    let m02 = f32x8::splat(token, M02);
-    let m10 = f32x8::splat(token, M10);
-    let m11 = f32x8::splat(token, M11);
-    let m12 = f32x8::splat(token, M12);
-    let m20 = f32x8::splat(token, M20);
-    let m21 = f32x8::splat(token, M21);
-    let m22 = f32x8::splat(token, M22);
-    let bias = f32x8::splat(token, BIAS);
-    let zero = f32x8::zero(token);
-    let half = f32x8::splat(token, 0.5);
-    let add_bias = f32x8::splat(token, NEG_CBRT_BIAS);
-    let c055 = f32x8::splat(token, 0.55);
-    let c14 = f32x8::splat(token, 14.0);
-    let c042 = f32x8::splat(token, 0.42);
-    let c001 = f32x8::splat(token, 0.01);
+    let m00 = f32x8::splat_t(token, M00);
+    let m01 = f32x8::splat_t(token, M01);
+    let m02 = f32x8::splat_t(token, M02);
+    let m10 = f32x8::splat_t(token, M10);
+    let m11 = f32x8::splat_t(token, M11);
+    let m12 = f32x8::splat_t(token, M12);
+    let m20 = f32x8::splat_t(token, M20);
+    let m21 = f32x8::splat_t(token, M21);
+    let m22 = f32x8::splat_t(token, M22);
+    let bias = f32x8::splat_t(token, BIAS);
+    let zero = f32x8::zero_t(token);
+    let half = f32x8::splat_t(token, 0.5);
+    let add_bias = f32x8::splat_t(token, NEG_CBRT_BIAS);
+    let c055 = f32x8::splat_t(token, 0.55);
+    let c14 = f32x8::splat_t(token, 14.0);
+    let c042 = f32x8::splat_t(token, 0.42);
+    let c001 = f32x8::splat_t(token, 0.01);
 
     for i in 0..p0c.len() {
-        let r = f32x8::load(token, &p0c[i]);
-        let g = f32x8::load(token, &p1c[i]);
-        let b = f32x8::load(token, &p2c[i]);
+        let r = f32x8::load_t(token, &p0c[i]);
+        let g = f32x8::load_t(token, &p1c[i]);
+        let b = f32x8::load_t(token, &p2c[i]);
 
         let mx0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, bias)));
         let mx1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, bias)));
@@ -420,7 +420,7 @@ macro_rules! gather8p {
     ($token:expr, $p:expr, $pb:expr, $row0:expr, $w:expr, $x:expr) => {{
         let (p, pb, row0, w, x) = ($p, $pb, $row0, $w, $x);
         match pb {
-            Some(b) => GenericF32x8::from_array(
+            Some(b) => GenericF32x8::from_array_t(
                 $token,
                 [
                     p[row0 * w + x] * b[row0 * w + x],
@@ -433,7 +433,7 @@ macro_rules! gather8p {
                     p[(row0 + 7) * w + x] * b[(row0 + 7) * w + x],
                 ],
             ),
-            None => GenericF32x8::from_array(
+            None => GenericF32x8::from_array_t(
                 $token,
                 [
                     p[row0 * w + x],
@@ -468,12 +468,12 @@ fn fast_gaussian_1d_rows_inner(
     type f32x8 = GenericF32x8<Token>;
     let w = width as i64;
     let n_radius = rg.radius as i64;
-    let zero = f32x8::zero(token);
+    let zero = f32x8::zero_t(token);
 
     let mut prev = [zero, zero, zero];
     let mut prev2 = [zero, zero, zero];
 
-    let splat = |v: f32| f32x8::splat(token, v);
+    let splat = |v: f32| f32x8::splat_t(token, v);
 
     macro_rules! step_bounds {
         ($n:expr) => {{
@@ -587,11 +587,11 @@ fn fast_gaussian_vertical_x8_inner(
 ) {
     type f32x8 = GenericF32x8<Token>;
     let n_rad = rg.radius as i64;
-    let zero = f32x8::zero(token);
-    let splat = |v: f32| f32x8::splat(token, v);
+    let zero = f32x8::zero_t(token);
+    let splat = |v: f32| f32x8::splat_t(token, v);
 
     let load = |row: usize| -> f32x8 {
-        f32x8::from_slice(token, &input[row * width + x0..row * width + x0 + 8])
+        f32x8::from_slice_t(token, &input[row * width + x0..row * width + x0 + 8])
     };
 
     let mut y1_hist = [zero; 4];
@@ -877,28 +877,28 @@ pub fn ssim_map_inner(
     sum1: &mut f64,
 ) {
     type f32x8 = GenericF32x8<Token>;
-    let (m1c, m1r) = f32x8::partition_slice(token, m1);
-    let (m2c, m2r) = f32x8::partition_slice(token, m2);
-    let (s11c, s11r) = f32x8::partition_slice(token, s11);
-    let (s22c, s22r) = f32x8::partition_slice(token, s22);
-    let (s12c, s12r) = f32x8::partition_slice(token, s12);
-    let kc2 = f32x8::splat(token, super::maps::K_C2);
-    let two = f32x8::splat(token, 2.0);
-    let one = f32x8::splat(token, 1.0);
+    let (m1c, m1r) = f32x8::partition_slice_t(token, m1);
+    let (m2c, m2r) = f32x8::partition_slice_t(token, m2);
+    let (s11c, s11r) = f32x8::partition_slice_t(token, s11);
+    let (s22c, s22r) = f32x8::partition_slice_t(token, s22);
+    let (s12c, s12r) = f32x8::partition_slice_t(token, s12);
+    let kc2 = f32x8::splat_t(token, super::maps::K_C2);
+    let two = f32x8::splat_t(token, 2.0);
+    let one = f32x8::splat_t(token, 1.0);
 
     let mut i_base = 0usize;
     for i in 0..m1c.len() {
-        let a = f32x8::load(token, &m1c[i]);
-        let b = f32x8::load(token, &m2c[i]);
+        let a = f32x8::load_t(token, &m1c[i]);
+        let b = f32x8::load_t(token, &m2c[i]);
         let mu11 = a * a;
         let mu22 = b * b;
         let mu12 = a * b;
         let dm = a - b;
         // official f32 sequence, lane-wise
         let num_m = (-dm).mul_add(dm, one);
-        let num_s = two * (f32x8::load(token, &s12c[i]) - mu12) + kc2;
+        let num_s = two * (f32x8::load_t(token, &s12c[i]) - mu12) + kc2;
         let denom_s =
-            (f32x8::load(token, &s11c[i]) - mu11) + (f32x8::load(token, &s22c[i]) - mu22) + kc2;
+            (f32x8::load_t(token, &s11c[i]) - mu11) + (f32x8::load_t(token, &s22c[i]) - mu22) + kc2;
         let q = num_m * num_s / denom_s;
         let qa = q.to_array();
         for l in 0..8 {
@@ -940,22 +940,22 @@ fn edge_diff_map_inner(
 ) {
     type f32x8 = GenericF32x8<Token>;
     type f64x4 = magetypes::simd::generic::f64x4<Token>;
-    let (i1c, i1r) = f32x8::partition_slice(token, img1);
-    let (m1c, m1r) = f32x8::partition_slice(token, mu1);
-    let (i2c, i2r) = f32x8::partition_slice(token, img2);
-    let (m2c, m2r) = f32x8::partition_slice(token, mu2);
-    let one4 = f64x4::splat(token, 1.0);
+    let (i1c, i1r) = f32x8::partition_slice_t(token, img1);
+    let (m1c, m1r) = f32x8::partition_slice_t(token, mu1);
+    let (i2c, i2r) = f32x8::partition_slice_t(token, img2);
+    let (m2c, m2r) = f32x8::partition_slice_t(token, mu2);
+    let one4 = f64x4::splat_t(token, 1.0);
 
     for i in 0..i1c.len() {
         // |img - mu| per lane, widened to f64 for the division.
-        let da = (f32x8::load(token, &i2c[i]) - f32x8::load(token, &m2c[i]))
+        let da = (f32x8::load_t(token, &i2c[i]) - f32x8::load_t(token, &m2c[i]))
             .abs()
             .to_array();
-        let db = (f32x8::load(token, &i1c[i]) - f32x8::load(token, &m1c[i]))
+        let db = (f32x8::load_t(token, &i1c[i]) - f32x8::load_t(token, &m1c[i]))
             .abs()
             .to_array();
         // widen: two f64x4 each
-        let num_lo = f64x4::from_array(
+        let num_lo = f64x4::from_array_t(
             token,
             [
                 1.0 + da[0] as f64,
@@ -964,7 +964,7 @@ fn edge_diff_map_inner(
                 1.0 + da[3] as f64,
             ],
         );
-        let num_hi = f64x4::from_array(
+        let num_hi = f64x4::from_array_t(
             token,
             [
                 1.0 + da[4] as f64,
@@ -973,7 +973,7 @@ fn edge_diff_map_inner(
                 1.0 + da[7] as f64,
             ],
         );
-        let den_lo = f64x4::from_array(
+        let den_lo = f64x4::from_array_t(
             token,
             [
                 1.0 + db[0] as f64,
@@ -982,7 +982,7 @@ fn edge_diff_map_inner(
                 1.0 + db[3] as f64,
             ],
         );
-        let den_hi = f64x4::from_array(
+        let den_hi = f64x4::from_array_t(
             token,
             [
                 1.0 + db[4] as f64,
@@ -1062,28 +1062,28 @@ fn maps_fused_inner(
     esums: &mut [f64; 4],
 ) {
     type f32x8 = GenericF32x8<Token>;
-    let (m1c, _m1r) = f32x8::partition_slice(token, m1);
-    let (m2c, _m2r) = f32x8::partition_slice(token, m2);
-    let (s11c, _s11r) = f32x8::partition_slice(token, s11);
-    let (s22c, _s22r) = f32x8::partition_slice(token, s22);
-    let (s12c, _s12r) = f32x8::partition_slice(token, s12);
-    let (i1c, _i1r) = f32x8::partition_slice(token, img1);
-    let (i2c, _i2r) = f32x8::partition_slice(token, img2);
-    let kc2 = f32x8::splat(token, super::maps::K_C2);
-    let two = f32x8::splat(token, 2.0);
-    let one = f32x8::splat(token, 1.0);
+    let (m1c, _m1r) = f32x8::partition_slice_t(token, m1);
+    let (m2c, _m2r) = f32x8::partition_slice_t(token, m2);
+    let (s11c, _s11r) = f32x8::partition_slice_t(token, s11);
+    let (s22c, _s22r) = f32x8::partition_slice_t(token, s22);
+    let (s12c, _s12r) = f32x8::partition_slice_t(token, s12);
+    let (i1c, _i1r) = f32x8::partition_slice_t(token, img1);
+    let (i2c, _i2r) = f32x8::partition_slice_t(token, img2);
+    let kc2 = f32x8::splat_t(token, super::maps::K_C2);
+    let two = f32x8::splat_t(token, 2.0);
+    let one = f32x8::splat_t(token, 1.0);
     let nchunk = m1c.len();
     for i in 0..nchunk {
-        let a = f32x8::load(token, &m1c[i]);
-        let b = f32x8::load(token, &m2c[i]);
+        let a = f32x8::load_t(token, &m1c[i]);
+        let b = f32x8::load_t(token, &m2c[i]);
         let mu11 = a * a;
         let mu22 = b * b;
         let mu12 = a * b;
         let dm = a - b;
         let num_m = (-dm).mul_add(dm, one);
-        let num_s = two * (f32x8::load(token, &s12c[i]) - mu12) + kc2;
+        let num_s = two * (f32x8::load_t(token, &s12c[i]) - mu12) + kc2;
         let denom_s =
-            (f32x8::load(token, &s11c[i]) - mu11) + (f32x8::load(token, &s22c[i]) - mu22) + kc2;
+            (f32x8::load_t(token, &s11c[i]) - mu11) + (f32x8::load_t(token, &s22c[i]) - mu22) + kc2;
         let q = num_m * num_s / denom_s;
         let qa = q.to_array();
         for l in 0..8 {
