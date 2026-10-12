@@ -1,0 +1,58 @@
+Revision: 99b98cb96928caf37f93aa837180988520b09430
+CPU: AMD Ryzen 9 7900X; Rust 1.99.0; single-threaded; runtime dispatch
+Command: TMPDIR=$HOME/tmp ~/work/claudehints/scripts/run-heavy --mem 16G --jobs 8 -- cargo run --release --manifest-path tools/version-audit/Cargo.toml
+Method: zenbench 0.1.10, 7 interleaved rounds, gate disabled; same synthetic RGB8 buffers; pixel-wrapper creation included, image construction excluded. One process; small-image results require repeat verification.
+
+score	320	240	0.7.1	95.407835898658
+score	320	240	0.8.2	95.448678048368
+score	320	240	current	95.314412378051
+score	1920	1080	0.7.1	93.130905699999
+score	1920	1080	0.8.2	93.182832784615
+score	1920	1080	current	92.784283201448
+score	3840	2160	0.7.1	91.669499690012
+score	3840	2160	0.8.2	91.645589263393
+score	3840	2160	current	91.079283391822
+[zenbench] calibration: int=0.19ns/iter mem_bw=124.3GiB/s mem_lat=9.5ns
+[zenbench] timer resolution: 10ns, loop overhead: 0.19ns/iter, TSC: 4.691 ticks/ns (invariant)
+[zenbench] results → /home/lilith/tmp/zenbench/zenbench-1791792786-3468c1.txt
+
+═══════════════════════════════════════════════════════════════
+  zenbench  1791792786-3468c1
+  git: 99b98cb96928caf37f93aa837180988520b09430
+═══════════════════════════════════════════════════════════════
+
+  rgb8_320x240  7 rounds × 1 calls ⚠ only 7 rounds
+              mean ±mad ms  95% CI vs base   
+  ├─ 0.7.1     5.1 ±0.3ms  [+17.4%–+22.8%]  
+  ├─ 0.8.2     4.3 ±0.1ms  [4.2–4.4]ms      
+  ╰─ current   4.7 ±0.1ms  [+6.6%–+12.5%]   
+
+  0.8.2    ████████████████████████████████████████████████████ 4.28ms
+  current  █████████████████████████████████████████████████████████ 4.69ms
+  0.7.1    ██████████████████████████████████████████████████████████████ 5.13ms
+
+  rgb8_1920x1080  7 rounds × 1 calls ⚠ only 7 rounds
+               mean ±mad ms  95% CI vs base   
+  ├─ 0.7.1     253.3 ±5.4ms  [+3.4%–+8.8%]    
+  ├─ 0.8.2     238.5 ±8.5ms  [233.0–243.5]ms  
+  ╰─ current   227.6 ±3.7ms  [-7.5%–-1.5%]    
+
+  current  ██████████████████████████████████████████████████████ 227.60ms
+  0.8.2    ████████████████████████████████████████████████████████ 238.47ms
+  0.7.1    ████████████████████████████████████████████████████████████ 253.26ms
+
+  rgb8_3840x2160  7 rounds × 1 calls ⚠ only 7 rounds
+               mean ±mad s  95% CI vs base 
+  ├─ 0.7.1     1.08 ±0.01s  [+5.2%–+7.3%]  
+  ├─ 0.8.2     1.02 ±0.02s  [1.01–1.03]s   
+  ╰─ current   0.95 ±0.02s  [-8.1%–-5.6%]   [1]
+
+  current  █████████████████████████████████████████████████████ 946.05ms
+  0.8.2    ████████████████████████████████████████████████████████ 1.02s
+  0.7.1    ████████████████████████████████████████████████████████████ 1.08s
+  [1] drift r=-0.54 — later rounds faster
+
+  total: 35.0s
+═══════════════════════════════════════════════════════════════
+  filter: cargo bench -- --group=NAME  format: --format=llm|csv|md|json
+run-heavy: done rc=0 42s | peak-RSS 1.22GiB | min-avail 19781MiB | peak-load 5.51

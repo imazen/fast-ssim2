@@ -1,0 +1,19 @@
+[package]
+name = "ssim2-version-audit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+current = { package = "fast-ssim2", path = "../../fast-ssim2" }
+v082 = { package = "fast-ssim2", version = "=0.8.2", features = ["imgref"] }
+v071 = { package = "fast-ssim2", version = "=0.7.1", features = ["imgref"] }
+imgref = "1.12.3"
+bytemuck = "1.25.2"
+zenbench = "0.1.10"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

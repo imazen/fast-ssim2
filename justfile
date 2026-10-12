@@ -64,3 +64,7 @@ clippy-workspace:
 
 check-compare:
     cargo check --manifest-path compare_tool/Cargo.toml
+
+# Interleaved RGB8 timings against published 0.7.1 and 0.8.2.
+version-audit:
+    cargo run --release --manifest-path tools/version-audit/Cargo.toml
