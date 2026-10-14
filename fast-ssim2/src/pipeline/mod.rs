@@ -11,7 +11,7 @@
 //! The SSIMULACRA2.1 pipeline — a bit-exact reimplementation of the
 //! reference (`ssimulacra2.cc` + vendored libjxl primitives).
 //!
-//! Cloudinary's standalone `ssimulacra2` and the `ssimulacra2` tool shipped
+//! The standalone `ssimulacra2` (Jon Sneyers) and the `ssimulacra2` tool shipped
 //! in libjxl v0.12.0 produce identical scores (verified on 400+ image pairs
 //! and by source diff); this module reproduces that single behavior,
 //! including its floating-point quirks:
