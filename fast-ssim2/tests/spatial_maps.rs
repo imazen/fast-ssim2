@@ -346,3 +346,8 @@ fn strip_evaluation_is_refused_for_maps() {
         Some(Ssimulacra2Error::NonMatchingImageDimensions)
     );
 }
+
+#[test]
+fn version_is_the_package_version() {
+    assert_eq!(fast_ssim2::VERSION, env!("CARGO_PKG_VERSION"));
+}

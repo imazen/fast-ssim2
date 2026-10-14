@@ -193,6 +193,10 @@ pub enum Ssimulacra2Error {
     Cancelled(enough::StopReason),
 }
 
+/// This crate's version (`CARGO_PKG_VERSION`), for callers that record
+/// which implementation produced a score.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Maximum supported original or padded image size in pixels.
 ///
 /// This is a pixel-count limit, not a peak-memory guarantee. Input conversion,

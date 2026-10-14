@@ -6,13 +6,13 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: fast-ssim2.txt 72 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 117 lines (193 hidden + 0 excluded-feature)
+# files: fast-ssim2.txt 73 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 117 lines (193 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)         7
-#   pub consts/statics                          3
+#   pub consts/statics                          4
 #   pub macros                                  1
 #   free functions                              4
 #   inherent methods                           18
@@ -24,9 +24,9 @@
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                           62
+#   (root)                           63
 
-## items (62 lines)
+## items (63 lines)
 
 pub mod fast_ssim2
 pub use PixelBuffer
@@ -86,6 +86,7 @@ pub fn StripConfig::with_parallel_strips(self, bool) -> Self
 pub const HALO_ROWS_DEFAULT: usize
 pub const MAX_IMAGE_PIXELS: usize
 pub const MIN_STRIP_HEIGHT: usize
+pub const VERSION: &str
 pub fn compute_ssimulacra2(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<f64, Ssimulacra2Error>
 pub fn compute_ssimulacra2_maps(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>
 pub fn compute_ssimulacra2_maps_with_config(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>

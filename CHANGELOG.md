@@ -6,6 +6,7 @@
 
 ### Added
 - `compute_ssimulacra2_maps` / `compute_ssimulacra2_maps_with_config` with `Ssimulacra2Maps` / `Ssimulacra2ScaleMaps`: the per-scale, per-channel SSIM-error, edge-artifact and detail-lost terms the score pools. Opt-in; the score is bit-identical to the score-only path. Strip evaluation is refused for maps.
+- `VERSION`, the crate version, for score provenance.
 
 ## [0.9.0] - 2026-10-12
 
