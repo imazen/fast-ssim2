@@ -236,3 +236,60 @@ pub(crate) fn maps_fused_stop(
     }
     Ok((ssim_out, edge_out))
 }
+
+/// Per-pixel `SSIMMap` + `EdgeDiffMap` terms of one scale, written instead
+/// of accumulated: for channel `c`, `ssim[c][i]` is the `d` that
+/// [`maps_fused_stop`] adds to its L1/L4 sums, `artifact[c][i]` and
+/// `detail_lost[c][i]` the edge terms. Same per-pixel arithmetic as the
+/// accumulating passes (f32 quotient, f64 `1 − q`), narrowed to f32 for
+/// storage. `stop` is polled per channel and per `MAPS_STOP_STRIDE` pixels.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scale_maps_stop(
+    m1: &[Vec<f32>; 3],
+    m2: &[Vec<f32>; 3],
+    s11: &[Vec<f32>; 3],
+    s22: &[Vec<f32>; 3],
+    s12: &[Vec<f32>; 3],
+    img1: &[Vec<f32>; 3],
+    img2: &[Vec<f32>; 3],
+    width: usize,
+    height: usize,
+    stop: &dyn enough::Stop,
+) -> Result<crate::Ssimulacra2ScaleMaps, enough::StopReason> {
+    let stop = stop.may_stop().then_some(stop);
+    let npix = width * height;
+    let planes = || [vec![0f32; npix], vec![0f32; npix], vec![0f32; npix]];
+    let (mut ssim, mut artifact, mut detail_lost) = (planes(), planes(), planes());
+    for c in 0..3 {
+        stop.check()?;
+        for chunk_start in (0..npix).step_by(MAPS_STOP_STRIDE) {
+            for i in chunk_start..npix.min(chunk_start + MAPS_STOP_STRIDE) {
+                let mu1 = m1[c][i];
+                let mu2 = m2[c][i];
+                let mu11 = mu1 * mu1;
+                let mu22 = mu2 * mu2;
+                let mu12 = mu1 * mu2;
+                let dm = mu1 - mu2;
+                let num_m = (-dm).mul_add(dm, 1.0f32);
+                let num_s = 2.0f32 * (s12[c][i] - mu12) + K_C2;
+                let denom_s = (s11[c][i] - mu11) + (s22[c][i] - mu22) + K_C2;
+                let q = num_m * num_s / denom_s;
+                ssim[c][i] = (1.0f64 - q as f64).max(0.0) as f32;
+
+                let num = 1.0 + (img2[c][i] - mu2).abs() as f64;
+                let den = 1.0 + (img1[c][i] - mu1).abs() as f64;
+                let d1 = num / den - 1.0;
+                artifact[c][i] = d1.max(0.0) as f32;
+                detail_lost[c][i] = (-d1).max(0.0) as f32;
+            }
+            stop.check()?;
+        }
+    }
+    Ok(crate::Ssimulacra2ScaleMaps {
+        width,
+        height,
+        ssim,
+        artifact,
+        detail_lost,
+    })
+}

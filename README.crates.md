@@ -107,6 +107,39 @@ options because construction stores a full reference pyramid. Use
 owns its data and can be shared across threads; cloning it copies its buffers.
 Comparisons allocate temporary storage; there is no zero-allocation scratch API.
 
+## Spatial maps
+
+SSIMULACRA2 has no single per-pixel score map. `compute_ssimulacra2_maps`
+returns the per-pixel terms the score pools: for each pyramid scale (finest
+first) and positive-XYB channel, `max(0, 1 - SSIM)`, edge artifact and edge
+detail lost. The score takes the mean and the 4-norm of each term over its
+scale, then a weighted sum and a nonlinear transform. The returned score is
+bit-identical to `compute_ssimulacra2_with_config` with the same configuration.
+
+```rust
+use fast_ssim2::{PixelDescriptor, PixelSlice, compute_ssimulacra2_maps};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let a: Vec<u8> = (0..32 * 32 * 3).map(|i| (i * 7 % 251) as u8).collect();
+    let mut b = a.clone();
+    b[3 * (16 * 32 + 16)] ^= 0x40; // one changed pixel
+    let source = PixelSlice::new(&a, 32, 32, 96, PixelDescriptor::RGB8_SRGB)?;
+    let distorted = PixelSlice::new(&b, 32, 32, 96, PixelDescriptor::RGB8_SRGB)?;
+    let maps = compute_ssimulacra2_maps(&source, &distorted)?;
+    let finest = &maps.scales[0];
+    assert_eq!((finest.width, finest.height), (32, 32));
+    assert!(finest.ssim[0].iter().any(|&v| v > 0.0));
+    Ok(())
+}
+```
+
+Scale `s` samples `2^s x 2^s` pixel blocks; each value also depends on samples
+within the 5-sample radius of that scale's Gaussian blur. The recursive blur
+leaves small rounding residue past that radius. Images under 8x8 are
+reflect-padded, and their maps cover the padded image. With alpha, the maps come
+from the background composite that set the score (`alpha_background`). Maps are
+opt-in, store nine `f32` planes per scale and do not support strip evaluation.
+
 ## Cancellation
 
 Pass an `enough::Stop` token through `with_stop`. Cancellation is checked before

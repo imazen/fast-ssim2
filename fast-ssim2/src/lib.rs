@@ -11,12 +11,14 @@ mod pipeline;
 mod precompute;
 mod source;
 
+mod spatial;
 mod strip;
 mod weights;
 
 use enough::Stop;
 
 pub use precompute::Ssimulacra2Reference;
+pub use spatial::{Ssimulacra2Maps, Ssimulacra2ScaleMaps};
 pub use strip::{HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, StripConfig};
 pub use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, TransferFunction};
 
@@ -255,6 +257,53 @@ pub fn compute_ssimulacra2_with_config(
     compute_pair(source, distorted, kernel, stop)
 }
 
+/// The SSIMULACRA2 score plus the per-pixel terms it pools — see
+/// [`Ssimulacra2Maps`]. Default configuration; the score is bit-identical
+/// to [`compute_ssimulacra2`].
+///
+/// # Errors
+/// As [`compute_ssimulacra2`].
+pub fn compute_ssimulacra2_maps(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+) -> Result<Ssimulacra2Maps, Ssimulacra2Error> {
+    compute_ssimulacra2_maps_with_config(source, distorted, &Ssimulacra2Config::default())
+}
+
+/// [`compute_ssimulacra2_maps`] with custom configuration (kernel +
+/// cancellation). The score is bit-identical to
+/// [`compute_ssimulacra2_with_config`] with the same configuration; the
+/// maps add one write pass per scale and store nine `f32` planes per scale:
+/// 36 bytes per working pixel at scale 0, a quarter as much at each coarser
+/// scale.
+///
+/// # Errors
+/// As [`compute_ssimulacra2_with_config`];
+/// [`Ssimulacra2Error::InvalidConfiguration`] for strip evaluation, which
+/// never holds a whole scale's planes at once.
+pub fn compute_ssimulacra2_maps_with_config(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+    config: &Ssimulacra2Config<'_>,
+) -> Result<Ssimulacra2Maps, Ssimulacra2Error> {
+    validate_pair(source, distorted)?;
+    config.check_stop()?;
+    if config.strip.is_some() {
+        return Err(Ssimulacra2Error::InvalidConfiguration(
+            "spatial maps need whole-image evaluation; strip evaluation is not supported",
+        ));
+    }
+    let kernel = pipeline::Kernel::from_impl(config.impl_type);
+    let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
+    let (score, maps) = compute_pair_impl(source, distorted, kernel, stop, true)?;
+    let (scales, alpha_background) = maps.unwrap_or_default();
+    Ok(Ssimulacra2Maps {
+        score,
+        scales,
+        alpha_background,
+    })
+}
+
 /// HDR variant (`hdr-pu` feature): SSIMULACRA2 with the cube-root opsin
 /// replaced by **PU21** perceptual encoding of absolute luminance (cd/m²).
 ///
@@ -423,6 +472,20 @@ fn compute_pair(
     kernel: pipeline::Kernel,
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {
+    compute_pair_impl(source, distorted, kernel, stop, false).map(|(score, _)| score)
+}
+
+/// Per-scale maps plus the alpha background that produced them.
+type PairMaps = (Vec<Ssimulacra2ScaleMaps>, Option<f32>);
+
+/// [`compute_pair`], also returning the per-scale maps when `with_maps`.
+fn compute_pair_impl(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+    kernel: pipeline::Kernel,
+    stop: &dyn enough::Stop,
+    with_maps: bool,
+) -> Result<(f64, Option<PairMaps>), Ssimulacra2Error> {
     use source::PreparedInput;
 
     let stop = stop.may_stop().then_some(stop);
@@ -436,7 +499,7 @@ fn compute_pair(
         // identical to padding post-linearization, and stays U8-exact).
         let q1 = e1.reflect_padded(8);
         let q2 = e2.reflect_padded(8);
-        return pipeline::compute_encoded_stop(&q1, &q2, kernel, &stop);
+        return pipeline::compute_encoded_impl(&q1, &q2, kernel, &stop, with_maps);
     }
 
     let (w1, h1) = p1.dims();
@@ -457,7 +520,10 @@ fn compute_pair(
 
     // Reference alpha compositing: min over two backgrounds (0.1 / 0.9
     // encoded). Linear inputs replicate it with the linearized bg.
-    let eval = |bg: f32, p1: &PreparedInput, p2: &PreparedInput| -> Result<f64, Ssimulacra2Error> {
+    let eval = |bg: f32,
+                p1: &PreparedInput,
+                p2: &PreparedInput|
+     -> Result<(f64, Option<Vec<Ssimulacra2ScaleMaps>>), Ssimulacra2Error> {
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let l1 = linearize_prepared_stop(p1, bg, &stop).map_err(Ssimulacra2Error::Cancelled)?;
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
@@ -471,13 +537,22 @@ fn compute_pair(
         } else {
             (l1, l2)
         };
-        pipeline::compute_planar_stop(l1, l2, pw, ph, opts, &stop)
+        let mut sink = with_maps.then(Vec::new);
+        let score = pipeline::compute_planar_impl(l1, l2, pw, ph, opts, &stop, sink.as_mut())?;
+        Ok((score, sink))
     };
 
     if has_alpha {
-        Ok(eval(0.1, &p1, &p2)?.min(eval(0.9, &p1, &p2)?))
+        let (lo, lo_maps) = eval(0.1, &p1, &p2)?;
+        let (hi, hi_maps) = eval(0.9, &p1, &p2)?;
+        let score = lo.min(hi);
+        Ok((
+            score,
+            pipeline::pick_alpha_maps(score, lo, lo_maps, hi, hi_maps),
+        ))
     } else {
-        eval(0.5, &p1, &p2)
+        let (score, maps) = eval(0.5, &p1, &p2)?;
+        Ok((score, maps.map(|m| (m, None))))
     }
 }
 
