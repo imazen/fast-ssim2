@@ -305,6 +305,8 @@ pub fn compute_ssimulacra2_maps_with_config(
         score,
         scales,
         alpha_background,
+        width: source.width() as usize,
+        height: source.rows() as usize,
     })
 }
 

@@ -1,5 +1,7 @@
 //! Native per-pixel terms of the SSIMULACRA2 score.
 
+use crate::weights::WEIGHT;
+
 /// The spatial terms one comparison pools into its score.
 ///
 /// SSIMULACRA2 has no single per-pixel score map. At each pyramid scale
@@ -9,10 +11,13 @@
 /// sum and a nonlinear transform. These are the terms before that
 /// pooling: each is `0` where the images agree and grows with the error.
 ///
-/// Returned by [`crate::compute_ssimulacra2_maps`] and
-/// [`crate::compute_ssimulacra2_maps_with_config`]; [`Self::score`] is
-/// bit-identical to [`crate::compute_ssimulacra2_with_config`] on the same
-/// pair and configuration.
+/// Returned by [`crate::compute_ssimulacra2_maps`],
+/// [`crate::compute_ssimulacra2_maps_with_config`] and, against a cached
+/// reference, [`crate::Ssimulacra2Reference::compare_with_maps`];
+/// [`Self::score`] is bit-identical to
+/// [`crate::compute_ssimulacra2_with_config`] on the same pair and
+/// configuration. [`Self::diffmap`] fuses the terms into one per-pixel map
+/// for encoder quantization loops.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Ssimulacra2Maps {
@@ -25,6 +30,92 @@ pub struct Ssimulacra2Maps {
     /// whose composite produced [`Self::score`] — the score is the lower of
     /// the two, and these maps are that composite's. `None` without alpha.
     pub alpha_background: Option<f32>,
+    /// Input width in pixels (before any sub-8 reflect-padding).
+    pub width: usize,
+    /// Input height in pixels.
+    pub height: usize,
+}
+
+impl Ssimulacra2Maps {
+    /// One full-resolution map of where the score's error comes from,
+    /// `width × height`, row-major: `0` where the images agree, higher where
+    /// they differ more.
+    ///
+    /// The score is `transform(Σ w·aggregate)` over its 108 weighted L1 and
+    /// L4 aggregates. Each pooled term splits exactly into per-sample shares:
+    /// a sample with value `x` in a term of `N` samples contributes
+    /// `w₁·x/N + w₄·x⁴/(N·L4³)` (the L4 share is `x`'s part of `L4`, since
+    /// `Σ x⁴/(N·L4³) = L4`). A scale-`s` sample's share is spread evenly over
+    /// the input pixels its block covers, and the map is scaled by the pixel
+    /// count, so **its mean is the weighted sum** the score transforms:
+    /// `score = 100 − 10·g(0.95624·mean)^0.62763` with
+    /// `g(t) = 2.32677·t − 0.0208845·t² + 6.2485e-5·t³` (100 when `g ≤ 0`).
+    /// For inputs under 8×8 the shares of the reflect-padded border fall
+    /// outside the map, so its mean is smaller than the weighted sum.
+    ///
+    /// The shares use the score's own weights, so a pixel ranks as the
+    /// metric ranks it: mostly the coarse scales' SSIM and detail-loss terms.
+    /// The L4 normalization is global, so every value depends on the whole
+    /// image. Computed from the stored `f32` terms.
+    #[must_use]
+    pub fn diffmap(&self) -> Vec<f32> {
+        let Some(s0) = self.scales.first() else {
+            return vec![0.0; self.width * self.height];
+        };
+        let (pw, ph) = (s0.width, s0.height);
+        let npix = (pw * ph) as f64;
+        let nscales = self.scales.len();
+        let mut acc = vec![0f64; pw * ph];
+        for (s, scale) in self.scales.iter().enumerate() {
+            let n = scale.width * scale.height;
+            let inv_n = 1.0 / n as f64;
+            let mut share = vec![0f64; n];
+            for c in 0..3 {
+                for (m, plane) in [&scale.ssim[c], &scale.artifact[c], &scale.detail_lost[c]]
+                    .into_iter()
+                    .enumerate()
+                {
+                    // The score walks its weights channel-major over the
+                    // scales present: `((c·S + s)·2 + norm)·3 + term`.
+                    let base = (c * nscales + s) * 6 + m;
+                    let (w1, w4) = (WEIGHT[base], WEIGHT[base + 3]);
+                    if w1 == 0.0 && w4 == 0.0 {
+                        continue;
+                    }
+                    let fourth = |v: f32| {
+                        let v = f64::from(v);
+                        (v * v) * (v * v)
+                    };
+                    let l4 = (plane.iter().map(|&v| fourth(v)).sum::<f64>() * inv_n)
+                        .sqrt()
+                        .sqrt();
+                    let w4_unit = if l4 > 0.0 {
+                        w4 * inv_n / (l4 * l4 * l4)
+                    } else {
+                        0.0
+                    };
+                    for (o, &v) in share.iter_mut().zip(plane) {
+                        *o += w1 * inv_n * f64::from(v) + w4_unit * fourth(v);
+                    }
+                }
+            }
+            let side = 1usize << s;
+            for y in 0..ph {
+                let cy = y >> s;
+                let rows = side.min(ph - cy * side);
+                for x in 0..pw {
+                    let cx = x >> s;
+                    let cols = side.min(pw - cx * side);
+                    acc[y * pw + x] += share[cy * scale.width + cx] * npix / (rows * cols) as f64;
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(self.width * self.height);
+        for y in 0..self.height {
+            out.extend(acc[y * pw..y * pw + self.width].iter().map(|&v| v as f32));
+        }
+        out
+    }
 }
 
 /// Per-pixel terms at one pyramid scale, each `width × height`, row-major
@@ -160,6 +251,15 @@ mod tests {
                 }
             })
             .collect();
+        // The diffmap's mean is the weighted sum of these same f32-derived
+        // aggregates: its per-sample shares decompose each L1 and L4 term.
+        let mean = {
+            let d = maps.diffmap();
+            d.iter().map(|&v| f64::from(v)).sum::<f64>() / d.len() as f64
+        };
+        let sum = crate::pipeline::score::weighted_sum(&rebuilt);
+        eprintln!("weighted sum {sum} diffmap mean {mean}");
+        assert!(rel_close(mean, sum, 1e-6), "{mean} vs {sum}");
         let from_maps = score(&rebuilt);
         eprintln!(
             "score {} rebuilt from f32 maps {from_maps} (|delta| {:e})",

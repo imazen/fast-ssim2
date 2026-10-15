@@ -140,6 +140,16 @@ reflect-padded, and their maps cover the padded image. With alpha, the maps come
 from the background composite that set the score (`alpha_background`). Maps are
 opt-in, store nine `f32` planes per scale and do not support strip evaluation.
 
+For an encoder's quantization loop, score many candidates against one source:
+`Ssimulacra2Reference::compare_with_maps` returns the same maps as
+`compute_ssimulacra2_maps`, bit for bit, without recomputing the reference.
+`Ssimulacra2Maps::diffmap` fuses the terms into one `width x height` map,
+higher where the images differ more. It splits each weighted L1 and L4
+aggregate into per-sample shares with the score's own weights and spreads each
+scale's shares over the pixels it covers, so the map's mean is the weighted sum
+the score transforms. Every value depends on the whole image, because the L4
+normalization is global.
+
 ## Cancellation
 
 Pass an `enough::Stop` token through `with_stop`. Cancellation is checked before

@@ -12,7 +12,7 @@
 #   pub modules                                 9
 #   pub types (struct/enum/trait/alias)         8
 #   pub consts/statics                          3
-#   free functions                             40
+#   free functions                             42
 #   inherent methods                           25
 #   struct fields                              14
 #   enum variants                               9
@@ -21,9 +21,9 @@
 #
 # per-module pub lines:
 #   (root)                            3
-#   pipeline                        105
+#   pipeline                        107
 
-## items (108 lines)
+## items (110 lines)
 
 pub const pipeline::Kernel::SIMD: Self
 pub const pipeline::Opts::SCALAR: Self
@@ -100,6 +100,8 @@ pub fn pipeline::precompute::ReferenceCache::new_linear_sets(alloc::vec::Vec<[al
 pub fn pipeline::precompute::ReferenceCache::width(&self) -> usize
 pub fn pipeline::pu21::planes_to_pu_xyb(&mut [alloc::vec::Vec<f32>; 3], usize)
 pub fn pipeline::score::score(&[pipeline::score::ScaleAggregates]) -> f64
+pub fn pipeline::score::transform(f64) -> f64
+pub fn pipeline::score::weighted_sum(&[pipeline::score::ScaleAggregates]) -> f64
 pub fn pipeline::simd::blur_planes_simd(&pipeline::gauss::RecursiveGaussian, &[alloc::vec::Vec<f32>; 3], usize, usize) -> [alloc::vec::Vec<f32>; 3]
 pub fn pipeline::simd::blur_planes_simd_into(&pipeline::gauss::RecursiveGaussian, &[alloc::vec::Vec<f32>; 3], usize, usize, &mut [alloc::vec::Vec<f32>; 3], &mut [alloc::vec::Vec<f32>; 3])
 pub fn pipeline::simd::edge_diff_map_simd(&[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], &[alloc::vec::Vec<f32>; 3], usize, usize) -> [f64; 12]

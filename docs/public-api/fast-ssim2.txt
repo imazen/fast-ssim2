@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: fast-ssim2.txt 73 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 117 lines (193 hidden + 0 excluded-feature)
+# files: fast-ssim2.txt 78 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 119 lines (195 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -15,8 +15,8 @@
 #   pub consts/statics                          4
 #   pub macros                                  1
 #   free functions                              4
-#   inherent methods                           18
-#   struct fields                              15
+#   inherent methods                           21
+#   struct fields                              17
 #   enum variants                               9
 #   re-exports                                  4
 #   trait roster entries (type × trait)        29
@@ -24,9 +24,9 @@
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                           63
+#   (root)                           68
 
-## items (63 lines)
+## items (68 lines)
 
 pub mod fast_ssim2
 pub use PixelBuffer
@@ -60,11 +60,16 @@ pub fn Ssimulacra2Config<'a>::with_stop(self, &'a dyn enough::Stop) -> Self
 pub fn Ssimulacra2Config<'a>::with_strip(self, StripConfig) -> Self
 #[non_exhaustive] pub struct Ssimulacra2Maps
 pub Ssimulacra2Maps::alpha_background: core::option::Option<f32>
+pub Ssimulacra2Maps::height: usize
 pub Ssimulacra2Maps::scales: alloc::vec::Vec<Ssimulacra2ScaleMaps>
 pub Ssimulacra2Maps::score: f64
+pub Ssimulacra2Maps::width: usize
+pub fn Ssimulacra2Maps::diffmap(&self) -> alloc::vec::Vec<f32>
 pub struct Ssimulacra2Reference
 pub fn Ssimulacra2Reference::compare(&self, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<f64, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::compare_with_config(&self, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_with_maps(&self, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_with_maps_with_config(&self, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::height(&self) -> usize
 pub fn Ssimulacra2Reference::new(&zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<Self, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::new_with_config(&zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<Self, Ssimulacra2Error>

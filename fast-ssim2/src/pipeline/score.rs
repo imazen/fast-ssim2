@@ -28,6 +28,11 @@ pub struct ScaleAggregates {
 /// `{ssim[c][n], artifact[c][n], detail_lost[c][n]}` — i.e. the WEIGHT
 /// table's `((c * NUM_SCALES + scale) * 2 + n) * 3 + m` layout.
 pub fn score(scales: &[ScaleAggregates]) -> f64 {
+    transform(weighted_sum(scales))
+}
+
+/// The 108-weight sum of the aggregates, before [`transform`].
+pub fn weighted_sum(scales: &[ScaleAggregates]) -> f64 {
     let mut ssim = 0.0f64;
     let mut i = 0usize;
     for c in 0..3 {
@@ -43,6 +48,12 @@ pub fn score(scales: &[ScaleAggregates]) -> f64 {
         }
     }
 
+    ssim
+}
+
+/// The final nonlinear transform of the weighted sum.
+pub fn transform(weighted_sum: f64) -> f64 {
+    let mut ssim = weighted_sum;
     ssim = ssim * 0.956_238_261_683_484_4;
     let ssim = 2.326_765_642_916_932 * ssim - 0.020_884_521_182_843_837 * ssim * ssim
         + 6.248_496_625_763_138e-05 * ssim * ssim * ssim;
