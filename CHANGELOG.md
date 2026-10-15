@@ -4,6 +4,11 @@
 
 ### QUEUED BREAKING CHANGES
 
+### Added
+- `compute_ssimulacra2_maps` / `compute_ssimulacra2_maps_with_config` with `Ssimulacra2Maps` / `Ssimulacra2ScaleMaps`: the per-scale, per-channel SSIM-error, edge-artifact and detail-lost terms the score pools. Opt-in; the score is bit-identical to the score-only path. Strip evaluation is refused for maps.
+- `Ssimulacra2Reference::compare_with_maps` / `compare_with_maps_with_config`: the same maps against a cached reference, bit-identical to the cold path (encoded, sub-8, alpha and linear inputs; both kernels). `Ssimulacra2Maps::diffmap`: one full-resolution map whose per-pixel shares decompose the score's weighted L1/L4 aggregates, so its mean is the weighted sum the score transforms (score rebuilt from the mean within 8.3e-8 on four fixtures). `Ssimulacra2Maps` gains `width`/`height` (input size).
+- `VERSION`, the crate version, for score provenance.
+
 ## [0.9.0] - 2026-10-12
 
 Published from the `v0.9.0-release` tag. The earlier `v0.9.0` GitHub tag

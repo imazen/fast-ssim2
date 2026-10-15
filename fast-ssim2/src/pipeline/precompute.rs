@@ -282,8 +282,38 @@ impl ReferenceCache {
         }
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let rg = create_recursive_gaussian(1.5);
-        let scales = dist_scales(&rg, &self.stacks[si], lin2, w, h, stop, kernel)?;
+        let scales = dist_scales(&rg, &self.stacks[si], lin2, w, h, stop, kernel, None)?;
         Ok(final_score(&scales))
+    }
+
+    /// [`Self::compare_linear_stack_stop`] that also returns the
+    /// per-pixel terms of each scale (bit-identical to the cold map path).
+    pub(crate) fn compare_linear_stack_maps(
+        &self,
+        si: usize,
+        lin2: [Vec<f32>; 3],
+        w: usize,
+        h: usize,
+        stop: &dyn enough::Stop,
+        kernel: Kernel,
+    ) -> Result<(f64, Vec<crate::Ssimulacra2ScaleMaps>), Ssimulacra2Error> {
+        if w != self.width || h != self.height {
+            return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+        }
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        let rg = create_recursive_gaussian(1.5);
+        let mut maps = Vec::with_capacity(self.stacks[si].len());
+        let scales = dist_scales(
+            &rg,
+            &self.stacks[si],
+            lin2,
+            w,
+            h,
+            stop,
+            kernel,
+            Some(&mut maps),
+        )?;
+        Ok((final_score(&scales), maps))
     }
 
     /// Number of stacks (1 opaque / 2 alpha).
@@ -357,17 +387,69 @@ impl ReferenceCache {
                     0.5
                 };
                 let lin2 = linearize(distorted, bg);
-                let scales =
-                    dist_scales(&rg, refstack, lin2, self.width, self.height, stop, kernel);
+                let scales = dist_scales(
+                    &rg,
+                    refstack,
+                    lin2,
+                    self.width,
+                    self.height,
+                    stop,
+                    kernel,
+                    None,
+                );
                 Ok(final_score(&scales?))
             })
             .collect::<Result<Vec<f64>, Ssimulacra2Error>>()?;
         Ok(scores.into_iter().fold(f64::INFINITY, f64::min))
     }
+
+    /// [`Self::compare_stop_kernel`] that also returns the per-pixel terms of
+    /// each scale and, with alpha, the background whose composite scored
+    /// lower — the same selection as the cold map path.
+    pub(crate) fn compare_maps_kernel(
+        &self,
+        distorted: &EncodedSrgb,
+        stop: &dyn enough::Stop,
+        kernel: Kernel,
+    ) -> Result<(f64, Vec<crate::Ssimulacra2ScaleMaps>, Option<f32>), Ssimulacra2Error> {
+        if distorted.width != self.width || distorted.height != self.height {
+            return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+        }
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+        let rg = create_recursive_gaussian(1.5);
+        let run = |si: usize,
+                   bg: f32|
+         -> Result<(f64, Vec<crate::Ssimulacra2ScaleMaps>), Ssimulacra2Error> {
+            let refstack = &self.stacks[if self.has_alpha { si } else { 0 }];
+            let mut maps = Vec::with_capacity(refstack.len());
+            let scales = dist_scales(
+                &rg,
+                refstack,
+                linearize(distorted, bg),
+                self.width,
+                self.height,
+                stop,
+                kernel,
+                Some(&mut maps),
+            )?;
+            Ok((final_score(&scales), maps))
+        };
+        if self.has_alpha || distorted.alpha.is_some() {
+            let (lo, lo_maps) = run(0, 0.1)?;
+            let (hi, hi_maps) = run(1, 0.9)?;
+            let score = lo.min(hi);
+            let (maps, bg) = super::pick_alpha_maps(score, lo, Some(lo_maps), hi, Some(hi_maps))
+                .expect("both backgrounds produced maps");
+            return Ok((score, maps, bg));
+        }
+        let (score, maps) = run(0, 0.5)?;
+        Ok((score, maps, None))
+    }
 }
 
 /// Distorted-side scale walk against a cached reference stack —
 /// produces the same `ScaleAggregates` list `compute_opts` yields.
+#[allow(clippy::too_many_arguments)]
 fn dist_scales(
     rg: &super::gauss::RecursiveGaussian,
     refstack: &[RefScale],
@@ -376,6 +458,7 @@ fn dist_scales(
     mut h: usize,
     stop: &dyn enough::Stop,
     kernel: Kernel,
+    mut maps: Option<&mut Vec<crate::Ssimulacra2ScaleMaps>>,
 ) -> Result<Vec<ScaleAggregates>, Ssimulacra2Error> {
     let mut scales = Vec::with_capacity(refstack.len());
     for rs in refstack {
@@ -541,6 +624,23 @@ fn dist_scales(
             avg_ssim,
             avg_edgediff,
         });
+        if let Some(sink) = maps.as_deref_mut() {
+            sink.push(
+                super::maps::scale_maps_stop(
+                    &rs.mu1,
+                    &mu2,
+                    &rs.sigma1_sq,
+                    &sigma2_sq,
+                    &sigma12,
+                    &rs.xyb1,
+                    &xyb2,
+                    w,
+                    h,
+                    stop,
+                )
+                .map_err(Ssimulacra2Error::Cancelled)?,
+            );
+        }
         lin2 = lin2_next;
         w = rs.width.div_ceil(2);
         h = rs.height.div_ceil(2);

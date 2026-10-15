@@ -525,6 +525,20 @@ pub fn compute_encoded_stop(
     kernel: Kernel,
     stop: &dyn enough::Stop,
 ) -> Result<f64, crate::Ssimulacra2Error> {
+    compute_encoded_impl(enc1, enc2, kernel, stop, false).map(|(score, _)| score)
+}
+
+/// [`compute_encoded_stop`], optionally returning the per-scale maps of
+/// the evaluation that produced the score, with the alpha background it
+/// used (`Some(0.1)`/`Some(0.9)`; `None` without alpha).
+pub(crate) fn compute_encoded_impl(
+    enc1: &EncodedSrgb,
+    enc2: &EncodedSrgb,
+    kernel: Kernel,
+    stop: &dyn enough::Stop,
+    with_maps: bool,
+) -> Result<(f64, Option<(Vec<crate::Ssimulacra2ScaleMaps>, Option<f32>)>), crate::Ssimulacra2Error>
+{
     let stop = stop.may_stop().then_some(stop);
     let (w, h) = (enc1.width, enc1.height);
     if w != enc2.width || h != enc2.height {
@@ -539,12 +553,46 @@ pub fn compute_encoded_stop(
         kernel,
         flavor: XybFlavor::CubeRoot,
     };
+    let run = |bg: f32| -> Result<
+        (f64, Option<Vec<crate::Ssimulacra2ScaleMaps>>),
+        crate::Ssimulacra2Error,
+    > {
+        let mut sink = with_maps.then(Vec::new);
+        let score = compute_planar_impl(
+            lin(enc1, bg)?,
+            lin(enc2, bg)?,
+            w,
+            h,
+            opts,
+            &stop,
+            sink.as_mut(),
+        )?;
+        Ok((score, sink))
+    };
     if enc1.alpha.is_some() || enc2.alpha.is_some() {
-        let lo = compute_planar_stop(lin(enc1, 0.1)?, lin(enc2, 0.1)?, w, h, opts, &stop)?;
-        let hi = compute_planar_stop(lin(enc1, 0.9)?, lin(enc2, 0.9)?, w, h, opts, &stop)?;
-        return Ok(lo.min(hi));
+        let (lo, lo_maps) = run(0.1)?;
+        let (hi, hi_maps) = run(0.9)?;
+        let score = lo.min(hi);
+        return Ok((score, pick_alpha_maps(score, lo, lo_maps, hi, hi_maps)));
     }
-    compute_planar_stop(lin(enc1, 0.5)?, lin(enc2, 0.5)?, w, h, opts, &stop)
+    let (score, maps) = run(0.5)?;
+    Ok((score, maps.map(|m| (m, None))))
+}
+
+/// The maps of whichever alpha background produced `score = lo.min(hi)`:
+/// the darker (0.1) background on a tie.
+pub(crate) fn pick_alpha_maps(
+    score: f64,
+    lo: f64,
+    lo_maps: Option<Vec<crate::Ssimulacra2ScaleMaps>>,
+    hi: f64,
+    hi_maps: Option<Vec<crate::Ssimulacra2ScaleMaps>>,
+) -> Option<(Vec<crate::Ssimulacra2ScaleMaps>, Option<f32>)> {
+    if score.to_bits() == hi.to_bits() && score.to_bits() != lo.to_bits() {
+        hi_maps.map(|m| (m, Some(0.9)))
+    } else {
+        lo_maps.map(|m| (m, Some(0.1)))
+    }
 }
 
 /// Kernel family — the lane-wise SIMD implementations
@@ -669,6 +717,21 @@ pub fn compute_planar_stop(
     height: usize,
     opts: Opts,
     stop: &dyn enough::Stop,
+) -> Result<f64, crate::Ssimulacra2Error> {
+    compute_planar_impl(lin1, lin2, width, height, opts, stop, None)
+}
+
+/// [`compute_planar_stop`] that also writes each scale's per-pixel terms
+/// into `maps` when given. The score path is unchanged: the map pass reads
+/// the same planes after that scale's aggregates are computed.
+pub(crate) fn compute_planar_impl(
+    lin1: [Vec<f32>; 3],
+    lin2: [Vec<f32>; 3],
+    width: usize,
+    height: usize,
+    opts: Opts,
+    stop: &dyn enough::Stop,
+    mut maps: Option<&mut Vec<crate::Ssimulacra2ScaleMaps>>,
 ) -> Result<f64, crate::Ssimulacra2Error> {
     let stop = stop.may_stop().then_some(stop);
     if width < 8 || height < 8 {
@@ -873,6 +936,14 @@ pub fn compute_planar_stop(
             avg_ssim,
             avg_edgediff,
         });
+        if let Some(sink) = maps.as_deref_mut() {
+            sink.push(
+                maps::scale_maps_stop(
+                    &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h, &stop,
+                )
+                .map_err(crate::Ssimulacra2Error::Cancelled)?,
+            );
+        }
 
         lin1 = lin1_next;
         lin2 = lin2_next;

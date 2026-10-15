@@ -201,6 +201,101 @@ impl Ssimulacra2Reference {
         }
     }
 
+    /// Compare a distorted image against the precomputed reference and
+    /// return the per-pixel terms behind the score, for quantization loops
+    /// that score many candidates against one source.
+    ///
+    /// Bit-identical to [`crate::compute_ssimulacra2_maps`] on the same pair
+    /// (score, every map value and the alpha background); the score equals
+    /// [`Self::compare`]. [`crate::Ssimulacra2Maps::diffmap`] fuses the terms
+    /// into one full-resolution map.
+    ///
+    /// # Errors
+    /// As [`Self::compare`].
+    pub fn compare_with_maps(
+        &self,
+        distorted: &PixelSlice<'_>,
+    ) -> Result<crate::Ssimulacra2Maps, Ssimulacra2Error> {
+        self.compare_with_maps_with_config(distorted, &Ssimulacra2Config::default())
+    }
+
+    /// [`Self::compare_with_maps`] with per-call options (`impl_type`,
+    /// `stop`). `strip` must be `None`: maps need whole-image evaluation.
+    ///
+    /// # Errors
+    /// As [`Self::compare_with_config`], plus
+    /// [`Ssimulacra2Error::InvalidConfiguration`] when `strip` is set.
+    pub fn compare_with_maps_with_config(
+        &self,
+        distorted: &PixelSlice<'_>,
+        config: &Ssimulacra2Config<'_>,
+    ) -> Result<crate::Ssimulacra2Maps, Ssimulacra2Error> {
+        config.check_stop()?;
+        if config.strip.is_some() {
+            return Err(Ssimulacra2Error::InvalidConfiguration(
+                "spatial maps need whole-image evaluation; strip evaluation is not supported",
+            ));
+        }
+        use crate::source::PreparedInput;
+        let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
+        let kernel = crate::pipeline::Kernel::from_impl(config.impl_type);
+        let p = crate::source::funnel(distorted)?;
+        if p.dims() != (self.original_width, self.original_height) {
+            return Err(Ssimulacra2Error::NonMatchingImageDimensions);
+        }
+        let (score, scales, alpha_background) = match p {
+            PreparedInput::Encoded(e) => {
+                self.cache
+                    .compare_maps_kernel(&e.reflect_padded(8), stop, kernel)?
+            }
+            p @ PreparedInput::Linear { .. } => {
+                let (w, h) = (self.cache.width(), self.cache.height());
+                let run = |si: usize, bg: f32| {
+                    let planes = pad_or_pass(
+                        crate::linearize_prepared_stop(&p, bg, stop)
+                            .map_err(Ssimulacra2Error::Cancelled)?,
+                        self.original_width,
+                        self.original_height,
+                        w,
+                        h,
+                    );
+                    self.cache.compare_linear_stack_maps(
+                        if self.cache.has_alpha() { si } else { 0 },
+                        planes,
+                        w,
+                        h,
+                        stop,
+                        kernel,
+                    )
+                };
+                if self.cache.has_alpha() || crate::prepared_has_alpha(&p) {
+                    let (lo, lo_maps) = run(0, 0.1)?;
+                    let (hi, hi_maps) = run(1, 0.9)?;
+                    let score = lo.min(hi);
+                    let (maps, bg) = crate::pipeline::pick_alpha_maps(
+                        score,
+                        lo,
+                        Some(lo_maps),
+                        hi,
+                        Some(hi_maps),
+                    )
+                    .expect("both backgrounds produced maps");
+                    (score, maps, bg)
+                } else {
+                    let (score, maps) = run(0, 0.5)?;
+                    (score, maps, None)
+                }
+            }
+        };
+        Ok(crate::Ssimulacra2Maps {
+            score,
+            scales,
+            alpha_background,
+            width: self.original_width,
+            height: self.original_height,
+        })
+    }
+
     /// Source width in pixels (as supplied at construction).
     #[must_use]
     pub fn width(&self) -> usize {

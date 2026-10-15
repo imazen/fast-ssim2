@@ -6,27 +6,27 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: fast-ssim2.txt 58 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 120 lines (196 hidden + 0 excluded-feature)
+# files: fast-ssim2.txt 78 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 119 lines (195 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
-#   pub types (struct/enum/trait/alias)         5
-#   pub consts/statics                          3
+#   pub types (struct/enum/trait/alias)         7
+#   pub consts/statics                          4
 #   pub macros                                  1
-#   free functions                              2
-#   inherent methods                           18
-#   struct fields                               7
+#   free functions                              4
+#   inherent methods                           21
+#   struct fields                              17
 #   enum variants                               9
 #   re-exports                                  4
-#   trait roster entries (type × trait)        25
-#   auto-trait-complete types                   4
+#   trait roster entries (type × trait)        29
+#   auto-trait-complete types                   6
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                           50
+#   (root)                           68
 
-## items (50 lines)
+## items (68 lines)
 
 pub mod fast_ssim2
 pub use PixelBuffer
@@ -58,14 +58,29 @@ pub fn Ssimulacra2Config<'a>::strips(usize) -> Self
 pub fn Ssimulacra2Config<'a>::with_impl(self, SimdImpl) -> Self
 pub fn Ssimulacra2Config<'a>::with_stop(self, &'a dyn enough::Stop) -> Self
 pub fn Ssimulacra2Config<'a>::with_strip(self, StripConfig) -> Self
+#[non_exhaustive] pub struct Ssimulacra2Maps
+pub Ssimulacra2Maps::alpha_background: core::option::Option<f32>
+pub Ssimulacra2Maps::height: usize
+pub Ssimulacra2Maps::scales: alloc::vec::Vec<Ssimulacra2ScaleMaps>
+pub Ssimulacra2Maps::score: f64
+pub Ssimulacra2Maps::width: usize
+pub fn Ssimulacra2Maps::diffmap(&self) -> alloc::vec::Vec<f32>
 pub struct Ssimulacra2Reference
 pub fn Ssimulacra2Reference::compare(&self, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<f64, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::compare_with_config(&self, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_with_maps(&self, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>
+pub fn Ssimulacra2Reference::compare_with_maps_with_config(&self, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::height(&self) -> usize
 pub fn Ssimulacra2Reference::new(&zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<Self, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::new_with_config(&zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<Self, Ssimulacra2Error>
 pub fn Ssimulacra2Reference::num_scales(&self) -> usize
 pub fn Ssimulacra2Reference::width(&self) -> usize
+#[non_exhaustive] pub struct Ssimulacra2ScaleMaps
+pub Ssimulacra2ScaleMaps::artifact: [alloc::vec::Vec<f32>; 3]
+pub Ssimulacra2ScaleMaps::detail_lost: [alloc::vec::Vec<f32>; 3]
+pub Ssimulacra2ScaleMaps::height: usize
+pub Ssimulacra2ScaleMaps::ssim: [alloc::vec::Vec<f32>; 3]
+pub Ssimulacra2ScaleMaps::width: usize
 #[non_exhaustive] pub struct StripConfig
 pub StripConfig::halo_rows: usize
 pub StripConfig::parallel_strips: bool
@@ -76,19 +91,24 @@ pub fn StripConfig::with_parallel_strips(self, bool) -> Self
 pub const HALO_ROWS_DEFAULT: usize
 pub const MAX_IMAGE_PIXELS: usize
 pub const MIN_STRIP_HEIGHT: usize
+pub const VERSION: &str
 pub fn compute_ssimulacra2(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn compute_ssimulacra2_maps(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>
+pub fn compute_ssimulacra2_maps_with_config(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<Ssimulacra2Maps, Ssimulacra2Error>
 pub fn compute_ssimulacra2_with_config(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<f64, Ssimulacra2Error>
 
-## trait impls (6 types)
+## trait impls (8 types)
 
 SimdImpl: Clone, Copy, Debug, Default, Eq, PartialEq
 Ssimulacra2Config<'_>: Debug
 Ssimulacra2Config<'a>: Clone, Copy, Default
 Ssimulacra2Error: Clone, Copy, Debug, Display, Eq, Error, PartialEq
+Ssimulacra2Maps: Clone, Debug
 Ssimulacra2Reference: Clone, Debug
+Ssimulacra2ScaleMaps: Clone, Debug
 StripConfig: Clone, Copy, Debug, Default, Eq, PartialEq
 
 ## auto traits
 
-4 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+6 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 Ssimulacra2Config<'a>: !RefUnwindSafe !UnwindSafe
