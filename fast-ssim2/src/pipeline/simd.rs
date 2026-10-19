@@ -735,23 +735,44 @@ pub(crate) fn fast_gaussian_simd_stop(
             [v3, neon, wasm128, scalar]
         )
     }
-    {
-        let mut rowbuf = Vec::new();
-        for row in rows8..height {
-            let src: &[f32] = match plane_b {
-                Some(bb) => {
-                    rowbuf.clear();
-                    rowbuf.extend(
-                        input[row * width..row * width + width]
-                            .iter()
-                            .zip(&bb[row * width..])
-                            .map(|(x, y)| x * y),
-                    );
-                    &rowbuf
-                }
-                None => &input[row * width..row * width + width],
-            };
-            rg.fast_gaussian_1d(src, &mut tmp[row * width..(row + 1) * width]);
+    if rows8 < height {
+        if height >= 8 {
+            // Tail rows fold into one overlapped 8-row block ending at
+            // `height`: each row's IIR is independent, so recomputing the
+            // overlapped rows is bit-identical to the scalar tail — and
+            // keeps them on the SIMD path (the scalar tail's per-lane
+            // `mul_add` chain is a libm `fmaf` call on baseline x86-64).
+            stop.check()?;
+            let row0 = height - 8;
+            incant!(
+                fast_gaussian_1d_rows_inner(
+                    rg,
+                    input,
+                    plane_b,
+                    width,
+                    row0,
+                    &mut tmp[row0 * width..]
+                ),
+                [v3, neon, wasm128, scalar]
+            )
+        } else {
+            let mut rowbuf = Vec::new();
+            for row in rows8..height {
+                let src: &[f32] = match plane_b {
+                    Some(bb) => {
+                        rowbuf.clear();
+                        rowbuf.extend(
+                            input[row * width..row * width + width]
+                                .iter()
+                                .zip(&bb[row * width..])
+                                .map(|(x, y)| x * y),
+                        );
+                        &rowbuf
+                    }
+                    None => &input[row * width..row * width + width],
+                };
+                rg.fast_gaussian_1d(src, &mut tmp[row * width..(row + 1) * width]);
+            }
         }
     }
 
@@ -766,34 +787,40 @@ pub(crate) fn fast_gaussian_simd_stop(
     // copies the row strips into place. Bit-identical: same inner call,
     // same column writes, different intermediate buffer.
     let cols8 = width / 8 * 8;
+    // Column-block starting positions covering [0, width): aligned
+    // blocks, then — when `width` isn't a multiple of 8 — one overlapped
+    // block ending at `width` (each column's IIR is independent, so
+    // recomputing the overlap is bit-identical). Sub-8-px planes keep
+    // the scalar tail below.
+    let tail_x0 = (width >= 8 && cols8 < width).then(|| width - 8);
     #[cfg(feature = "rayon")]
     if par {
         use rayon::prelude::*;
-        let nblocks = cols8 / 8;
-        let block_outs: Vec<Vec<f32>> = (0..nblocks)
+        let x0s: Vec<usize> = (0..cols8).step_by(8).chain(tail_x0).collect();
+        let block_outs: Vec<(usize, Vec<f32>)> = x0s
             .into_par_iter()
-            .map(|b| -> Result<Vec<f32>, enough::StopReason> {
+            .map(|x0| -> Result<(usize, Vec<f32>), enough::StopReason> {
                 stop.check()?;
                 let mut bo = vec![0f32; height * 8];
                 incant!(
-                    fast_gaussian_vertical_x8_inner(rg, tmp, width, height, b * 8, &mut bo, 0, 8),
+                    fast_gaussian_vertical_x8_inner(rg, tmp, width, height, x0, &mut bo, 0, 8),
                     [v3, neon, wasm128, scalar]
                 );
-                Ok(bo)
+                Ok((x0, bo))
             })
             .collect::<Result<_, _>>()?;
-        // Scatter: row `r` of `out`'s column range [0..cols8) is the
-        // concatenation of every block's row — a parallel row-major copy.
+        // Scatter: row `r` of `out` gets each block's row strip at its
+        // own x0 — overlapped writes are byte-identical.
         out.par_chunks_mut(width)
             .take(height)
             .enumerate()
             .for_each(|(r, orow)| {
-                for (b, bo) in block_outs.iter().enumerate() {
-                    orow[b * 8..b * 8 + 8].copy_from_slice(&bo[r * 8..r * 8 + 8]);
+                for (x0, bo) in block_outs.iter() {
+                    orow[*x0..*x0 + 8].copy_from_slice(&bo[r * 8..r * 8 + 8]);
                 }
             });
     } else {
-        for x0 in (0..cols8).step_by(8) {
+        for x0 in (0..cols8).step_by(8).chain(tail_x0) {
             if x0 & (STOP_COL_STRIDE - 1) == 0 {
                 stop.check()?;
             }
@@ -804,7 +831,7 @@ pub(crate) fn fast_gaussian_simd_stop(
         }
     }
     #[cfg(not(feature = "rayon"))]
-    for x0 in (0..cols8).step_by(8) {
+    for x0 in (0..cols8).step_by(8).chain(tail_x0) {
         if x0 & (STOP_COL_STRIDE - 1) == 0 {
             stop.check()?;
         }
@@ -813,7 +840,7 @@ pub(crate) fn fast_gaussian_simd_stop(
             [v3, neon, wasm128, scalar]
         )
     }
-    if cols8 < width {
+    if cols8 < width && width < 8 {
         rg.fast_gaussian_vertical_1d(
             width,
             height,
