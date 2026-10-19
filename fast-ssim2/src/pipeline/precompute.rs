@@ -96,7 +96,7 @@ fn ref_scales(
         // into the blur input read (identical f32 product).
         let (mu1, sigma1_sq);
         #[cfg(feature = "rayon")]
-        {
+        if super::par_ok(npix) {
             use rayon::prelude::*;
             // mu: blur(xyb1); sigma1: blur(xyb1·xyb1) — 6 independent
             // channel-jobs total, no product planes materialized.
@@ -126,6 +126,46 @@ fn ref_scales(
             let _ = t3;
             mu1 = [flat[0].clone(), flat[2].clone(), flat[4].clone()];
             sigma1_sq = [flat[1].clone(), flat[3].clone(), flat[5].clone()];
+        } else {
+            let mut tmp = vec![0f32; npix];
+            let (mut mu1_a, mut s1_a) = (vec![0f32; npix], vec![0f32; npix]);
+            let (mut mu1_b, mut s1_b) = (vec![0f32; npix], vec![0f32; npix]);
+            let (mut mu1_c, mut s1_c) = (vec![0f32; npix], vec![0f32; npix]);
+            blur_channel(kernel, &rg, &xyb1[0], None, w, h, &mut mu1_a, &mut tmp);
+            blur_channel(
+                kernel,
+                &rg,
+                &xyb1[0],
+                Some(&xyb1[0]),
+                w,
+                h,
+                &mut s1_a,
+                &mut tmp,
+            );
+            blur_channel(kernel, &rg, &xyb1[1], None, w, h, &mut mu1_b, &mut tmp);
+            blur_channel(
+                kernel,
+                &rg,
+                &xyb1[1],
+                Some(&xyb1[1]),
+                w,
+                h,
+                &mut s1_b,
+                &mut tmp,
+            );
+            blur_channel(kernel, &rg, &xyb1[2], None, w, h, &mut mu1_c, &mut tmp);
+            blur_channel(
+                kernel,
+                &rg,
+                &xyb1[2],
+                Some(&xyb1[2]),
+                w,
+                h,
+                &mut s1_c,
+                &mut tmp,
+            );
+            mu1 = [mu1_a, mu1_b, mu1_c];
+            sigma1_sq = [s1_a, s1_b, s1_c];
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -479,7 +519,7 @@ fn dist_scales(
         // σ12 = blur(xyb1·xyb2), μ2 = blur(xyb2).
         let (sigma2_sq, sigma12, mu2);
         #[cfg(feature = "rayon")]
-        {
+        if super::par_ok(npix) {
             use rayon::prelude::*;
             let jobs: Vec<(usize, usize)> =
                 (0..3).flat_map(|j| (0..3).map(move |c| (j, c))).collect();
@@ -512,6 +552,28 @@ fn dist_scales(
             sigma2_sq = take3(&flat, 0);
             sigma12 = take3(&flat, 3);
             mu2 = take3(&flat, 6);
+        } else {
+            let mut tmp = vec![0f32; npix];
+            let mut run = |a: &[f32], b: Option<&[f32]>| -> Vec<f32> {
+                let mut o = vec![0f32; npix];
+                blur_channel(kernel, rg, a, b, w, h, &mut o, &mut tmp);
+                o
+            };
+            sigma2_sq = [
+                run(&xyb2[0], Some(&xyb2[0])),
+                run(&xyb2[1], Some(&xyb2[1])),
+                run(&xyb2[2], Some(&xyb2[2])),
+            ];
+            sigma12 = [
+                run(&rs.xyb1[0], Some(&xyb2[0])),
+                run(&rs.xyb1[1], Some(&xyb2[1])),
+                run(&rs.xyb1[2], Some(&xyb2[2])),
+            ];
+            mu2 = [
+                run(&xyb2[0], None),
+                run(&xyb2[1], None),
+                run(&xyb2[2], None),
+            ];
         }
         #[cfg(not(feature = "rayon"))]
         {
@@ -554,7 +616,7 @@ fn dist_scales(
             )
         } else {
             #[cfg(feature = "rayon")]
-            {
+            let simd_parts = if super::par_ok(w * h) {
                 use rayon::prelude::*;
                 let n = w * h;
                 let opp = 1.0 / n as f64;
@@ -604,9 +666,7 @@ fn dist_scales(
                     eo[c * 4..c * 4 + 4].copy_from_slice(&parts[c].2);
                 }
                 (so, eo)
-            }
-            #[cfg(not(feature = "rayon"))]
-            {
+            } else {
                 simd::maps_fused_simd(
                     &rs.mu1,
                     &mu2,
@@ -618,7 +678,22 @@ fn dist_scales(
                     w,
                     h,
                 )
-            }
+            };
+            #[cfg(not(feature = "rayon"))]
+            let simd_parts = {
+                simd::maps_fused_simd(
+                    &rs.mu1,
+                    &mu2,
+                    &rs.sigma1_sq,
+                    &sigma2_sq,
+                    &sigma12,
+                    &rs.xyb1,
+                    &xyb2,
+                    w,
+                    h,
+                )
+            };
+            simd_parts
         };
         scales.push(ScaleAggregates {
             avg_ssim,

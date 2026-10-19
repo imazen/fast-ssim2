@@ -26,12 +26,11 @@ use archmage::magetypes;
 use archmage::{SimdToken, X64V3Token};
 use enough::Stop;
 
-/// Rows between `stop` polls in the sequential horizontal-pass fallback.
-#[cfg(not(feature = "rayon"))]
+/// Rows between `stop` polls in the sequential horizontal-pass fallback
+/// (also the small-plane serial arm under `rayon`).
 const STOP_ROW_STRIDE: usize = 1 << 10;
 /// Column-block iterations between `stop` polls in the vertical pass
 /// (each block processes 8 columns × full height).
-#[cfg(not(feature = "rayon"))]
 const STOP_COL_STRIDE: usize = 128;
 /// Pixels between `stop` polls inside `maps_fused_simd_stop`.
 const MAPS_SIMD_STOP_STRIDE: usize = 1 << 21;
@@ -693,7 +692,9 @@ pub(crate) fn fast_gaussian_simd_stop(
     // `rayon` (disjoint output chunks, identical per-lane math).
     let rows8 = height / 8 * 8;
     #[cfg(feature = "rayon")]
-    {
+    let par = super::par_ok(width * height);
+    #[cfg(feature = "rayon")]
+    if par {
         use rayon::prelude::*;
         tmp[..rows8 * width]
             .par_chunks_exact_mut(width * 8)
@@ -706,6 +707,23 @@ pub(crate) fn fast_gaussian_simd_stop(
                 );
                 Ok::<(), enough::StopReason>(())
             })?;
+    } else {
+        for row0 in (0..rows8).step_by(8) {
+            if row0 & (STOP_ROW_STRIDE - 1) == 0 {
+                stop.check()?;
+            }
+            incant!(
+                fast_gaussian_1d_rows_inner(
+                    rg,
+                    input,
+                    plane_b,
+                    width,
+                    row0,
+                    &mut tmp[row0 * width..]
+                ),
+                [v3, neon, wasm128, scalar]
+            )
+        }
     }
     #[cfg(not(feature = "rayon"))]
     for row0 in (0..rows8).step_by(8) {
@@ -749,7 +767,7 @@ pub(crate) fn fast_gaussian_simd_stop(
     // same column writes, different intermediate buffer.
     let cols8 = width / 8 * 8;
     #[cfg(feature = "rayon")]
-    {
+    if par {
         use rayon::prelude::*;
         let nblocks = cols8 / 8;
         let block_outs: Vec<Vec<f32>> = (0..nblocks)
@@ -774,6 +792,16 @@ pub(crate) fn fast_gaussian_simd_stop(
                     orow[b * 8..b * 8 + 8].copy_from_slice(&bo[r * 8..r * 8 + 8]);
                 }
             });
+    } else {
+        for x0 in (0..cols8).step_by(8) {
+            if x0 & (STOP_COL_STRIDE - 1) == 0 {
+                stop.check()?;
+            }
+            incant!(
+                fast_gaussian_vertical_x8_inner(rg, tmp, width, height, x0, out, x0, width),
+                [v3, neon, wasm128, scalar]
+            )
+        }
     }
     #[cfg(not(feature = "rayon"))]
     for x0 in (0..cols8).step_by(8) {
@@ -813,7 +841,7 @@ pub fn blur_planes_simd(
     let np = width * height;
     let mut out = [vec![0f32; np], vec![0f32; np], vec![0f32; np]];
     #[cfg(feature = "rayon")]
-    {
+    if super::par_ok(np) {
         use rayon::prelude::*;
         let [o0, o1, o2] = &mut out;
         let outs = [o0.as_mut_slice(), o1.as_mut_slice(), o2.as_mut_slice()];
@@ -821,6 +849,11 @@ pub fn blur_planes_simd(
             let mut tmp = vec![0f32; np];
             fast_gaussian_simd(rg, &p[c], None, width, height, oc, &mut tmp);
         });
+    } else {
+        let mut tmp = vec![0f32; np];
+        for c in 0..3 {
+            fast_gaussian_simd(rg, &p[c], None, width, height, &mut out[c], &mut tmp);
+        }
     }
     #[cfg(not(feature = "rayon"))]
     {
@@ -845,7 +878,7 @@ pub fn blur_planes_simd_into(
     tmp: &mut [Vec<f32>; 3],
 ) {
     #[cfg(feature = "rayon")]
-    {
+    if super::par_ok(width * height) {
         use rayon::prelude::*;
         let [o0, o1, o2] = out;
         let [t0, t1, t2] = tmp;
@@ -855,6 +888,10 @@ pub fn blur_planes_simd_into(
             .for_each(|(c, (oc, tc))| {
                 fast_gaussian_simd(rg, &p[c], None, width, height, oc, tc);
             });
+    } else {
+        for c in 0..3 {
+            fast_gaussian_simd(rg, &p[c], None, width, height, &mut out[c], &mut tmp[0]);
+        }
     }
     #[cfg(not(feature = "rayon"))]
     {

@@ -49,6 +49,23 @@ use gauss::{RecursiveGaussian, create_recursive_gaussian, multiply_planes};
 use score::ScaleAggregates;
 pub(crate) use score::score as final_score;
 
+/// Plane-pixel count below which a rayon dispatch costs more than it
+/// saves: join/steal/epoch overhead on a 32-thread pool dwarfs the few
+/// hundred microseconds of kernel work (a 255×257 score measured ~35 ms
+/// at 32 threads vs ~15 ms serial; at ≥1 MP the same dispatch wins).
+/// 2¹⁷ keeps a 255×257 plane fully serial while a 1 MP plane's top
+/// scales stay parallel — deeper scales gate themselves on their own
+/// (smaller) plane size.
+#[cfg(feature = "rayon")]
+pub(crate) const PAR_MIN_PIXELS: usize = 1 << 17;
+
+/// Whether a rayon dispatch over `pixels` plane pixels pays for itself.
+#[cfg(feature = "rayon")]
+#[inline]
+pub(crate) fn par_ok(pixels: usize) -> bool {
+    pixels >= PAR_MIN_PIXELS
+}
+
 /// Encoded sRGB pixel data fed to the pipeline.
 ///
 /// Produced by the descriptor-driven input funnel for inputs
@@ -343,7 +360,7 @@ pub fn downsample_planes(
         }
     };
     #[cfg(feature = "rayon")]
-    {
+    if par_ok(nw * nh) {
         use rayon::prelude::*;
         out.par_iter_mut().enumerate().for_each(|(c, plane)| {
             plane
@@ -351,6 +368,12 @@ pub fn downsample_planes(
                 .enumerate()
                 .for_each(|(oy, row)| fill(c, oy, row));
         });
+    } else {
+        for c in 0..3 {
+            for (oy, row) in out[c].chunks_mut(nw).enumerate() {
+                fill(c, oy, row);
+            }
+        }
     }
     #[cfg(not(feature = "rayon"))]
     {
@@ -795,7 +818,29 @@ pub(crate) fn compute_planar_impl(
                 (&xyb2, None),
             ];
             #[cfg(feature = "rayon")]
-            {
+            let run = |(a, b): (&[Vec<f32>; 3], Option<&[Vec<f32>; 3]>)| -> Result<
+                [Vec<f32>; 3],
+                crate::Ssimulacra2Error,
+            > {
+                let mut out = [vec![0f32; npix], vec![0f32; npix], vec![0f32; npix]];
+                let mut tmp = vec![0f32; npix];
+                for c in 0..3 {
+                    simd::fast_gaussian_simd_stop(
+                        &rg,
+                        &a[c],
+                        b.map(|bb| bb[c].as_slice()),
+                        w,
+                        h,
+                        &mut out[c],
+                        &mut tmp,
+                        &stop,
+                    )
+                    .map_err(crate::Ssimulacra2Error::Cancelled)?;
+                }
+                Ok(out)
+            };
+            #[cfg(feature = "rayon")]
+            if par_ok(npix) {
                 use rayon::prelude::*;
                 let chan: Vec<(usize, usize)> =
                     (0..5).flat_map(|j| (0..3).map(move |c| (j, c))).collect();
@@ -828,6 +873,12 @@ pub(crate) fn compute_planar_impl(
                 sigma12 = take3(&mut it);
                 mu1 = take3(&mut it);
                 mu2 = take3(&mut it);
+            } else {
+                sigma1_sq = run(jobs[0])?;
+                sigma2_sq = run(jobs[1])?;
+                sigma12 = run(jobs[2])?;
+                mu1 = run(jobs[3])?;
+                mu2 = run(jobs[4])?;
             }
             #[cfg(not(feature = "rayon"))]
             {
@@ -875,7 +926,7 @@ pub(crate) fn compute_planar_impl(
         // six channel-tasks are independent → parallel under rayon.
         let (avg_ssim, avg_edgediff) = if opts.kernel == Kernel::Simd {
             #[cfg(feature = "rayon")]
-            {
+            let simd_parts = if par_ok(w * h) {
                 let (mut so, mut eo) = ([0f64; 6], [0f64; 12]);
                 use rayon::prelude::*;
                 let n = w * h;
@@ -918,14 +969,20 @@ pub(crate) fn compute_planar_impl(
                     eo[c * 4..c * 4 + 4].copy_from_slice(&parts[c].2);
                 }
                 (so, eo)
-            }
-            #[cfg(not(feature = "rayon"))]
-            {
+            } else {
                 simd::maps_fused_simd_stop(
                     &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h, &stop,
                 )
                 .map_err(crate::Ssimulacra2Error::Cancelled)?
-            }
+            };
+            #[cfg(not(feature = "rayon"))]
+            let simd_parts = {
+                simd::maps_fused_simd_stop(
+                    &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h, &stop,
+                )
+                .map_err(crate::Ssimulacra2Error::Cancelled)?
+            };
+            simd_parts
         } else {
             maps::maps_fused_stop(
                 &mu1, &mu2, &sigma1_sq, &sigma2_sq, &sigma12, &xyb1, &xyb2, w, h, &stop,
