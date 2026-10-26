@@ -1,4 +1,5 @@
-// Test-only oracle for Cloudinary SSIMULACRA2 2.1. BSD-2-Clause.
+// Test-only oracle for Cloudinary SSIMULACRA2 2.1.
+// Color/luminance helpers follow bundled libjxl, see fast-ssim2/LICENSE.libjxl.
 // Uses upstream's own CMS and XYB conversion, without file decoding.
 #include <cstdint>
 #include <cstdio>
@@ -27,14 +28,15 @@ static uint32_t Bits(float value) {
   return bits;
 }
 
-static jxl::ImageBundle Read(jxl::ImageMetadata* metadata, float* bg) {
+static jxl::ImageBundle Read(jxl::ImageMetadata* metadata, float* bg, bool gray = false) {
   int transfer, primaries, alpha;
   size_t width, height;
   float target;
   if (!(std::cin >> transfer >> primaries >> target >> *bg >> alpha >> width >> height))
     throw std::runtime_error("missing image header");
   jxl::ColorEncoding color;
-  if (!color.SetSRGB(jxl::ColorSpace::kRGB)) throw std::runtime_error("SetSRGB failed");
+  if (!color.SetSRGB(gray ? jxl::ColorSpace::kGray : jxl::ColorSpace::kRGB))
+    throw std::runtime_error("SetSRGB failed");
   color.primaries = static_cast<jxl::Primaries>(primaries);
   color.tf.SetTransferFunction(static_cast<jxl::TransferFunction>(transfer));
   if (!color.CreateICC()) throw std::runtime_error("CreateICC failed");
@@ -107,18 +109,33 @@ int main() {
     }
     jxl::ImageMetadata metadata;
     float bg;
-    auto image = Read(&metadata, &bg);
-    if (mode == "score") {
+    const bool gray = mode == "frontend-gray" || mode == "score-gray";
+    auto image = Read(&metadata, &bg, gray);
+    if (mode == "score" || mode == "score-gray" || mode == "score-raw") {
       jxl::ImageMetadata other_metadata;
       float other_bg;
-      auto other = Read(&other_metadata, &other_bg);
-      const double score = ComputeSSIMULACRA2(image, other, bg).Score();
+      auto other = Read(&other_metadata, &other_bg, gray);
+      const auto result = ComputeSSIMULACRA2(image, other, bg);
+      const double score = result.Score();
       uint64_t bits;
       std::memcpy(&bits, &score, sizeof(bits));
       std::printf("%016llx %.17g\n", static_cast<unsigned long long>(bits), score);
+      if (mode == "score-raw") {
+        for (const auto& scale : result.scales) {
+          for (double v : scale.avg_ssim) {
+            std::memcpy(&bits, &v, sizeof(bits));
+            std::printf("%016llx ", static_cast<unsigned long long>(bits));
+          }
+          for (double v : scale.avg_edgediff) {
+            std::memcpy(&bits, &v, sizeof(bits));
+            std::printf("%016llx ", static_cast<unsigned long long>(bits));
+          }
+          std::printf("\n");
+        }
+      }
       continue;
     }
-    if (mode != "frontend") throw std::runtime_error("unknown mode");
+    if (mode != "frontend" && mode != "frontend-gray") throw std::runtime_error("unknown mode");
     // Same alpha arithmetic, in the encoded domain, as ssimulacra2.cc.
     if (image.HasAlpha()) {
       for (size_t y = 0; y < image.ysize(); ++y) {
@@ -132,7 +149,7 @@ int main() {
       }
     }
     image.ClearExtraChannels();
-    if (!image.TransformTo(jxl::ColorEncoding::LinearSRGB(false), jxl::GetJxlCms()))
+    if (!image.TransformTo(jxl::ColorEncoding::LinearSRGB(gray), jxl::GetJxlCms()))
       throw std::runtime_error("TransformTo failed");
     jxl::Image3F xyb(image.xsize(), image.ysize());
     jxl::ToXYB(image, nullptr, &xyb, jxl::GetJxlCms(), nullptr);

@@ -97,7 +97,38 @@ semver-major-audit:
 # Test-only Cloudinary 2.1 frontend oracle; source and build are outside this repo.
 # Run this recipe through run-heavy, as for other compilation commands.
 build-native-hdr-oracle source build output:
-    c++ -std=c++11 -O2 -ffp-contract=off -I{{source}} -I{{source}}/lib/include -I{{build}}/lib/include tools/native-hdr-oracle.cc {{source}}/ssimulacra2.cc {{build}}/lib/libjxl.a {{build}}/lib/libjxl_threads.a $(pkg-config --cflags --libs libhwy lcms2) -lpthread -o {{output}}
+    bash tools/build-native-hdr-oracle.sh "{{source}}" "{{build}}" "{{output}}"
 
 capture-native-hdr oracle output:
     python3 tools/native_hdr_fixtures.py {{oracle}} {{output}}
+
+# Full native-HDR score parity; optional capture must name a new file.
+native-hdr-parity oracle *capture:
+    cargo run -p fast-ssim2 --example native_hdr_parity -- {{oracle}} {{capture}}
+
+capture-native-hdr-gray oracle output:
+    python3 tools/native_hdr_fixtures.py {{oracle}} {{output}} --gray
+
+# Opt-in independent oracle: every u16 code, all native transfers and gamuts.
+native-hdr-dense oracle:
+    SSIM2_HDR_ORACLE={{oracle}} cargo test -p fast-ssim2 --lib native_hdr_dense_frontend_matches_cpp -- --ignored --nocapture
+
+test-native-hdr:
+    cargo test -p fast-ssim2 --all-features --lib native_hdr_frontend_matches_cpp
+    cargo test -p fast-ssim2 --all-features --test native_hdr
+
+# Native HDR frontend and integration conformance under WASM SIMD128.
+test-native-hdr-wasm:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=/" RUSTFLAGS="-C target-feature=+simd128 -Dwarnings" cargo test --target wasm32-wasip1 -p fast-ssim2 --features imgref --test native_hdr -- --nocapture
+
+# Isolate platform libm behavior in the score's final nonlinear transform.
+native-hdr-transform bits:
+    cargo run -p fast-ssim2 --features unstable-internals --example native_hdr_parity -- unused --transform {{bits}}
+
+native-hdr-transform-wasm bits:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=/" RUSTFLAGS="-C target-feature=+simd128 -Dwarnings" cargo run --target wasm32-wasip1 -p fast-ssim2 --features unstable-internals --example native_hdr_parity -- unused --transform {{bits}}
+
+# Keep cross-container scratch on disk and cap its memory/CPU separately.
+test-native-hdr-i686:
+    mkdir -p "$HOME/tmp/fast-ssim2-native-hdr/container-scratch"
+    CROSS_CONTAINER_OPTS="--network=host --env TMPDIR=/scratch --volume $HOME/tmp/fast-ssim2-native-hdr/container-scratch:/scratch --memory=6g --memory-swap=6g --cpus=4 --cpu-shares=256" cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu --lib --test native_hdr
