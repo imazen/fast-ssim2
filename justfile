@@ -93,3 +93,11 @@ package-check:
 # Rust 1.98.1 emits the rustdoc JSON format supported by semver-checks 0.49.
 semver-major-audit:
     RUSTUP_TOOLCHAIN=1.98.1 cargo semver-checks check-release -p fast-ssim2 --baseline-version 0.8.2 --release-type major
+
+# Test-only Cloudinary 2.1 frontend oracle; source and build are outside this repo.
+# Run this recipe through run-heavy, as for other compilation commands.
+build-native-hdr-oracle source build output:
+    c++ -std=c++11 -O2 -ffp-contract=off -I{{source}} -I{{source}}/lib/include -I{{build}}/lib/include tools/native-hdr-oracle.cc {{source}}/ssimulacra2.cc {{build}}/lib/libjxl.a {{build}}/lib/libjxl_threads.a $(pkg-config --cflags --libs libhwy lcms2) -lpthread -o {{output}}
+
+capture-native-hdr oracle output:
+    python3 tools/native_hdr_fixtures.py {{oracle}} {{output}}
