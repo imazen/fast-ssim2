@@ -5,6 +5,11 @@ image quality scoring in safe Rust. Compare two images, or cache a reference
 for repeated comparisons. Runtime dispatch selects SIMD where available;
 `SimdImpl::Scalar` selects the scalar kernels.
 
+**SDR and native HDR use the same API.** PQ, HLG and linear f32 HDR work with
+ordinary comparisons, cached references and spatial maps, without an HDR
+feature flag. The optional `hdr-pu` feature selects a separate PU21 scoring
+variant.
+
 ## Compare images
 
 Inputs are borrowed `PixelSlice` views. The descriptor declares the pixel
@@ -103,7 +108,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `new_with_config` accepts backend selection and cancellation. It rejects strip
 options because construction stores a full reference pyramid. Use
-`compare_with_config` to select strips for subsequent comparisons. The reference
+`compare_with_config` to select strips for subsequent SDR comparisons; native
+HDR rejects strip options. The reference
 owns its data and can be shared across threads; cloning it copies its buffers.
 Comparisons allocate temporary storage; there is no zero-allocation scratch API.
 
@@ -196,17 +202,14 @@ If either image has alpha, scoring evaluates two backgrounds and takes the
 lower score. Encoded inputs composite at sRGB values 0.1 and 0.9 before
 linearization. Linear inputs composite at 0.1 and 0.9 in their input domain,
 as in the C++ reference.
-Only opaque u8 sRGB uses the captured LUT throughout input conversion;
-u16, float, and fractional-alpha conversions do not promise binary-reference
-bit equality.
+For sRGB conversion, only opaque u8 uses the captured LUT throughout;
+u16, float, and fractional-alpha sRGB conversions do not promise binary-reference
+bit equality. Native HDR has its own reference-parity coverage below.
 
 Unsupported descriptors return `UnsupportedInput`. Convert other color spaces
 upstream, for example with [zenpixels-convert](https://lib.rs/crates/zenpixels-convert).
 
 ## HDR
-
-See the [native HDR guide](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr.md)
-for sample units, layouts, alpha, caching and compatibility.
 
 The standard scoring functions, cached references and spatial maps accept
 native HDR without a feature flag: PQ/HLG in u8/u16/f32, and linear f32 with
@@ -218,16 +221,44 @@ Linear samples are relative to a luminance anchor. Defaults match the pinned
 C++ reference: 255 nits for linear, 10000 for PQ, and 1000 for HLG. Set
 `PixelSlice::with_diffuse_white(zenpixels::DiffuseWhite::new(nits))` to state
 the luminance represented by linear 1.0, or the HLG display peak. For absolute
-linear nits, use an anchor of 1.0. Linear values above 1 and negative gamut-conversion
-results are retained. PQ/HLG, wide-gamut and anchored-linear inputs require
-whole-image evaluation; strip options return `InvalidConfiguration`.
+linear nits, use an anchor of 1.0. Linear values above 1 and negative
+gamut-conversion results are retained. PQ/HLG, wide-gamut and anchored-linear
+inputs require whole-image evaluation; strip options return `InvalidConfiguration`.
 
+For example, linear BT.2020 with 1.0 representing 1000 nits:
+
+```rust
+use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
+use zenpixels::{ColorPrimaries, DiffuseWhite};
+
+let source = [0.25_f32, 0.5, 0.75];
+let distorted = [0.26_f32, 0.5, 0.74];
+let descriptor = PixelDescriptor::RGBF32_LINEAR
+    .with_primaries(ColorPrimaries::Bt2020);
+let a = PixelSlice::new(bytemuck::cast_slice(&source), 1, 1, 12, descriptor)?
+    .with_diffuse_white(DiffuseWhite::new(1000.0));
+let b = PixelSlice::new(bytemuck::cast_slice(&distorted), 1, 1, 12, descriptor)?
+    .with_diffuse_white(DiffuseWhite::new(1000.0));
+assert!(compute_ssimulacra2(&a, &b)?.is_finite());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The [native HDR guide](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr.md)
+covers sample units, layouts, alpha and caching.
 The [native HDR parity record](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr-parity.md)
-identifies the Cloudinary 2.1 oracle and coverage. Final f64 scores can vary
-across platform math libraries even when frontend values match.
+records 5,505,024 exact frontend pixel comparisons and 264 exact x86-64 Linux
+GNU score pairs against pinned Cloudinary SSIMULACRA2 2.1. Final f64 scores can
+vary across platform math libraries even when frontend values match. The
+[performance review](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr-performance-2026-10-26.md)
+includes paired before/after timings, profiling and measurement limits.
+
+### Optional PU21 variant (`hdr-pu`)
 
 The optional `hdr-pu` feature provides `compute_ssimulacra2_pu` and
 `compute_ssimulacra2_pu_with_config`, a separate PU21 encoding variant.
+Use it when reproducing PU21 scores; ordinary native HDR scoring uses the
+standard functions above. Switching between these paths changes the metric
+and requires separate score baselines.
 Its linear f32 samples remain absolute nits; PQ decodes to nits and HLG uses
 a 1000-nit display. Primaries are consumed as supplied. Alpha composites on
 20/200-nit backgrounds. PU21 scores are not interchangeable with native scores;
@@ -239,7 +270,7 @@ PU21 has no cached reference or strip API.
 |---|---|
 | `imgref` | Forward `zenpixels/imgref` conversions |
 | `rayon` | Parallel kernels and opt-in parallel strips |
-| `hdr-pu` | Optional PU21 HDR variant |
+| `hdr-pu` | Separate PU21 score variant; native HDR needs no feature |
 | `unstable-internals` | Development tools only; exposes kernels without an API stability guarantee |
 
 No features are enabled by default. Runtime SIMD dispatch is available without
@@ -266,8 +297,9 @@ credit for the algorithm and its calibration belongs to them.
 
 **What this fork adds:** cross-platform SIMD acceleration (x86_64 / aarch64 /
 wasm32 via [archmage](https://crates.io/crates/archmage)), a precomputed-reference
-batch API, a bounded-memory strip path, cooperative cancellation, `imgref`
-support, and `#![forbid(unsafe_code)]`.
+batch API, spatial maps, native HDR color conversion, strip processing for
+intermediate buffers, cooperative cancellation, `imgref` support, and
+`#![forbid(unsafe_code)]`.
 
 ## License
 
