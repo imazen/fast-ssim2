@@ -273,6 +273,8 @@ BSD-2-Clause, the same license as upstream
 [LICENSE](https://github.com/imazen/fast-ssim2/blob/main/LICENSE). The native HDR
 color port also carries the bundled libjxl BSD-3-Clause
 [notice](https://github.com/imazen/fast-ssim2/blob/main/fast-ssim2/LICENSE.libjxl).
+The portable HLG power kernel carries Arm's MIT
+[notice](https://github.com/imazen/fast-ssim2/blob/main/fast-ssim2/LICENSE.arm).
 
 We are glad to release our improvements under the original BSD-2-Clause license
 if upstream wants to take over maintenance of them — we would rather contribute

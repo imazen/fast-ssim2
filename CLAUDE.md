@@ -110,3 +110,14 @@ Fixed: straight/premultiplied alpha metadata on RGB/Gray layouts without a
 stored alpha channel is rejected with `UnsupportedInput` before ingestion.
 The shared check covers standard, native HDR and PU21 frontends; these inputs
 previously ignored alpha metadata or could read past a pixel's stored channels.
+
+## Known Bugs: HLG grayscale power portability (2026-10-26)
+
+Fixed: macOS ARM's `powf` differed by one bit from the pinned Linux C++ oracle
+for HLG grayscale on the 0.1 alpha background at 203 nits. Using f64 power
+and casting back also differed for some inputs (HLG code 271/65535 at 1000
+nits). A private Arm-derived power polynomial retains the oracle's operation
+order for positive finite bases. All 648 frontend fixtures and an expanded
+5,505,024-probe RGB/grayscale differential test pass on x86-64 Linux.
+The code-271 case also runs as a normal unit regression. See the parity record
+for platform verification and source provenance.

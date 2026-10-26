@@ -115,3 +115,19 @@ low-peak captures add 72 probes, bringing the committed frontend fixtures to
 The supported public API inventory is unchanged. Its generated internal
 snapshot was refreshed for compiler-generated Eq helpers and normalized
 `Self` spellings, without changing any supported signature.
+
+## HLG grayscale power portability
+
+macOS ARM CI exposed a one-bit linear-value difference on HLG grayscale:
+the 0.1 alpha background at a 203-nit target. Computing power in f64 and
+rounding to f32 passes that fixture, but differs from the pinned C++ result
+at HLG code 271/65535 with a 1000-nit target. A normal unit regression
+retains that independently captured output (`0x3508bc8e`).
+
+The private positive-finite power kernel now follows the unscaled,
+non-contracting polynomial from
+[Arm optimized routines](https://github.com/ARM-software/optimized-routines/tree/f5205d212ac67727689176b7fcfaef7864d898a5/math),
+under its MIT license. Zero, negative and nonfinite inputs retain platform
+IEEE special-value handling. The expanded dense oracle test covers grayscale
+alongside all existing RGB cases: **5,505,024 pixels** match the pinned C++
+frontend exactly on x86-64 Linux. The 648 committed frontend probes also pass.
