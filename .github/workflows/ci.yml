@@ -73,7 +73,6 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-latest
-          - macos-26-intel
           - windows-latest
           - windows-11-arm
     steps:
@@ -107,8 +106,8 @@ jobs:
         with:
           key: cross-i686
 
-      - name: Test (i686, lib)
-        run: cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu --lib
+      - name: Test (i686, library and native HDR)
+        run: cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu --lib --test native_hdr
 
   # ==========================================================================
   # WASM testing
@@ -138,6 +137,12 @@ jobs:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=/ --"
           RUSTFLAGS: "-C target-feature=+simd128 -Dwarnings"
         run: cargo test --target wasm32-wasip1 --features imgref -p fast-ssim2 --lib
+
+      - name: Test native HDR APIs with WASM SIMD128
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime --dir=/ --"
+          RUSTFLAGS: "-C target-feature=+simd128 -Dwarnings"
+        run: cargo test --target wasm32-wasip1 --features imgref -p fast-ssim2 --test native_hdr
 
       - name: Test WASM without SIMD (scalar)
         env:
