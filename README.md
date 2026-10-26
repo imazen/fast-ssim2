@@ -205,6 +205,9 @@ upstream, for example with [zenpixels-convert](https://lib.rs/crates/zenpixels-c
 
 ## HDR
 
+See the [native HDR guide](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr.md)
+for sample units, layouts, alpha, caching and compatibility.
+
 The standard scoring functions, cached references and spatial maps accept
 native HDR without a feature flag: PQ/HLG in u8/u16/f32, and linear f32 with
 BT.709, BT.2020 or Display P3 primaries. They keep the reference's cube-root

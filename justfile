@@ -58,6 +58,10 @@ docs-check:
     cmp README.md README.crates.md
     cmp README.md fast-ssim2/README.md
 
+# Compile and execute the guide's examples with the library's actual dependencies.
+check-native-hdr-guide:
+    python3 tools/check_native_hdr_guide.py
+
 # Workspace lint gate with every library feature (CLI video requires system libraries).
 clippy-workspace:
     cargo clippy --workspace --all-targets --features fast-ssim2/unstable-internals,fast-ssim2/hdr-pu,fast-ssim2/imgref,fast-ssim2/rayon -- -D warnings
@@ -82,6 +86,9 @@ build-version-audit: clippy-version-audit
 # Invoke only the current kernel for a profiler; no timing instrumentation.
 profile-native-hdr kind output:
     AUDIT_NATIVE_HDR=1 AUDIT_PROFILE={{kind}} perf record -F 499 -g -o {{output}} -- tools/version-audit/target/release/ssim2-version-audit
+
+native-hdr-performance-summary input output commit binary host:
+    python3 tools/native_hdr_performance_report.py {{input}} {{output}} --source-commit {{commit}} --binary-sha256 {{binary}} --host-label {{host}}
 
 # Inventory breaking changes relative to the latest crates.io release.
 semver-audit:

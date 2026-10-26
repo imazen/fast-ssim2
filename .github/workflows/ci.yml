@@ -59,6 +59,10 @@ jobs:
         run: cargo clippy -p fast-ssim2 --all-targets --all-features -- -D warnings
       - name: Clippy (CLI)
         run: cargo clippy -p fast-ssim2-cli --all-targets -- -D warnings
+      - name: Native HDR guide examples
+        run: python3 tools/check_native_hdr_guide.py
+      - name: Strict library documentation
+        run: RUSTDOCFLAGS="-D warnings" cargo doc -p fast-ssim2 --all-features --no-deps
 
   # ==========================================================================
   # Test matrix across platforms
