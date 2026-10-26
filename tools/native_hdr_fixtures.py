@@ -18,6 +18,7 @@ def main():
     kind = parser.add_mutually_exclusive_group()
     kind.add_argument("--gray", action="store_true")
     kind.add_argument("--signed-zero", action="store_true")
+    parser.add_argument("--low-peak", action="store_true")
     args = parser.parse_args()
     # Saturated colors, darks, highlights, the HLG knee and extended code values.
     # No smooth image gradients: these are isolated frontend probes.
@@ -34,7 +35,8 @@ def main():
             "# Oracle sha256: " + hashlib.sha256(args.oracle.read_bytes()).hexdigest(),
             "# case: transfer primaries target background alpha; pixels: RGBA, linear RGB, XYB (10 x 8 hex digits)"]
     count = 0
-    for tf, target in [(8, 255), (16, 10000), (18, 1000), (8, 203), (16, 255), (18, 300)]:
+    grid = [(18, 203)] if args.low_peak else [(8, 255), (16, 10000), (18, 1000), (8, 203), (16, 255), (18, 300)]
+    for tf, target in grid:
         for primaries in ([1] if args.gray else [1, 9, 11]):
             for alpha in ([0] if args.signed_zero else [0, 1]):
                 for bg in ([0.1, 0.9] if alpha else [0.5]):

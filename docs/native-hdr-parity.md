@@ -105,3 +105,13 @@ zero. Keeping that initial addition avoids retaining a negative zero in an
 all-negative-zero dot product. These fixtures pass native x86-64, WASM SIMD128
 and i686. Invalid alpha metadata on layouts without alpha storage is rejected
 before any frontend reads pixel channels.
+
+Low-peak HLG coverage includes a 203-nit display, exercising the forward
+OOTF's hue-preserving normalization when system gamma is below one. The
+expanded dense audit matches **4,128,768 pixel probes** exactly. RGB/grayscale
+low-peak captures add 72 probes, bringing the committed frontend fixtures to
+**648 probes**; all pass native x86-64, WASM SIMD128 and cross i686.
+
+The supported public API inventory is unchanged. Its generated internal
+snapshot was refreshed for compiler-generated Eq helpers and normalized
+`Self` spellings, without changing any supported signature.

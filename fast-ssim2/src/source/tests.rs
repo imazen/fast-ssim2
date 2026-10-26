@@ -181,6 +181,8 @@ fn native_hdr_frontend_matches_cpp() {
         .lines()
         .chain(include_str!("native_hdr_gray_cpp.tsv").lines())
         .chain(include_str!("native_hdr_signed_cpp.tsv").lines())
+        .chain(include_str!("native_hdr_low_peak_cpp.tsv").lines())
+        .chain(include_str!("native_hdr_low_peak_gray_cpp.tsv").lines())
     {
         if line.starts_with('#') {
             continue;
@@ -288,16 +290,16 @@ fn native_hdr_dense_frontend_matches_cpp() {
         std::env::var_os("SSIM2_HDR_ORACLE").expect("SSIM2_HDR_ORACLE must name the C++ oracle");
     let mut checked = 0usize;
     for (tf, transfer, targets) in [
-        (8, TransferFunction::Linear, [255.0, 203.0]),
-        (16, TransferFunction::Pq, [10000.0, 255.0]),
-        (18, TransferFunction::Hlg, [1000.0, 300.0]),
+        (8, TransferFunction::Linear, &[255.0, 203.0][..]),
+        (16, TransferFunction::Pq, &[10000.0, 255.0][..]),
+        (18, TransferFunction::Hlg, &[1000.0, 300.0, 203.0][..]),
     ] {
         for (p, primaries) in [
             (1, zenpixels::ColorPrimaries::Bt709),
             (9, zenpixels::ColorPrimaries::Bt2020),
             (11, zenpixels::ColorPrimaries::DisplayP3),
         ] {
-            for target in targets {
+            for &target in targets {
                 for alpha in [false, true] {
                     for bg in if alpha { &[0.1, 0.9][..] } else { &[0.5][..] } {
                         let data: Vec<u16> = (0..=u16::MAX)

@@ -148,3 +148,7 @@ test-native-hdr-frontend:
 
 test-input-alpha:
     cargo test -p fast-ssim2 --all-features --test native_hdr alpha_metadata_without_a_stored_channel_is_rejected
+
+capture-native-hdr-low-peak oracle rgb_output gray_output:
+    python3 tools/native_hdr_fixtures.py {{oracle}} {{rgb_output}} --low-peak
+    python3 tools/native_hdr_fixtures.py {{oracle}} {{gray_output}} --low-peak --gray
