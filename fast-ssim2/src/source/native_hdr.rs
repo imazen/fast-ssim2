@@ -21,6 +21,7 @@ pub(crate) struct NativeInput {
 
 impl NativeInput {
     pub(crate) fn new(slice: &PixelSlice<'_>) -> Result<Self, Ssimulacra2Error> {
+        validate_alpha_layout(slice)?;
         let d = slice.descriptor();
         if d.signal_range != SignalRange::Full {
             return Err(Ssimulacra2Error::UnsupportedInput(
@@ -181,6 +182,11 @@ fn pq_decode(v: f32) -> f32 {
 
 fn hlg_decode(rgb: [f32; 3], primaries: ColorPrimaries, target: f32, gray: bool) -> [f32; 3] {
     let mut rgb = rgb.map(|v| {
+        // TF_HLG::InvOETF returns +0.0 for either signed zero before restoring
+        // the sign of nonzero inputs.
+        if v == 0.0 {
+            return 0.0;
+        }
         let e = f64::from(v.abs());
         let scene = if e <= 0.5 {
             e * e * (1.0 / 3.0)
@@ -259,6 +265,9 @@ fn gamut_to_srgb(rgb: [f32; 3], primaries: ColorPrimaries) -> [f32; 3] {
         _ => return rgb,
     };
     m.map(|r| {
-        ((r[0] * f64::from(rgb[0]) + r[1] * f64::from(rgb[1])) + r[2] * f64::from(rgb[2])) as f32
+        // The reference CMS starts its sum at +0.0. Keep that first add:
+        // omitting it can retain -0.0 when all three products are negative zero.
+        (((0.0 + r[0] * f64::from(rgb[0])) + r[1] * f64::from(rgb[1])) + r[2] * f64::from(rgb[2]))
+            as f32
     })
 }

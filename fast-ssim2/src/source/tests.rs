@@ -180,6 +180,7 @@ fn native_hdr_frontend_matches_cpp() {
     for line in include_str!("native_hdr_cpp.tsv")
         .lines()
         .chain(include_str!("native_hdr_gray_cpp.tsv").lines())
+        .chain(include_str!("native_hdr_signed_cpp.tsv").lines())
     {
         if line.starts_with('#') {
             continue;

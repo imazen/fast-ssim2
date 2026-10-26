@@ -75,3 +75,33 @@ the subtraction. Keeping those operations separate removed the residual
 The existing SDR, JPEG, SIMD, strip, cached-reference and spatial-map assertions
 pass unchanged with that correction. This can change low score bits in SDR
 and PU21 too; retain build-commit provenance when storing metric output.
+
+The WASM SIMD128 run also passes all 432 committed RGB/grayscale frontend
+probes exactly. A separate final-transform probe isolates a two-ULP score
+variation: weighted sum bits `407076193bdfd43b` produce score bits
+`c06c6fb83762f952` with x86-64 glibc 2.35, and `c06c6fb83762f950` with WASI.
+This reproduces without any image conversion, XYB or blur. C++ score captures
+therefore gate x86-64 Linux GNU. Other platforms still run all captured inputs
+and require exact agreement among scalar, SIMD, cached and spatial-map paths.
+Use `just native-hdr-transform BITS` and `just native-hdr-transform-wasm BITS`
+to isolate the final f64 math; `native_hdr_parity ORACLE --raw-case` emits the
+C++ aggregates used to derive the weighted sum.
+
+The final score capture extends the grid to **264 pairs** with twelve mixed
+transfer/gamut/intensity comparisons. Both scalar and SIMD scores match C++,
+including cached scores and cold/cached map scores. The capture records the
+oracle executable SHA256. The builder requires the pinned source revision and
+unchanged metric/library sources, and preserves previous oracle executables
+as `.bak` files when rebuilding.
+
+All 252 original-grid cases also pass exact scalar/SIMD/cached/map consistency
+checks under WASM SIMD128 and cross i686. CI includes the native HDR API tests
+on those targets, Windows x64/ARM, Linux x64/ARM and macOS ARM.
+
+Signed-zero captures add 144 frontend probes (576 committed probes total).
+They caught two exact-order details: HLG's inverse OETF returns positive zero
+for either input zero, and the reference ICC matrix sum starts at positive
+zero. Keeping that initial addition avoids retaining a negative zero in an
+all-negative-zero dot product. These fixtures pass native x86-64, WASM SIMD128
+and i686. Invalid alpha metadata on layouts without alpha storage is rejected
+before any frontend reads pixel channels.

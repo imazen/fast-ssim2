@@ -71,6 +71,27 @@ pub(crate) fn checked_dimensions(w: usize, h: usize) -> Result<usize, Ssimulacra
     Ok(npix)
 }
 
+fn validate_alpha_layout(slice: &PixelSlice<'_>) -> Result<(), Ssimulacra2Error> {
+    let desc = slice.descriptor();
+    if matches!(
+        desc.alpha,
+        Some(AlphaMode::Straight | AlphaMode::Premultiplied)
+    ) && matches!(
+        desc.format,
+        PixelFormat::Rgb8
+            | PixelFormat::Rgb16
+            | PixelFormat::RgbF32
+            | PixelFormat::Gray8
+            | PixelFormat::Gray16
+            | PixelFormat::GrayF32
+    ) {
+        return Err(Ssimulacra2Error::UnsupportedInput(
+            "alpha semantics require a stored alpha channel",
+        ));
+    }
+    Ok(())
+}
+
 /// Interpret `slice` per its [`PixelDescriptor`], materializing the
 /// planes the pipeline needs. See the crate docs for which descriptors
 /// are rejected (HDR transfers, narrow range, non-BT.709 primaries).
@@ -88,6 +109,7 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
     {
         return native_hdr::NativeInput::new(slice).map(PreparedInput::Native);
     }
+    validate_alpha_layout(slice)?;
 
     // Descriptor gates — reject what the SDR metric can't honestly score.
     match desc.transfer {
@@ -514,6 +536,7 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
     let desc = slice.descriptor();
     let (w, h) = (slice.width() as usize, slice.rows() as usize);
     let npix = checked_dimensions(w, h)?;
+    validate_alpha_layout(slice)?;
     if desc.signal_range != SignalRange::Full {
         return Err(Ssimulacra2Error::UnsupportedInput(
             "narrow/limited signal range — expand to full range upstream",

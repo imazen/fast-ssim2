@@ -244,3 +244,52 @@ fn native_hdr_validates_anchors_and_honors_cancellation() {
         ));
     }
 }
+
+#[test]
+fn alpha_metadata_without_a_stored_channel_is_rejected() {
+    use zenpixels::{AlphaMode, PixelFormat};
+    for format in [
+        PixelFormat::Rgb8,
+        PixelFormat::Rgb16,
+        PixelFormat::RgbF32,
+        PixelFormat::Gray8,
+        PixelFormat::Gray16,
+        PixelFormat::GrayF32,
+    ] {
+        for transfer in [
+            TransferFunction::Srgb,
+            TransferFunction::Pq,
+            TransferFunction::Hlg,
+            TransferFunction::Linear,
+        ] {
+            for alpha in [AlphaMode::Straight, AlphaMode::Premultiplied] {
+                let mut desc = PixelDescriptor::RGB8_SRGB
+                    .with_transfer(transfer)
+                    .with_alpha(Some(alpha));
+                desc.format = format;
+                let bpp = format.bytes_per_pixel();
+                let data = vec![0u32; 64 * bpp / 4];
+                let image =
+                    PixelSlice::new(bytemuck::cast_slice(&data), 8, 8, 8 * bpp, desc).unwrap();
+                assert!(
+                    matches!(
+                        compute_ssimulacra2(&image, &image),
+                        Err(Ssimulacra2Error::UnsupportedInput(_))
+                    ),
+                    "{desc:?}"
+                );
+                assert!(matches!(
+                    Ssimulacra2Reference::new(&image),
+                    Err(Ssimulacra2Error::UnsupportedInput(_))
+                ));
+                #[cfg(feature = "hdr-pu")]
+                if transfer != TransferFunction::Srgb {
+                    assert!(matches!(
+                        fast_ssim2::compute_ssimulacra2_pu(&image, &image),
+                        Err(Ssimulacra2Error::UnsupportedInput(_))
+                    ));
+                }
+            }
+        }
+    }
+}

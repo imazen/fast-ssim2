@@ -15,7 +15,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("oracle", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--gray", action="store_true")
+    kind = parser.add_mutually_exclusive_group()
+    kind.add_argument("--gray", action="store_true")
+    kind.add_argument("--signed-zero", action="store_true")
     args = parser.parse_args()
     # Saturated colors, darks, highlights, the HLG knee and extended code values.
     # No smooth image gradients: these are isolated frontend probes.
@@ -25,13 +27,16 @@ def main():
     if args.gray:
         pixels = [(v, v, v, a) for v, a in [(0.0, 0.0), (0.03, 1.0),
                   (0.2, 0.25), (0.5, 0.75), (0.9, 0.5), (1.1, 1.0)]]
+    if args.signed_zero:
+        pixels = [tuple(-0.0 if mask & (1 << c) else 0.0 for c in range(3)) + (1.0,)
+                  for mask in range(8)]
     rows = ["# Cloudinary SSIMULACRA2 2.1, 81feacf6a5b0bbd7ec11b4a881a4615033ab0b10",
             "# Oracle sha256: " + hashlib.sha256(args.oracle.read_bytes()).hexdigest(),
             "# case: transfer primaries target background alpha; pixels: RGBA, linear RGB, XYB (10 x 8 hex digits)"]
     count = 0
     for tf, target in [(8, 255), (16, 10000), (18, 1000), (8, 203), (16, 255), (18, 300)]:
         for primaries in ([1] if args.gray else [1, 9, 11]):
-            for alpha in [0, 1]:
+            for alpha in ([0] if args.signed_zero else [0, 1]):
                 for bg in ([0.1, 0.9] if alpha else [0.5]):
                     header = f"{tf} {primaries} {target} {bg} {alpha}"
                     samples = [" ".join(map(bits, px)) for px in pixels]

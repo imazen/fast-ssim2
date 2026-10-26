@@ -132,3 +132,19 @@ native-hdr-transform-wasm bits:
 test-native-hdr-i686:
     mkdir -p "$HOME/tmp/fast-ssim2-native-hdr/container-scratch"
     CROSS_CONTAINER_OPTS="--network=host --env TMPDIR=/scratch --volume $HOME/tmp/fast-ssim2-native-hdr/container-scratch:/scratch --memory=6g --memory-swap=6g --cpus=4 --cpu-shares=256" cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu --lib --test native_hdr
+
+capture-native-hdr-signed oracle output:
+    python3 tools/native_hdr_fixtures.py {{oracle}} {{output}} --signed-zero
+
+test-native-hdr-frontend-wasm:
+    CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime --dir=/" RUSTFLAGS="-C target-feature=+simd128 -Dwarnings" cargo test --target wasm32-wasip1 -p fast-ssim2 --features imgref --lib native_hdr_frontend_matches_cpp
+
+test-native-hdr-frontend-i686:
+    mkdir -p "$HOME/tmp/fast-ssim2-native-hdr/container-scratch"
+    CROSS_CONTAINER_OPTS="--network=host --env TMPDIR=/scratch --volume $HOME/tmp/fast-ssim2-native-hdr/container-scratch:/scratch --memory=6g --memory-swap=6g --cpus=4 --cpu-shares=256" cross test -p fast-ssim2 --features imgref --target i686-unknown-linux-gnu --lib native_hdr_frontend_matches_cpp
+
+test-native-hdr-frontend:
+    cargo test -p fast-ssim2 --lib native_hdr_frontend_matches_cpp
+
+test-input-alpha:
+    cargo test -p fast-ssim2 --all-features --test native_hdr alpha_metadata_without_a_stored_channel_is_rejected

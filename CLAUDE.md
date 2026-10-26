@@ -81,3 +81,31 @@ tagged `v0.9.0-release`. GitHub release was created before publication; all
 12 CI jobs passed, including Intel macOS. A fresh registry download's VCS
 metadata and SIMD source match the release commit. The older August `v0.9.0`
 GitHub tag is preserved and was never the registry release source.
+
+## Known Bugs: final score transform portability (2026-10-26)
+
+Native HDR frontend fixture bits match on x86-64 Linux and WASM SIMD128.
+Final scores need not match the Linux C++ oracle across libm implementations.
+For weighted sum `f64::from_bits(0x407076193bdfd43b)`, the unchanged final
+transform returns `0xc06c6fb83762f952` on x86-64 glibc 2.35 and
+`0xc06c6fb83762f950` on wasm32-wasip1. The difference is reproduced by calling
+only the score transform, without any image conversion or blur. Reproduce
+with `just native-hdr-transform 407076193bdfd43b` and
+`just native-hdr-transform-wasm 407076193bdfd43b`.
+
+Captured C++ score bits gate x86-64 Linux GNU; all platforms retain exact
+scalar/SIMD, cached/one-shot and map/score consistency assertions. See
+`docs/native-hdr-parity.md` for the pinned C++ oracle and frontend coverage.
+
+## Known Bugs: native frontend edge cases (2026-10-26)
+
+Fixed: native HLG now returns positive zero for either encoded signed zero,
+matching libjxl's early return. The ICC matrix accumulator starts at positive
+zero, preserving the reference CMS's result when every product is negative
+zero. Independent captures cover all eight RGB sign patterns across transfers,
+gamuts and intensity targets; the fixtures pass native, WASM SIMD128 and i686.
+
+Fixed: straight/premultiplied alpha metadata on RGB/Gray layouts without a
+stored alpha channel is rejected with `UnsupportedInput` before ingestion.
+The shared check covers standard, native HDR and PU21 frontends; these inputs
+previously ignored alpha metadata or could read past a pixel's stored channels.
