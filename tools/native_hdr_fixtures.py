@@ -23,7 +23,8 @@ def main():
               (0.2, 0.4, 0.6, 0.5), (-0.01, 0.5, 1.1, 1.0)]
     rows = ["# Cloudinary SSIMULACRA2 2.1, 81feacf6a5b0bbd7ec11b4a881a4615033ab0b10",
             "# Oracle sha256: " + hashlib.sha256(args.oracle.read_bytes()).hexdigest(),
-            "# transfer primaries target background alpha r g b a linear_r linear_g linear_b x y b"]
+            "# case: transfer primaries target background alpha; pixels: RGBA, linear RGB, XYB (10 x 8 hex digits)"]
+    count = 0
     for tf, target in [(8, 255), (16, 10000), (18, 1000), (8, 203), (16, 255), (18, 300)]:
         for primaries in [1, 9, 11]:
             for alpha in [0, 1]:
@@ -35,10 +36,13 @@ def main():
                                             text=True, capture_output=True, check=True)
                     output = result.stdout.splitlines()
                     assert len(output) == len(samples), result
+                    rows.append(f"case {header}")
                     for sample, expected in zip(samples, output):
                         assert len(expected.split()) == 6, expected
-                        rows.append(f"{header} {sample} {expected}")
+                        rows.append((sample + expected).replace(" ", ""))
+                        count += 1
     content = "\n".join(rows) + "\n"
+    assert len(content.encode()) <= 30_000, "generated fixtures need approval above 30 KB"
     if args.output.exists():
         if args.output.read_text() == content:
             return
@@ -47,7 +51,7 @@ def main():
             raise RuntimeError(f"preserve existing backup first: {backup}")
         args.output.rename(backup)
     args.output.write_text(content)
-    print(f"Captured {len(rows) - 3} pixel probes, {len(content)} bytes")
+    print(f"Captured {count} pixel probes, {len(content)} bytes")
 
 
 if __name__ == "__main__":
