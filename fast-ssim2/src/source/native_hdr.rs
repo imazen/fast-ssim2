@@ -1,3 +1,6 @@
+// Copyright (c) the JPEG XL Project Authors. All rights reserved.
+// Native HDR transfer/color port: BSD-3-Clause, see ../../LICENSE.libjxl.
+
 //! Native Cloudinary SSIMULACRA2 2.1 color frontend. See
 //! `docs/native-hdr-parity.md` for the independent oracle and provenance.
 //! PQ coefficients and HLG operation order follow bundled libjxl (BSD-3-Clause).
