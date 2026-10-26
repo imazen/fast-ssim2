@@ -201,7 +201,8 @@ fn hlg_decode(rgb: [f32; 3], primaries: ColorPrimaries, target: f32, gray: bool)
     }
     let gamma = 1.2 * 1.111_f32.powf((target * 1e-3).log2());
     if gray {
-        return [rgb[0].powf(gamma); 3];
+        // Keep the oracle's powf polynomial and rounding across platforms.
+        return [super::native_hdr_pow::powf(rgb[0], gamma); 3];
     }
     let lum = match primaries {
         ColorPrimaries::Bt2020 => [0x3e8680a4, 0x3f2d9148, 0x3d72e65a],

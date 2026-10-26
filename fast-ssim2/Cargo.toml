@@ -21,7 +21,7 @@ exclude = [
     "Cargo.toml.original.txt",
     "fuzz/",
 ]
-license = "BSD-2-Clause AND BSD-3-Clause"
+license = "BSD-2-Clause AND BSD-3-Clause AND MIT"
 keywords = ["image", "quality", "ssim", "ssimulacra2", "perceptual"]
 categories = ["multimedia::images", "algorithms"]
 

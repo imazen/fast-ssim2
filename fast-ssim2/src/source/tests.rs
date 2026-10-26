@@ -172,6 +172,26 @@ fn dimensions_validate_before_allocation() {
 }
 
 #[test]
+fn native_hdr_gray_power_keeps_cpp_rounding() {
+    // Independent C++ frontend-gray capture, HLG at 1000 nits, code 271/65535.
+    // f64::powf followed by an f32 cast differs by one bit from this oracle.
+    let samples = [f32::from_bits(0x3b878088)];
+    let image = PixelSlice::new(
+        bytemuck::cast_slice(&samples),
+        1,
+        1,
+        4,
+        PixelDescriptor::GRAYF32_LINEAR.with_transfer(TransferFunction::Hlg),
+    )
+    .unwrap();
+    let prepared = funnel(&image).unwrap();
+    let linear = crate::linearize_prepared(&prepared, 1, 0.5);
+    for plane in &linear {
+        assert_eq!(plane[0].to_bits(), 0x3508bc8e);
+    }
+}
+
+#[test]
 fn native_hdr_frontend_matches_cpp() {
     use std::sync::Arc;
     let mut descriptor = PixelDescriptor::RGBF32_LINEAR;
@@ -294,10 +314,11 @@ fn native_hdr_dense_frontend_matches_cpp() {
         (16, TransferFunction::Pq, &[10000.0, 255.0][..]),
         (18, TransferFunction::Hlg, &[1000.0, 300.0, 203.0][..]),
     ] {
-        for (p, primaries) in [
-            (1, zenpixels::ColorPrimaries::Bt709),
-            (9, zenpixels::ColorPrimaries::Bt2020),
-            (11, zenpixels::ColorPrimaries::DisplayP3),
+        for (p, primaries, gray) in [
+            (1, zenpixels::ColorPrimaries::Bt709, false),
+            (9, zenpixels::ColorPrimaries::Bt2020, false),
+            (11, zenpixels::ColorPrimaries::DisplayP3, false),
+            (1, zenpixels::ColorPrimaries::Bt709, true),
         ] {
             for &target in targets {
                 for alpha in [false, true] {
@@ -312,8 +333,9 @@ fn native_hdr_dense_frontend_matches_cpp() {
                                 ]
                             })
                             .collect();
+                        let mode = if gray { "frontend-gray" } else { "frontend" };
                         let mut request = format!(
-                            "frontend\n{tf} {p} {target} {bg} {} 65536 1\n",
+                            "{mode}\n{tf} {p} {target} {bg} {} 65536 1\n",
                             u8::from(alpha)
                         );
                         for px in data.as_chunks::<4>().0 {
@@ -321,18 +343,33 @@ fn native_hdr_dense_frontend_matches_cpp() {
                             writeln!(
                                 request,
                                 "{:08x} {:08x} {:08x} {:08x}",
-                                bits[0], bits[1], bits[2], bits[3]
+                                bits[0],
+                                bits[if gray { 0 } else { 1 }],
+                                bits[if gray { 0 } else { 2 }],
+                                bits[3]
                             )
                             .unwrap();
                         }
                         // Linear u16 is intentionally unsupported. Test the same decoded
                         // f32 samples for linear transfer; PQ/HLG exercise the u16 reader.
-                        let floats: Vec<f32> =
-                            data.iter().map(|&v| v as f32 * (1.0 / 65535.0)).collect();
-                        let desc = if transfer == TransferFunction::Linear {
-                            PixelDescriptor::RGBAF32_LINEAR
+                        let samples: Vec<u16> = if gray {
+                            data.as_chunks::<4>()
+                                .0
+                                .iter()
+                                .flat_map(|px| [px[0], px[3]])
+                                .collect()
                         } else {
-                            PixelDescriptor::RGBA16_SRGB
+                            data
+                        };
+                        let floats: Vec<f32> = samples
+                            .iter()
+                            .map(|&v| v as f32 * (1.0 / 65535.0))
+                            .collect();
+                        let desc = match (transfer == TransferFunction::Linear, gray) {
+                            (true, false) => PixelDescriptor::RGBAF32_LINEAR,
+                            (true, true) => PixelDescriptor::GRAYAF32_LINEAR,
+                            (false, false) => PixelDescriptor::RGBA16_SRGB,
+                            (false, true) => PixelDescriptor::GRAYA16_SRGB,
                         };
                         let desc = desc
                             .with_transfer(transfer)
@@ -341,7 +378,7 @@ fn native_hdr_dense_frontend_matches_cpp() {
                         let bytes = if transfer == TransferFunction::Linear {
                             bytemuck::cast_slice(&floats)
                         } else {
-                            bytemuck::cast_slice(&data)
+                            bytemuck::cast_slice(&samples)
                         };
                         let image = PixelSlice::new(
                             bytes,

@@ -13,6 +13,7 @@ use crate::Ssimulacra2Error;
 use crate::pipeline::{EncodedData, EncodedSrgb};
 
 mod native_hdr;
+mod native_hdr_pow;
 
 /// Result of [`funnel`] — the encoded path preserves the original bytes
 /// (LUT-exact); the linear path holds premultiplied-ready planes.

@@ -114,7 +114,7 @@ native-hdr-dense oracle:
     SSIM2_HDR_ORACLE={{oracle}} cargo test -p fast-ssim2 --lib native_hdr_dense_frontend_matches_cpp -- --ignored --nocapture
 
 test-native-hdr:
-    cargo test -p fast-ssim2 --all-features --lib native_hdr_frontend_matches_cpp
+    cargo test -p fast-ssim2 --all-features --lib native_hdr_
     cargo test -p fast-ssim2 --all-features --test native_hdr
 
 # Native HDR frontend and integration conformance under WASM SIMD128.
