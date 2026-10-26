@@ -121,3 +121,8 @@ order for positive finite bases. All 648 frontend fixtures and an expanded
 5,505,024-probe RGB/grayscale differential test pass on x86-64 Linux.
 The code-271 case also runs as a normal unit regression. See the parity record
 for platform verification and source provenance.
+
+Grayscale HLG now evaluates the inverse OETF once before expanding to RGB,
+matching the CMS's single-channel processing. The previous path evaluated
+identical channel samples three times. The 5,505,024-probe oracle, 648 frontend
+fixtures and full native score/cache/map audit pass with unchanged expectations.

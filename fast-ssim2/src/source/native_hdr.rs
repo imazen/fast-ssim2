@@ -180,22 +180,31 @@ fn pq_decode(v: f32) -> f32 {
     (p / q).abs().copysign(v)
 }
 
+#[inline]
+fn hlg_inverse_oetf(v: f32) -> f32 {
+    // TF_HLG::InvOETF returns +0.0 for either signed zero before restoring
+    // the sign of nonzero inputs.
+    if v == 0.0 {
+        return 0.0;
+    }
+    let e = f64::from(v.abs());
+    let scene = if e <= 0.5 {
+        e * e * (1.0 / 3.0)
+    } else {
+        (((e - 0.559_910_729_5) * (1.0 / 0.178_832_77)).exp() + (1.0 - 4.0 * 0.178_832_77))
+            * (1.0 / 12.0)
+    };
+    (scene as f32).copysign(v)
+}
+
 fn hlg_decode(rgb: [f32; 3], primaries: ColorPrimaries, target: f32, gray: bool) -> [f32; 3] {
-    let mut rgb = rgb.map(|v| {
-        // TF_HLG::InvOETF returns +0.0 for either signed zero before restoring
-        // the sign of nonzero inputs.
-        if v == 0.0 {
-            return 0.0;
-        }
-        let e = f64::from(v.abs());
-        let scene = if e <= 0.5 {
-            e * e * (1.0 / 3.0)
-        } else {
-            (((e - 0.559_910_729_5) * (1.0 / 0.178_832_77)).exp() + (1.0 - 4.0 * 0.178_832_77))
-                * (1.0 / 12.0)
-        };
-        (scene as f32).copysign(v)
-    });
+    // Ingest expands grayscale into identical channels. Decode its single
+    // stored channel once, as the reference CMS does, then expand the result.
+    let mut rgb = if gray {
+        [hlg_inverse_oetf(rgb[0]); 3]
+    } else {
+        rgb.map(hlg_inverse_oetf)
+    };
     if (295.0..=305.0).contains(&target) {
         return rgb;
     }
