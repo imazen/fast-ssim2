@@ -154,9 +154,8 @@ pub enum Ssimulacra2Error {
     InvalidConfiguration(&'static str),
 
     /// An input [`crate::PixelSlice`]'s descriptor declares
-    /// something the metric can't score honestly — HDR transfers
-    /// (PQ/HLG), narrow/limited signal range, or a pixel layout with no
-    /// mapping to the SDR sRGB pipeline.
+    /// an unsupported transfer, primaries, signal range or pixel layout.
+    /// Native PQ/HLG and supported linear HDR descriptors are accepted.
     #[error("Unsupported input: {0}")]
     UnsupportedInput(&'static str),
 
@@ -215,7 +214,8 @@ pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 ///
 /// # Color space conventions
 /// The descriptor declares transfer function and primaries explicitly.
-/// SDR integer inputs must declare sRGB; f32 may declare sRGB or Linear.
+/// SDR integer inputs declare sRGB; native HDR inputs declare PQ/HLG or Linear.
+/// Native HDR luminance anchors and supported gamuts are described in the crate docs.
 /// Grayscale types are expanded to RGB (R=G=B).
 ///
 /// # Example
@@ -525,7 +525,7 @@ fn compute_pair_impl(
     };
 
     // Reference alpha compositing: min over two backgrounds (0.1 / 0.9
-    // encoded). Linear inputs replicate it with the linearized bg.
+    // input-domain values, before transfer decoding and gamut conversion).
     let eval = |bg: f32,
                 p1: &PreparedInput,
                 p2: &PreparedInput|
@@ -580,8 +580,8 @@ pub(crate) fn prepared_has_alpha(p: &source::PreparedInput) -> bool {
 }
 
 /// Linearize a funnelled input: encoded data goes through the reference
-/// LUTs (alpha premultiplied onto `bg` in encoded space), linear planes
-/// premultiply alpha onto `srgb_to_linear(bg)` for parity.
+/// LUTs (alpha composited onto `bg` in encoded space). Linear/native inputs
+/// composite in their input domain, then perform any color conversion.
 pub(crate) fn linearize_prepared(p: &source::PreparedInput, _w: usize, bg: f32) -> [Vec<f32>; 3] {
     match p {
         source::PreparedInput::Encoded(e) => pipeline::linearize(e, bg),

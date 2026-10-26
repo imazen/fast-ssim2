@@ -1,4 +1,4 @@
-//! Owned reference-side pyramid for repeated SDR comparisons.
+//! Owned reference-side pyramid for repeated SDR and native HDR comparisons.
 //! Construction and comparisons honor backend selection and cancellation.
 //! Strip options apply to comparisons only; reference storage remains full-image.
 
@@ -85,7 +85,7 @@ impl Ssimulacra2Reference {
                     return Err(Ssimulacra2Error::ImageTooLarge { actual: w * h });
                 }
                 // Reference alpha compositing — two backgrounds on the ref
-                // side; linear premult uses the linearized bg.
+                // side, before transfer decoding and gamut conversion.
                 let has_alpha = crate::prepared_has_alpha(&p);
                 let sets = if has_alpha {
                     vec![

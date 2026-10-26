@@ -94,7 +94,8 @@ fn validate_alpha_layout(slice: &PixelSlice<'_>) -> Result<(), Ssimulacra2Error>
 
 /// Interpret `slice` per its [`PixelDescriptor`], materializing the
 /// planes the pipeline needs. See the crate docs for which descriptors
-/// are rejected (HDR transfers, narrow range, non-BT.709 primaries).
+/// are rejected. Native PQ/HLG and supported linear HDR descriptors use the
+/// reference color conversion; the encoded sRGB path keeps its captured LUT.
 pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra2Error> {
     let desc = slice.descriptor();
     let (w, h) = (slice.width() as usize, slice.rows() as usize);

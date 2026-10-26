@@ -28,8 +28,8 @@
 //! u8) — the captured lcms LUT reproduces the reference's linearization
 //! bit-for-bit. `u16` and off-grid `f32` encoded inputs evaluate the sRGB
 //! polynomial instead — close to, but not guaranteed bit-identical with,
-//! the reference's lcms evaluation (the reference binary only ever sees
-//! u8, so no u16 reference behavior exists to match).
+//! the reference's lcms evaluation. Native HDR uses a separate descriptor
+//! frontend; its pinned oracle and coverage are in `docs/native-hdr-parity.md`.
 
 pub mod gauss;
 mod lut8;

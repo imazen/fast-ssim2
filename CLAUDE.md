@@ -12,10 +12,11 @@ examples and [CHANGELOG.md](CHANGELOG.md) for migration details.
   transfer, primaries, alpha, and signal range. Rows support byte strides.
 - `Ssimulacra2Config` combines backend, strip, and cancellation options.
   Reference construction rejects strips; cached comparisons accept them.
-  HDR rejects strips. Parallel strips without `rayon` return an explicit error.
-- `Ssimulacra2Reference` owns a full SDR reference pyramid. Scalar/SIMD selection
+  The native HDR frontend and PU21 reject strips. Parallel strips without
+  `rayon` return an explicit error.
+- `Ssimulacra2Reference` owns a full SDR or native HDR reference pyramid. Scalar/SIMD selection
   and cancellation apply to construction and comparison. There is no reusable
-  zero-allocation comparison context and no cached HDR reference.
+  zero-allocation comparison context; PU21 has no cached reference.
 - Original dimensions must match before sub-8px reflect padding. Original and
   padded pixel counts are capped by `MAX_IMAGE_PIXELS`.
 - Strip processing bounds intermediate kernel buffers, not total memory:

@@ -175,8 +175,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## Input semantics
 
 The descriptor controls interpretation; sample type alone does not determine
-transfer function. SDR entry points require full-range BT.709 primaries and
-support these layouts:
+transfer function. The sRGB path requires full-range BT.709 primaries and
+supports these layouts; native HDR inputs are described below:
 
 | Layout | Transfer | Conversion |
 |---|---|---|
@@ -194,7 +194,8 @@ padding under their standard descriptors.
 
 If either image has alpha, scoring evaluates two backgrounds and takes the
 lower score. Encoded inputs composite at sRGB values 0.1 and 0.9 before
-linearization; linear inputs composite at the corresponding linear values.
+linearization. Linear inputs composite at 0.1 and 0.9 in their input domain,
+as in the C++ reference.
 Only opaque u8 sRGB uses the captured LUT throughout input conversion;
 u16, float, and fractional-alpha conversions do not promise binary-reference
 bit equality.
@@ -204,17 +205,30 @@ upstream, for example with [zenpixels-convert](https://lib.rs/crates/zenpixels-c
 
 ## HDR
 
-The `hdr-pu` feature adds `compute_ssimulacra2_pu` and
-`compute_ssimulacra2_pu_with_config`. These replace the cube-root encoding with
-PU21 and produce **scores that are not interchangeable with SDR scores**.
+The standard scoring functions, cached references and spatial maps accept
+native HDR without a feature flag: PQ/HLG in u8/u16/f32, and linear f32 with
+BT.709, BT.2020 or Display P3 primaries. They keep the reference's cube-root
+XYB encoding and weights. Signal range must be full; RGB/RGBA, BGRX/BGRA u8,
+and grayscale layouts support padded rows.
 
-Linear f32 inputs are absolute luminance in cd/m² (nits), not normalized SDR.
-PQ inputs decode to nits; HLG uses a 1000-nit reference display with system
-gamma 1.2. Supported layouts include RGB/RGBA, BGRX/BGRA u8, and grayscale
-(u8/u16/f32; grayscale alpha in u16/f32). Signal range must be full.
-Primaries are not converted: callers must supply both images in the same
-primaries. Alpha composites over 20- and 200-nit backgrounds. HDR strip options
-return `InvalidConfiguration`; there is no cached HDR reference API.
+Linear samples are relative to a luminance anchor. Defaults match the pinned
+C++ reference: 255 nits for linear, 10000 for PQ, and 1000 for HLG. Set
+`PixelSlice::with_diffuse_white(zenpixels::DiffuseWhite::new(nits))` to state
+the luminance represented by linear 1.0, or the HLG display peak. For absolute
+linear nits, use an anchor of 1.0. Linear values above 1 and negative gamut-conversion
+results are retained. PQ/HLG, wide-gamut and anchored-linear inputs require
+whole-image evaluation; strip options return `InvalidConfiguration`.
+
+The [native HDR parity record](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr-parity.md)
+identifies the Cloudinary 2.1 oracle and coverage. Final f64 scores can vary
+across platform math libraries even when frontend values match.
+
+The optional `hdr-pu` feature provides `compute_ssimulacra2_pu` and
+`compute_ssimulacra2_pu_with_config`, a separate PU21 encoding variant.
+Its linear f32 samples remain absolute nits; PQ decodes to nits and HLG uses
+a 1000-nit display. Primaries are consumed as supplied. Alpha composites on
+20/200-nit backgrounds. PU21 scores are not interchangeable with native scores;
+PU21 has no cached reference or strip API.
 
 ## Features and limits
 
@@ -222,7 +236,7 @@ return `InvalidConfiguration`; there is no cached HDR reference API.
 |---|---|
 | `imgref` | Forward `zenpixels/imgref` conversions |
 | `rayon` | Parallel kernels and opt-in parallel strips |
-| `hdr-pu` | HDR scoring |
+| `hdr-pu` | Optional PU21 HDR variant |
 | `unstable-internals` | Development tools only; exposes kernels without an API stability guarantee |
 
 No features are enabled by default. Runtime SIMD dispatch is available without
@@ -256,7 +270,9 @@ support, and `#![forbid(unsafe_code)]`.
 
 BSD-2-Clause, the same license as upstream
 [rust-av/ssimulacra2](https://github.com/rust-av/ssimulacra2). See
-[LICENSE](https://github.com/imazen/fast-ssim2/blob/main/LICENSE).
+[LICENSE](https://github.com/imazen/fast-ssim2/blob/main/LICENSE). The native HDR
+color port also carries the bundled libjxl BSD-3-Clause
+[notice](https://github.com/imazen/fast-ssim2/blob/main/fast-ssim2/LICENSE.libjxl).
 
 We are glad to release our improvements under the original BSD-2-Clause license
 if upstream wants to take over maintenance of them — we would rather contribute
