@@ -109,6 +109,11 @@ pub(crate) fn compute_strip_inner(
     let strip_height = sc.strip_height;
     let p1 = crate::source::funnel(source)?;
     let p2 = crate::source::funnel(distorted)?;
+    if matches!(p1, PreparedInput::Native(_)) || matches!(p2, PreparedInput::Native(_)) {
+        return Err(Ssimulacra2Error::InvalidConfiguration(
+            "native HDR strip evaluation is not supported",
+        ));
+    }
     if let (PreparedInput::Encoded(e1), PreparedInput::Encoded(e2)) = (&p1, &p2) {
         // Same sub-8px crate contract as the pair path — pad encoded
         // planes (per-pixel LUT ⇒ U8-exact, identical to padding
@@ -180,6 +185,11 @@ impl Ssimulacra2Reference {
         let strip_height = sc.strip_height;
         let cache = self.cache();
         let p = crate::source::funnel(distorted)?;
+        if self.native_hdr || matches!(p, crate::source::PreparedInput::Native(_)) {
+            return Err(Ssimulacra2Error::InvalidConfiguration(
+                "native HDR strip evaluation is not supported",
+            ));
+        }
         match p {
             crate::source::PreparedInput::Encoded(e2) => {
                 let p2 = e2.reflect_padded(8);
@@ -195,6 +205,7 @@ impl Ssimulacra2Reference {
                     Kernel::from_impl(config.impl_type),
                 )
             }
+            crate::source::PreparedInput::Native(_) => unreachable!("native strips rejected above"),
             crate::source::PreparedInput::Linear { .. } => {
                 // Linear side — compare against every ref stack; the
                 // stack's bg drives the dist-side premultiply.

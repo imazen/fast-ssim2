@@ -20,6 +20,7 @@ use zenpixels::PixelSlice;
 #[derive(Clone, Debug)]
 pub struct Ssimulacra2Reference {
     cache: ReferenceCache,
+    pub(crate) native_hdr: bool,
     /// Dimensions of the source as the caller supplied it (before any
     /// sub-8px reflect-padding) — `compare*` validates the distorted
     /// side against these.
@@ -72,11 +73,12 @@ impl Ssimulacra2Reference {
                 }
                 Ok(Self {
                     cache: ReferenceCache::new_with_options(&padded, kernel, stop)?,
+                    native_hdr: false,
                     original_width: ow,
                     original_height: oh,
                 })
             }
-            p @ PreparedInput::Linear { .. } => {
+            p @ (PreparedInput::Linear { .. } | PreparedInput::Native(_)) => {
                 let (ow, oh) = p.dims();
                 let (w, h) = (ow.max(8), oh.max(8));
                 if w * h > MAX_IMAGE_PIXELS {
@@ -116,10 +118,17 @@ impl Ssimulacra2Reference {
                 };
                 Ok(Self {
                     cache: ReferenceCache::new_linear_sets_with_options(
-                        sets, w, h, has_alpha, kernel, stop,
+                        sets,
+                        w,
+                        h,
+                        has_alpha,
+                        kernel,
+                        stop,
+                        p.intensity_target(),
                     )?,
                     original_width: ow,
                     original_height: oh,
+                    native_hdr: matches!(p, PreparedInput::Native(_)),
                 })
             }
         }
@@ -167,7 +176,7 @@ impl Ssimulacra2Reference {
                     crate::pipeline::Kernel::from_impl(config.impl_type),
                 )
             }
-            p @ PreparedInput::Linear { .. } => {
+            p @ (PreparedInput::Linear { .. } | PreparedInput::Native(_)) => {
                 let (w, h) = (self.cache.width(), self.cache.height());
                 // Evaluate dist against each ref stack; the stack's bg
                 // (0.1/0.9 for alpha caches, 0.5 otherwise) drives the
@@ -194,6 +203,7 @@ impl Ssimulacra2Reference {
                         h,
                         stop,
                         crate::pipeline::Kernel::from_impl(config.impl_type),
+                        p.intensity_target(),
                     )?);
                 }
                 Ok(best)
@@ -248,7 +258,7 @@ impl Ssimulacra2Reference {
                 self.cache
                     .compare_maps_kernel(&e.reflect_padded(8), stop, kernel)?
             }
-            p @ PreparedInput::Linear { .. } => {
+            p @ (PreparedInput::Linear { .. } | PreparedInput::Native(_)) => {
                 let (w, h) = (self.cache.width(), self.cache.height());
                 let run = |si: usize, bg: f32| {
                     let planes = pad_or_pass(
@@ -266,6 +276,7 @@ impl Ssimulacra2Reference {
                         h,
                         stop,
                         kernel,
+                        p.intensity_target(),
                     )
                 };
                 if self.cache.has_alpha() || crate::prepared_has_alpha(&p) {

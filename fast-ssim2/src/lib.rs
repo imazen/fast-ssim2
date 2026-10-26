@@ -544,7 +544,16 @@ fn compute_pair_impl(
             (l1, l2)
         };
         let mut sink = with_maps.then(Vec::new);
-        let score = pipeline::compute_planar_impl(l1, l2, pw, ph, opts, &stop, sink.as_mut())?;
+        let score = pipeline::compute_planar_intensity_impl(
+            l1,
+            l2,
+            pw,
+            ph,
+            opts,
+            &stop,
+            sink.as_mut(),
+            [p1.intensity_target(), p2.intensity_target()],
+        )?;
         Ok((score, sink))
     };
 
@@ -565,6 +574,7 @@ fn compute_pair_impl(
 pub(crate) fn prepared_has_alpha(p: &source::PreparedInput) -> bool {
     match p {
         source::PreparedInput::Encoded(e) => e.alpha.is_some(),
+        source::PreparedInput::Native(n) => n.alpha.is_some(),
         source::PreparedInput::Linear { alpha, .. } => alpha.is_some(),
     }
 }
@@ -575,8 +585,11 @@ pub(crate) fn prepared_has_alpha(p: &source::PreparedInput) -> bool {
 pub(crate) fn linearize_prepared(p: &source::PreparedInput, _w: usize, bg: f32) -> [Vec<f32>; 3] {
     match p {
         source::PreparedInput::Encoded(e) => pipeline::linearize(e, bg),
+        source::PreparedInput::Native(n) => n
+            .linearize(bg, &enough::Unstoppable)
+            .unwrap_or_else(|_| unreachable!()),
         source::PreparedInput::Linear { planes, alpha, .. } => {
-            composite_linear(planes, alpha.as_deref(), input::srgb_to_linear(bg))
+            composite_linear(planes, alpha.as_deref(), bg)
         }
     }
 }
@@ -591,9 +604,10 @@ pub(crate) fn linearize_prepared_stop(
 ) -> Result<[Vec<f32>; 3], enough::StopReason> {
     match p {
         source::PreparedInput::Encoded(e) => pipeline::linearize_stop(e, bg, stop),
+        source::PreparedInput::Native(n) => n.linearize(bg, stop),
         source::PreparedInput::Linear { planes, alpha, .. } => {
             let (w, _) = p.dims();
-            composite_linear_stop(planes, alpha.as_deref(), input::srgb_to_linear(bg), w, stop)
+            composite_linear_stop(planes, alpha.as_deref(), bg, w, stop)
         }
     }
 }

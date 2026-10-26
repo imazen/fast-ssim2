@@ -511,7 +511,22 @@ pub fn planes_to_positive_xyb(p: &mut [Vec<f32>; 3], npix: usize) {
 
 /// In-place linear planes → positive XYB, per `opts.flavor` (PU21 uses
 /// its own encoding; `kernel` still selects scalar/SIMD for cbrt).
-fn xyb_convert(p: &mut [Vec<f32>; 3], npix: usize, opts: Opts) {
+fn xyb_convert_intensity(p: &mut [Vec<f32>; 3], npix: usize, opts: Opts, intensity: f32) {
+    if intensity != 255.0 && opts.flavor == XybFlavor::CubeRoot {
+        let m = xyb::intensity_matrix(intensity);
+        match opts.kernel {
+            Kernel::Simd => simd::planes_to_positive_xyb_matrix_simd(p, m),
+            Kernel::Scalar => {
+                for i in 0..npix {
+                    let px = xyb::linear_rgb_to_xyb_pixel_matrix([p[0][i], p[1][i], p[2][i]], m);
+                    for c in 0..3 {
+                        p[c][i] = px[c];
+                    }
+                }
+            }
+        }
+        return;
+    }
     match opts.flavor {
         XybFlavor::CubeRoot => match opts.kernel {
             Kernel::Simd => simd::planes_to_positive_xyb_simd(p),
@@ -754,7 +769,21 @@ pub(crate) fn compute_planar_impl(
     height: usize,
     opts: Opts,
     stop: &dyn enough::Stop,
+    maps: Option<&mut Vec<crate::Ssimulacra2ScaleMaps>>,
+) -> Result<f64, crate::Ssimulacra2Error> {
+    compute_planar_intensity_impl(lin1, lin2, width, height, opts, stop, maps, [255.0; 2])
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_planar_intensity_impl(
+    lin1: [Vec<f32>; 3],
+    lin2: [Vec<f32>; 3],
+    width: usize,
+    height: usize,
+    opts: Opts,
+    stop: &dyn enough::Stop,
     mut maps: Option<&mut Vec<crate::Ssimulacra2ScaleMaps>>,
+    intensity: [f32; 2],
 ) -> Result<f64, crate::Ssimulacra2Error> {
     let stop = stop.may_stop().then_some(stop);
     if width < 8 || height < 8 {
@@ -792,9 +821,9 @@ pub(crate) fn compute_planar_impl(
         let npix = w * h;
         let mut xyb1 = lin1;
         let mut xyb2 = lin2;
-        xyb_convert(&mut xyb1, npix, opts);
+        xyb_convert_intensity(&mut xyb1, npix, opts, intensity[0]);
         stop.check().map_err(crate::Ssimulacra2Error::Cancelled)?;
-        xyb_convert(&mut xyb2, npix, opts);
+        xyb_convert_intensity(&mut xyb2, npix, opts, intensity[1]);
         stop.check().map_err(crate::Ssimulacra2Error::Cancelled)?;
 
         let blur_sel = |p: &[Vec<f32>; 3]| -> Result<[Vec<f32>; 3], enough::StopReason> {

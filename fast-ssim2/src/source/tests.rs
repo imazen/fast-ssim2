@@ -170,3 +170,236 @@ fn dimensions_validate_before_allocation() {
         Err(Ssimulacra2Error::ImageTooLarge { .. })
     ));
 }
+
+#[test]
+fn native_hdr_frontend_matches_cpp() {
+    use std::sync::Arc;
+    let mut descriptor = PixelDescriptor::RGBF32_LINEAR;
+    let mut target = 255.0;
+    let mut bg = 0.5;
+    for line in include_str!("native_hdr_cpp.tsv")
+        .lines()
+        .chain(include_str!("native_hdr_gray_cpp.tsv").lines())
+    {
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(case) = line
+            .strip_prefix("case ")
+            .or_else(|| line.strip_prefix("case-gray "))
+        {
+            let fields: Vec<_> = case.split_whitespace().collect();
+            descriptor = if line.starts_with("case-gray") {
+                PixelDescriptor::GRAYAF32_LINEAR
+            } else {
+                PixelDescriptor::RGBAF32_LINEAR
+            }
+            .with_transfer(match fields[0] {
+                "8" => TransferFunction::Linear,
+                "16" => TransferFunction::Pq,
+                "18" => TransferFunction::Hlg,
+                _ => panic!("transfer"),
+            })
+            .with_primaries(match fields[1] {
+                "1" => zenpixels::ColorPrimaries::Bt709,
+                "9" => zenpixels::ColorPrimaries::Bt2020,
+                "11" => zenpixels::ColorPrimaries::DisplayP3,
+                _ => panic!("primaries"),
+            })
+            .with_alpha(if fields[4] == "1" {
+                Some(AlphaMode::Straight)
+            } else {
+                None
+            });
+            target = fields[2].parse::<f32>().unwrap();
+            bg = fields[3].parse::<f32>().unwrap();
+            continue;
+        }
+        assert_eq!(line.len(), 80);
+        let values: Vec<f32> = (0..10)
+            .map(|i| f32::from_bits(u32::from_str_radix(&line[i * 8..i * 8 + 8], 16).unwrap()))
+            .collect();
+        let gray = [values[0], values[3]];
+        let samples = if descriptor.format == PixelFormat::GrayAF32 {
+            &gray[..]
+        } else {
+            &values[..4]
+        };
+        let image = PixelSlice::new(
+            bytemuck::cast_slice(samples),
+            1,
+            1,
+            descriptor.format.bytes_per_pixel(),
+            descriptor,
+        )
+        .unwrap()
+        .with_color_context(Arc::new(
+            zenpixels::ColorContext::default()
+                .with_diffuse_white(zenpixels::DiffuseWhite::new(target)),
+        ));
+        let prepared = funnel(&image).unwrap();
+        let linear = crate::linearize_prepared(&prepared, 1, bg);
+        for c in 0..3 {
+            assert_eq!(
+                linear[c][0].to_bits(),
+                values[4 + c].to_bits(),
+                "{descriptor:?}, target={target}, bg={bg}, pixel={:?}, channel={c}",
+                &values[..4]
+            );
+        }
+        let matrix = crate::pipeline::xyb::intensity_matrix(target);
+        let xyb = crate::pipeline::xyb::linear_rgb_to_xyb_pixel_matrix(
+            [linear[0][0], linear[1][0], linear[2][0]],
+            matrix,
+        );
+        let mut simd = core::array::from_fn(|c| vec![linear[c][0]; 9]);
+        crate::pipeline::simd::planes_to_positive_xyb_matrix_simd(&mut simd, matrix);
+        for c in 0..3 {
+            assert_eq!(
+                xyb[c].to_bits(),
+                values[7 + c].to_bits(),
+                "scalar XYB {descriptor:?}, target={target}, channel={c}"
+            );
+            for &value in &simd[c] {
+                assert_eq!(
+                    value.to_bits(),
+                    values[7 + c].to_bits(),
+                    "SIMD XYB {descriptor:?}, target={target}, channel={c}"
+                );
+            }
+        }
+    }
+}
+
+/// The caller opts into this external-oracle test through `just native-hdr-dense`.
+/// Missing tools/configuration are errors when it is selected.
+#[test]
+#[ignore = "requires SSIM2_HDR_ORACLE; run just native-hdr-dense ORACLE"]
+#[cfg(not(target_arch = "wasm32"))]
+fn native_hdr_dense_frontend_matches_cpp() {
+    use std::{
+        fmt::Write,
+        io::Write as IoWrite,
+        process::{Command, Stdio},
+        sync::Arc,
+    };
+    let oracle =
+        std::env::var_os("SSIM2_HDR_ORACLE").expect("SSIM2_HDR_ORACLE must name the C++ oracle");
+    let mut checked = 0usize;
+    for (tf, transfer, targets) in [
+        (8, TransferFunction::Linear, [255.0, 203.0]),
+        (16, TransferFunction::Pq, [10000.0, 255.0]),
+        (18, TransferFunction::Hlg, [1000.0, 300.0]),
+    ] {
+        for (p, primaries) in [
+            (1, zenpixels::ColorPrimaries::Bt709),
+            (9, zenpixels::ColorPrimaries::Bt2020),
+            (11, zenpixels::ColorPrimaries::DisplayP3),
+        ] {
+            for target in targets {
+                for alpha in [false, true] {
+                    for bg in if alpha { &[0.1, 0.9][..] } else { &[0.5][..] } {
+                        let data: Vec<u16> = (0..=u16::MAX)
+                            .flat_map(|v| {
+                                [
+                                    v,
+                                    v.wrapping_mul(37).wrapping_add(13),
+                                    v.wrapping_mul(691).wrapping_add(11),
+                                    v.wrapping_mul(11),
+                                ]
+                            })
+                            .collect();
+                        let mut request = format!(
+                            "frontend\n{tf} {p} {target} {bg} {} 65536 1\n",
+                            u8::from(alpha)
+                        );
+                        for px in data.as_chunks::<4>().0 {
+                            let bits = px.map(|v| (v as f32 * (1.0 / 65535.0)).to_bits());
+                            writeln!(
+                                request,
+                                "{:08x} {:08x} {:08x} {:08x}",
+                                bits[0], bits[1], bits[2], bits[3]
+                            )
+                            .unwrap();
+                        }
+                        // Linear u16 is intentionally unsupported. Test the same decoded
+                        // f32 samples for linear transfer; PQ/HLG exercise the u16 reader.
+                        let floats: Vec<f32> =
+                            data.iter().map(|&v| v as f32 * (1.0 / 65535.0)).collect();
+                        let desc = if transfer == TransferFunction::Linear {
+                            PixelDescriptor::RGBAF32_LINEAR
+                        } else {
+                            PixelDescriptor::RGBA16_SRGB
+                        };
+                        let desc = desc
+                            .with_transfer(transfer)
+                            .with_primaries(primaries)
+                            .with_alpha(alpha.then_some(AlphaMode::Straight));
+                        let bytes = if transfer == TransferFunction::Linear {
+                            bytemuck::cast_slice(&floats)
+                        } else {
+                            bytemuck::cast_slice(&data)
+                        };
+                        let image = PixelSlice::new(
+                            bytes,
+                            65536,
+                            1,
+                            65536 * desc.format.bytes_per_pixel(),
+                            desc,
+                        )
+                        .unwrap()
+                        .with_color_context(Arc::new(
+                            zenpixels::ColorContext::default()
+                                .with_diffuse_white(zenpixels::DiffuseWhite::new(target)),
+                        ));
+                        let prepared = funnel(&image).unwrap();
+                        let linear = crate::linearize_prepared(&prepared, 65536, *bg);
+                        let mut xyb = linear.clone();
+                        crate::pipeline::simd::planes_to_positive_xyb_matrix_simd(
+                            &mut xyb,
+                            crate::pipeline::xyb::intensity_matrix(target),
+                        );
+                        let mut child = Command::new(&oracle)
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .spawn()
+                            .expect("start oracle");
+                        child
+                            .stdin
+                            .take()
+                            .unwrap()
+                            .write_all(request.as_bytes())
+                            .unwrap();
+                        let output = child.wait_with_output().unwrap();
+                        assert!(output.status.success());
+                        let text = String::from_utf8(output.stdout).unwrap();
+                        let mut lines = text.lines();
+                        for i in 0..65536 {
+                            let line = lines.next().expect("missing oracle pixel");
+                            let expected: Vec<_> = line
+                                .split_whitespace()
+                                .map(|s| u32::from_str_radix(s, 16).unwrap())
+                                .collect();
+                            assert_eq!(expected.len(), 6);
+                            for c in 0..3 {
+                                assert_eq!(
+                                    linear[c][i].to_bits(),
+                                    expected[c],
+                                    "linear: {desc:?} target={target} bg={bg} code={i} channel={c}"
+                                );
+                                assert_eq!(
+                                    xyb[c][i].to_bits(),
+                                    expected[c + 3],
+                                    "XYB: {desc:?} target={target} bg={bg} code={i} channel={c}"
+                                );
+                            }
+                            checked += 1;
+                        }
+                        assert!(lines.next().is_none());
+                    }
+                }
+            }
+        }
+        println!("native frontend tf={tf}: {checked} cumulative pixels exactly match C++");
+    }
+}

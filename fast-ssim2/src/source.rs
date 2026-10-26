@@ -12,11 +12,15 @@ use zenpixels::{AlphaMode, PixelFormat, PixelSlice, SignalRange, TransferFunctio
 use crate::Ssimulacra2Error;
 use crate::pipeline::{EncodedData, EncodedSrgb};
 
+mod native_hdr;
+
 /// Result of [`funnel`] — the encoded path preserves the original bytes
 /// (LUT-exact); the linear path holds premultiplied-ready planes.
 pub(crate) enum PreparedInput {
     /// Encoded sRGB quantized/f32-on-grid input → reference LUT path.
     Encoded(EncodedSrgb),
+    /// Native reference color conversion, retaining the intensity target.
+    Native(native_hdr::NativeInput),
     /// Already-linear input — planes + optional straight-alpha plane.
     Linear {
         planes: [Vec<f32>; 3],
@@ -31,7 +35,15 @@ impl PreparedInput {
     pub(crate) fn dims(&self) -> (usize, usize) {
         match self {
             Self::Encoded(e) => (e.width, e.height),
+            Self::Native(n) => (n.width, n.height),
             Self::Linear { width, height, .. } => (*width, *height),
+        }
+    }
+
+    pub(crate) fn intensity_target(&self) -> f32 {
+        match self {
+            Self::Native(n) => n.intensity_target,
+            _ => 255.0,
         }
     }
 }
@@ -66,6 +78,16 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
     let desc = slice.descriptor();
     let (w, h) = (slice.width() as usize, slice.rows() as usize);
     let npix = checked_dimensions(w, h)?;
+
+    if matches!(desc.transfer, TransferFunction::Pq | TransferFunction::Hlg)
+        || (desc.transfer == TransferFunction::Linear
+            && (desc.primaries != zenpixels::ColorPrimaries::Bt709
+                || slice
+                    .color_context()
+                    .is_some_and(|c| c.diffuse_white.is_some())))
+    {
+        return native_hdr::NativeInput::new(slice).map(PreparedInput::Native);
+    }
 
     // Descriptor gates — reject what the SDR metric can't honestly score.
     match desc.transfer {

@@ -71,6 +71,7 @@ fn ref_scales(
     mut h: usize,
     kernel: Kernel,
     stop: &dyn enough::Stop,
+    intensity: f32,
 ) -> Result<Vec<RefScale>, Ssimulacra2Error> {
     let rg = create_recursive_gaussian(1.5);
     let mut out = Vec::with_capacity(NUM_SCALES);
@@ -83,13 +84,14 @@ fn ref_scales(
         let (lin1_next, nw, nh) = downsample_planes(&lin1, w, h);
         let npix = w * h;
         let mut xyb1 = lin1;
-        super::xyb_convert(
+        super::xyb_convert_intensity(
             &mut xyb1,
             npix,
             super::Opts {
                 kernel,
                 flavor: super::XybFlavor::CubeRoot,
             },
+            intensity,
         );
 
         // mu1 = blur(xyb1); sigma1 = blur(xyb1·xyb1) — the product fuses
@@ -246,11 +248,18 @@ impl ReferenceCache {
         }
         let stacks = if source.alpha.is_some() {
             vec![
-                ref_scales(linearize(source, 0.1), w, h, kernel, stop)?,
-                ref_scales(linearize(source, 0.9), w, h, kernel, stop)?,
+                ref_scales(linearize(source, 0.1), w, h, kernel, stop, 255.0)?,
+                ref_scales(linearize(source, 0.9), w, h, kernel, stop, 255.0)?,
             ]
         } else {
-            vec![ref_scales(linearize(source, 0.5), w, h, kernel, stop)?]
+            vec![ref_scales(
+                linearize(source, 0.5),
+                w,
+                h,
+                kernel,
+                stop,
+                255.0,
+            )?]
         };
         Ok(Self {
             stacks,
@@ -280,6 +289,7 @@ impl ReferenceCache {
             has_alpha,
             Kernel::Simd,
             &enough::Unstoppable,
+            255.0,
         )
     }
 
@@ -290,6 +300,7 @@ impl ReferenceCache {
         has_alpha: bool,
         kernel: Kernel,
         stop: &dyn enough::Stop,
+        intensity: f32,
     ) -> Result<Self, Ssimulacra2Error> {
         if width < 8 || height < 8 {
             return Err(Ssimulacra2Error::InvalidImageSize);
@@ -297,7 +308,7 @@ impl ReferenceCache {
         Ok(Self {
             stacks: lin_sets
                 .into_iter()
-                .map(|l| ref_scales(l, width, height, kernel, stop))
+                .map(|l| ref_scales(l, width, height, kernel, stop, intensity))
                 .collect::<Result<_, _>>()?,
             width,
             height,
@@ -316,13 +327,24 @@ impl ReferenceCache {
         h: usize,
         stop: &dyn enough::Stop,
         kernel: Kernel,
+        intensity: f32,
     ) -> Result<f64, Ssimulacra2Error> {
         if w != self.width || h != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
         stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let rg = create_recursive_gaussian(1.5);
-        let scales = dist_scales(&rg, &self.stacks[si], lin2, w, h, stop, kernel, None)?;
+        let scales = dist_scales(
+            &rg,
+            &self.stacks[si],
+            lin2,
+            w,
+            h,
+            stop,
+            kernel,
+            None,
+            intensity,
+        )?;
         Ok(final_score(&scales))
     }
 
@@ -336,6 +358,7 @@ impl ReferenceCache {
         h: usize,
         stop: &dyn enough::Stop,
         kernel: Kernel,
+        intensity: f32,
     ) -> Result<(f64, Vec<crate::Ssimulacra2ScaleMaps>), Ssimulacra2Error> {
         if w != self.width || h != self.height {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
@@ -352,6 +375,7 @@ impl ReferenceCache {
             stop,
             kernel,
             Some(&mut maps),
+            intensity,
         )?;
         Ok((final_score(&scales), maps))
     }
@@ -436,6 +460,7 @@ impl ReferenceCache {
                     stop,
                     kernel,
                     None,
+                    255.0,
                 );
                 Ok(final_score(&scales?))
             })
@@ -471,6 +496,7 @@ impl ReferenceCache {
                 stop,
                 kernel,
                 Some(&mut maps),
+                255.0,
             )?;
             Ok((final_score(&scales), maps))
         };
@@ -499,6 +525,7 @@ fn dist_scales(
     stop: &dyn enough::Stop,
     kernel: Kernel,
     mut maps: Option<&mut Vec<crate::Ssimulacra2ScaleMaps>>,
+    intensity: f32,
 ) -> Result<Vec<ScaleAggregates>, Ssimulacra2Error> {
     let mut scales = Vec::with_capacity(refstack.len());
     for rs in refstack {
@@ -506,13 +533,14 @@ fn dist_scales(
         let (lin2_next, _nw, _nh) = downsample_planes(&lin2, w, h);
         let npix = w * h;
         let mut xyb2 = lin2;
-        super::xyb_convert(
+        super::xyb_convert_intensity(
             &mut xyb2,
             npix,
             super::Opts {
                 kernel,
                 flavor: super::XybFlavor::CubeRoot,
             },
+            intensity,
         );
 
         // Three independent blurs: σ2 = blur(xyb2·xyb2),
