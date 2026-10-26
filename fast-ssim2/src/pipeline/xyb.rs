@@ -94,10 +94,24 @@ pub fn linear_rgb_to_xyb_pixel_hi(px: [f32; 3]) -> [f32; 3] {
 
 #[inline]
 fn linear_rgb_to_xyb_with(px: [f32; 3], root: impl Fn(f32) -> f32) -> [f32; 3] {
+    linear_rgb_to_xyb_matrix(px, [M00, M01, M02, M10, M11, M12, M20, M21, M22], root)
+}
+
+pub(crate) fn intensity_matrix(target: f32) -> [f32; 9] {
+    let scale = target / 255.0;
+    [M00, M01, M02, M10, M11, M12, M20, M21, M22].map(|v| v * scale)
+}
+
+pub(crate) fn linear_rgb_to_xyb_pixel_matrix(px: [f32; 3], m: [f32; 9]) -> [f32; 3] {
+    linear_rgb_to_xyb_matrix(px, m, |v| cube_root_and_add(v.max(0.0), NEG_CBRT_BIAS))
+}
+
+fn linear_rgb_to_xyb_matrix(px: [f32; 3], m: [f32; 9], root: impl Fn(f32) -> f32) -> [f32; 3] {
     let (r, g, b) = (px[0], px[1], px[2]);
-    let mixed0 = M00.mul_add(r, M01.mul_add(g, M02.mul_add(b, BIAS)));
-    let mixed1 = M10.mul_add(r, M11.mul_add(g, M12.mul_add(b, BIAS)));
-    let mixed2 = M20.mul_add(r, M21.mul_add(g, M22.mul_add(b, BIAS)));
+    let [m00, m01, m02, m10, m11, m12, m20, m21, m22] = m;
+    let mixed0 = m00.mul_add(r, m01.mul_add(g, m02.mul_add(b, BIAS)));
+    let mixed1 = m10.mul_add(r, m11.mul_add(g, m12.mul_add(b, BIAS)));
+    let mixed2 = m20.mul_add(r, m21.mul_add(g, m22.mul_add(b, BIAS)));
 
     let m0 = root(mixed0);
     let m1 = root(mixed1);

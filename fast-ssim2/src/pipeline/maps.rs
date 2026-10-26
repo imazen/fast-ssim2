@@ -76,7 +76,7 @@ pub fn ssim_map_opts(
                 let mu12 = mu1 * mu2;
                 // f32 throughout, then the f32 quotient is subtracted in f64.
                 let dm = mu1 - mu2;
-                let num_m = (-dm).mul_add(dm, 1.0f32);
+                let num_m = 1.0f32 - dm * dm;
                 let num_s = 2.0f32 * (s12[c][i] - mu12) + K_C2;
                 let denom_s = (s11[c][i] - mu11) + (s22[c][i] - mu22) + K_C2;
                 let q = num_m * num_s / denom_s; // f32
@@ -207,7 +207,7 @@ pub(crate) fn maps_fused_stop(
                 let mu22 = mu2 * mu2;
                 let mu12 = mu1 * mu2;
                 let dm = mu1 - mu2;
-                let num_m = (-dm).mul_add(dm, 1.0f32);
+                let num_m = 1.0f32 - dm * dm;
                 let num_s = 2.0f32 * (s12[c][i] - mu12) + K_C2;
                 let denom_s = (s11[c][i] - mu11) + (s22[c][i] - mu22) + K_C2;
                 let q = num_m * num_s / denom_s;
@@ -270,7 +270,7 @@ pub(crate) fn scale_maps_stop(
                 let mu22 = mu2 * mu2;
                 let mu12 = mu1 * mu2;
                 let dm = mu1 - mu2;
-                let num_m = (-dm).mul_add(dm, 1.0f32);
+                let num_m = 1.0f32 - dm * dm;
                 let num_s = 2.0f32 * (s12[c][i] - mu12) + K_C2;
                 let denom_s = (s11[c][i] - mu11) + (s22[c][i] - mu22) + K_C2;
                 let q = num_m * num_s / denom_s;

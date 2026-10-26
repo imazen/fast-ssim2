@@ -213,7 +213,13 @@ macro_rules! cube_root_and_add_x8 {
 // ===========================================================================
 
 #[magetypes(v3, neon, wasm128, scalar)]
-fn planes_to_positive_xyb_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2: &mut [f32]) {
+fn planes_to_positive_xyb_inner(
+    token: Token,
+    p0: &mut [f32],
+    p1: &mut [f32],
+    p2: &mut [f32],
+    matrix: [f32; 9],
+) {
     type f32x8 = GenericF32x8<Token>;
     let n = p0.len();
     let chunks = n / 8;
@@ -222,15 +228,15 @@ fn planes_to_positive_xyb_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2
     let (p2c, p2r) = f32x8::partition_slice_mut_t(token, p2);
     let _ = chunks;
 
-    let m00 = f32x8::splat_t(token, M00);
-    let m01 = f32x8::splat_t(token, M01);
-    let m02 = f32x8::splat_t(token, M02);
-    let m10 = f32x8::splat_t(token, M10);
-    let m11 = f32x8::splat_t(token, M11);
-    let m12 = f32x8::splat_t(token, M12);
-    let m20 = f32x8::splat_t(token, M20);
-    let m21 = f32x8::splat_t(token, M21);
-    let m22 = f32x8::splat_t(token, M22);
+    let m00 = f32x8::splat_t(token, matrix[0]);
+    let m01 = f32x8::splat_t(token, matrix[1]);
+    let m02 = f32x8::splat_t(token, matrix[2]);
+    let m10 = f32x8::splat_t(token, matrix[3]);
+    let m11 = f32x8::splat_t(token, matrix[4]);
+    let m12 = f32x8::splat_t(token, matrix[5]);
+    let m20 = f32x8::splat_t(token, matrix[6]);
+    let m21 = f32x8::splat_t(token, matrix[7]);
+    let m22 = f32x8::splat_t(token, matrix[8]);
     let bias = f32x8::splat_t(token, BIAS);
     let zero = f32x8::zero_t(token);
     let half = f32x8::splat_t(token, 0.5);
@@ -264,7 +270,7 @@ fn planes_to_positive_xyb_inner(token: Token, p0: &mut [f32], p1: &mut [f32], p2
     // Scalar tail — identical scalar sequence
     let off = p0c.len() * 8;
     for i in 0..p0r.len() {
-        let px = xyb::linear_rgb_to_xyb_pixel([p0r[i], p1r[i], p2r[i]]);
+        let px = xyb::linear_rgb_to_xyb_pixel_matrix([p0r[i], p1r[i], p2r[i]], matrix);
         p0r[i] = px[0];
         p1r[i] = px[1];
         p2r[i] = px[2];
@@ -385,9 +391,13 @@ fn planes_to_positive_xyb_hi_inner(token: Token, p0: &mut [f32], p1: &mut [f32],
 
 /// SIMD `planes_to_positive_xyb` — bit-identical to the scalar version.
 pub fn planes_to_positive_xyb_simd(p: &mut [Vec<f32>; 3]) {
+    planes_to_positive_xyb_matrix_simd(p, xyb::intensity_matrix(255.0));
+}
+
+pub(crate) fn planes_to_positive_xyb_matrix_simd(p: &mut [Vec<f32>; 3], matrix: [f32; 9]) {
     let [p0, p1, p2] = &mut *p;
     incant!(
-        planes_to_positive_xyb_inner(p0, p1, p2),
+        planes_to_positive_xyb_inner(p0, p1, p2, matrix),
         [v3, neon, wasm128, scalar]
     );
 }
@@ -965,7 +975,7 @@ pub fn ssim_map_inner(
         let mu12 = a * b;
         let dm = a - b;
         // official f32 sequence, lane-wise
-        let num_m = (-dm).mul_add_portable(dm, one);
+        let num_m = one - dm * dm;
         let num_s = two * (f32x8::load_t(token, &s12c[i]) - mu12) + kc2;
         let denom_s =
             (f32x8::load_t(token, &s11c[i]) - mu11) + (f32x8::load_t(token, &s22c[i]) - mu22) + kc2;
@@ -986,7 +996,7 @@ pub fn ssim_map_inner(
         let mu22 = mu2 * mu2;
         let mu12 = mu1 * mu2;
         let dm = mu1 - mu2;
-        let num_m = (-dm).mul_add(dm, 1.0f32);
+        let num_m = 1.0f32 - dm * dm;
         let num_s = 2.0f32 * (s12r[i] - mu12) + super::maps::K_C2;
         let denom_s = (s11r[i] - mu11) + (s22r[i] - mu22) + super::maps::K_C2;
         let q = num_m * num_s / denom_s;
@@ -1150,7 +1160,7 @@ fn maps_fused_inner(
         let mu22 = b * b;
         let mu12 = a * b;
         let dm = a - b;
-        let num_m = (-dm).mul_add_portable(dm, one);
+        let num_m = one - dm * dm;
         let num_s = two * (f32x8::load_t(token, &s12c[i]) - mu12) + kc2;
         let denom_s =
             (f32x8::load_t(token, &s11c[i]) - mu11) + (f32x8::load_t(token, &s22c[i]) - mu22) + kc2;
@@ -1184,7 +1194,7 @@ fn maps_fused_inner(
         let mu22 = mu2 * mu2;
         let mu12 = mu1 * mu2;
         let dm = mu1 - mu2;
-        let num_m = (-dm).mul_add(dm, 1.0f32);
+        let num_m = 1.0f32 - dm * dm;
         let num_s = 2.0f32 * (s12[i] - mu12) + super::maps::K_C2;
         let denom_s = (s11[i] - mu11) + (s22[i] - mu22) + super::maps::K_C2;
         let q = num_m * num_s / denom_s;

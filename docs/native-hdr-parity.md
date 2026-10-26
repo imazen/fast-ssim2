@@ -45,3 +45,33 @@ The test binary uses `-ffp-contract=off`; upstream's explicit Highway FMA
 operations remain fused. Generated fixtures are capped at 30 KB by the capture
 script. Existing changed captures are preserved as `.bak`; keep comparisons
 outside the repository until reviewed.
+
+## Native-path verification
+
+On 2026-10-26, the Rust frontend matched the pinned C++ oracle on
+**3,538,944 pixel probes**, comparing every linear RGB and positive XYB f32
+bit pattern. The opt-in `just native-hdr-dense ORACLE` test covers all 65,536
+u16 code values, channel permutations, linear/PQ/HLG, three gamuts, default
+and custom intensity targets, opaque inputs and both alpha backgrounds.
+Linear-transfer inputs use f32 samples; PQ/HLG also exercise u16 ingestion.
+A separate committed grayscale fixture adds 108 independent pixel probes.
+
+The full-score audit matched **252 nonidentical pairs**, bit for bit, in both
+kernels. It checks cached comparisons and every cached/cold map value too.
+Sizes are 8x8, 17x13, 65x63, plus 513x257 at default intensity targets. The last
+size exercises all six scales and the parallel-dispatch threshold when rayon
+is enabled. Source-only, distorted-only, both-side and absent alpha are covered.
+Captured scores run in the ordinary library test suite; external tools are
+required only for explicit recapture and the dense differential test.
+
+These measurements were made on x86-64 Linux with the pinned Cloudinary
+source and lcms2 2.12. They do not establish bit identity with newer libjxl
+CMS implementations or every platform's transcendental math library.
+
+The score audit also isolated an SSIM rounding mismatch: Rust fused
+`1 - (mu1 - mu2)^2`; the pinned C++ metric rounds the f32 multiplication before
+the subtraction. Keeping those operations separate removed the residual
+(for one 17x13 alpha case: 46.84953924166196 versus C++ 46.849539241451595).
+The existing SDR, JPEG, SIMD, strip, cached-reference and spatial-map assertions
+pass unchanged with that correction. This can change low score bits in SDR
+and PU21 too; retain build-commit provenance when storing metric output.
