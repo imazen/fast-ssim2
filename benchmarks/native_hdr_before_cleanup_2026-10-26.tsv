@@ -1,0 +1,28 @@
+# source_commit=22c4aae4612e06b5f15b2c34c0cfcf1a574671bc
+# binary_sha256=aacba7a7ae77b1c6c331cc92e7a0f229b27b9f3df39684ae2b16e991572fc825
+# host_label=r5900xt
+# zenbench_object_sha256=c68f2044be80e71c5f2e5eb53df6f5be2d11f8d1272a1962185db9ec16cb40fa
+# clean_rounds=465/500; unreliable=False
+# Paired analysis after zenbench outlier filtering; time in milliseconds.
+# Positive delta means slower. Significance includes zenbench's 1% practical threshold.
+group	baseline	candidate	baseline_ms	candidate_ms	delta_percent	ci95_low_percent	ci95_high_percent	kept_rounds	practical_significant
+Rgb8_32x32	pre_hdr	current	0.081932	0.080278	-2.0182	-2.2395	-1.7939	24	True
+Rgba8_32x32	pre_hdr	current	0.321329	0.325830	1.4007	1.2205	1.5815	24	True
+Linear_32x32	pre_hdr	current	0.080608	0.079863	-0.9239	-1.4463	-0.4349	21	False
+Pq_32x32	initial_hdr	current	0.192825	0.194487	0.8620	-0.3132	1.9526	25	False
+Hlg_32x32	initial_hdr	current	0.132185	0.132070	-0.0872	-0.3395	0.1710	22	False
+HlgGray_32x32	initial_hdr	current	0.116692	0.118273	1.3544	0.7604	2.0757	18	False
+Rgb8_320x240	pre_hdr	current	4.789091	4.804223	0.3160	0.0097	0.6089	21	False
+Rgba8_320x240	pre_hdr	current	22.060043	22.302720	1.1001	0.5440	1.6805	22	False
+Linear_320x240	pre_hdr	current	4.781088	4.785422	0.0907	-0.4772	0.6711	22	False
+Pq_320x240	initial_hdr	current	12.764101	12.943284	1.4038	1.0374	1.7828	25	True
+Hlg_320x240	initial_hdr	current	9.393837	9.443889	0.5328	0.0204	1.0859	21	False
+HlgGray_320x240	initial_hdr	current	7.212678	7.482630	3.7427	3.4526	4.0521	20	True
+Rgb8_1920x1080	pre_hdr	current	239.665655	240.663297	0.4163	0.1282	0.7017	21	False
+cached_Rgb8_1920x1080	pre_hdr	current	152.667050	152.819491	0.0999	-0.1942	0.3828	22	False
+Rgba8_1920x1080	pre_hdr	current	815.203287	813.167267	-0.2498	-0.5503	0.0460	23	False
+Linear_1920x1080	pre_hdr	current	258.322964	259.841942	0.5880	-0.0637	1.2845	23	False
+Pq_1920x1080	initial_hdr	current	468.481072	469.681176	0.2562	0.0374	0.5007	22	False
+Hlg_1920x1080	initial_hdr	current	376.666410	378.528470	0.4944	0.1257	0.8619	25	False
+cached_Hlg_1920x1080	initial_hdr	current	220.550304	221.087392	0.2435	-0.0694	0.5743	22	False
+HlgGray_1920x1080	initial_hdr	current	323.688039	331.941522	2.5498	2.2740	2.8439	23	True

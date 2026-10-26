@@ -67,7 +67,8 @@ fn cube_root_and_add(x: f32, add: f32) -> f32 {
 /// `LinearRGBToXYB` + `MakePositiveXYB` for one pixel triple — uses the
 /// reference's `CubeRootAndAdd` bit-hack + Newton chain (not `f32::cbrt`),
 /// which is part of the bit-exactness contract.
-/// Input is linear sRGB (already EOTF-decoded) in [0, ~1.05].
+/// Input is EOTF-decoded linear sRGB, with 1.0 representing 255 nits.
+/// Native HDR uses the intensity-scaled matrix helper instead.
 #[inline]
 pub fn linear_rgb_to_xyb_pixel(px: [f32; 3]) -> [f32; 3] {
     linear_rgb_to_xyb_with(px, |v| cube_root_and_add(v.max(0.0), NEG_CBRT_BIAS))

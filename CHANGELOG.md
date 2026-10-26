@@ -11,11 +11,13 @@
 - `VERSION`, the crate version, for score provenance.
 
 ### Fixed
+- Preserve pinned HLG grayscale power rounding on macOS ARM with a private portable kernel (837289a2).
 - Composite linear alpha in its input domain before color conversion (289d1ab0).
 - Match the reference's separately rounded SSIM mean-error multiply/subtract; some SDR, native HDR and PU21 scores change in their low bits (b722d72f).
 - Preserve native HDR signed-zero behavior and reject alpha metadata on layouts without stored alpha channels (9fe8cc47).
 
 ### Changed
+- Decode grayscale HLG once before RGB expansion, preserving the reference's bits (28b737ce).
 - Retain the bundled libjxl BSD-3-Clause notice for the HDR color port and record the combined package license expression (fad47d52).
 
 ## [0.9.0] - 2026-10-12

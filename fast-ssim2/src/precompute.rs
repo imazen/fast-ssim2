@@ -137,7 +137,7 @@ impl Ssimulacra2Reference {
     /// Compare a distorted image against the precomputed reference.
     ///
     /// Bit-identical to [`crate::compute_ssimulacra2`] on the same pair
-    /// (encoded and linear inputs alike).
+    /// (encoded, linear and native HDR inputs alike).
     ///
     /// # Errors
     /// - [`Ssimulacra2Error::NonMatchingImageDimensions`] if dimensions
@@ -149,6 +149,7 @@ impl Ssimulacra2Reference {
     /// [`Self::compare`] with per-call options — `strip` bounds the
     /// distorted side's memory, `stop` enables cooperative cancellation
     /// (checked at scale boundaries / per strip).
+    /// Native HDR comparisons reject strip options; they use whole-image planes.
     ///
     /// # Errors
     /// As [`Self::compare`], plus [`Ssimulacra2Error::Cancelled`].

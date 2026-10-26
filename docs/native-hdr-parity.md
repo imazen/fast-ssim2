@@ -131,3 +131,9 @@ under its MIT license. Zero, negative and nonfinite inputs retain platform
 IEEE special-value handling. The expanded dense oracle test covers grayscale
 alongside all existing RGB cases: **5,505,024 pixels** match the pinned C++
 frontend exactly on x86-64 Linux. The 648 committed frontend probes also pass.
+
+The [input guide](native-hdr.md) documents units, supported layouts and the
+existing public APIs. The [performance review](native-hdr-performance-2026-10-26.md)
+records the measured costs and cleanup. HLG grayscale now evaluates its
+inverse OETF once before expanding to RGB; the same 5,505,024-probe exact gate
+and captured score/cache/map assertions pass without changing expectations.
