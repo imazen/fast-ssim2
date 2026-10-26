@@ -5,9 +5,18 @@
 ### QUEUED BREAKING CHANGES
 
 ### Added
+- Native PQ/HLG and linear HDR through the existing comparison, cached-reference and spatial-map APIs, with BT.709/BT.2020/Display P3 conversion and explicit luminance anchors; native HDR frontends require whole-image evaluation (289d1ab0).
 - `compute_ssimulacra2_maps` / `compute_ssimulacra2_maps_with_config` with `Ssimulacra2Maps` / `Ssimulacra2ScaleMaps`: the per-scale, per-channel SSIM-error, edge-artifact and detail-lost terms the score pools. Opt-in; the score is bit-identical to the score-only path. Strip evaluation is refused for maps.
 - `Ssimulacra2Reference::compare_with_maps` / `compare_with_maps_with_config`: the same maps against a cached reference, bit-identical to the cold path (encoded, sub-8, alpha and linear inputs; both kernels). `Ssimulacra2Maps::diffmap`: one full-resolution map whose per-pixel shares decompose the score's weighted L1/L4 aggregates, so its mean is the weighted sum the score transforms (score rebuilt from the mean within 8.3e-8 on four fixtures). `Ssimulacra2Maps` gains `width`/`height` (input size).
 - `VERSION`, the crate version, for score provenance.
+
+### Fixed
+- Composite linear alpha in its input domain before color conversion (289d1ab0).
+- Match the reference's separately rounded SSIM mean-error multiply/subtract; some SDR, native HDR and PU21 scores change in their low bits (b722d72f).
+- Preserve native HDR signed-zero behavior and reject alpha metadata on layouts without stored alpha channels (9fe8cc47).
+
+### Changed
+- Retain the bundled libjxl BSD-3-Clause notice for the HDR color port and record the combined package license expression (fad47d52).
 
 ## [0.9.0] - 2026-10-12
 

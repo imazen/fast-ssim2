@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: fast-ssim2.txt 78 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 119 lines (195 hidden + 0 excluded-feature)
+# files: fast-ssim2.txt 78 lines (supported surface) | fast-ssim2.features.txt 2 added (features: hdr-pu,imgref,rayon,unstable-internals) | fast-ssim2.internal.txt 122 lines (198 hidden + 0 excluded-feature)
 
 ## summary
 #
