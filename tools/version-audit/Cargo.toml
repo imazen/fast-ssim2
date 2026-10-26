@@ -8,11 +8,14 @@ publish = false
 
 [dependencies]
 current = { package = "fast-ssim2", path = "../../fast-ssim2" }
+pre_hdr = { package = "fast-ssim2", git = "https://github.com/imazen/fast-ssim2", rev = "25ec2fea8644a2231b64f28c04189ccaf381acd4" }
+initial_hdr = { package = "fast-ssim2", git = "https://github.com/imazen/fast-ssim2", rev = "d1b74ed7d1798ff1cc4d47294d84b6d33837a0a3" }
 v082 = { package = "fast-ssim2", version = "=0.8.2", features = ["imgref"] }
 v071 = { package = "fast-ssim2", version = "=0.7.1", features = ["imgref"] }
 imgref = "1.12.3"
 bytemuck = "1.25.2"
-zenbench = "0.1.10"
+zenpixels = { version = "0.2.16", default-features = false }
+zenbench = "0.1.11"
 sha2 = "0.11.0"
 
 [profile.release]

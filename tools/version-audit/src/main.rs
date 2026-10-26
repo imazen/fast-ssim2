@@ -4,6 +4,8 @@
 #![forbid(unsafe_code)]
 use std::{sync::Arc, time::Duration};
 
+mod native_hdr;
+
 #[path = "../../../fast-ssim2/src/reference_data.rs"]
 mod reference_data;
 #[path = "../../../fast-ssim2/dev/testcases.rs"]
@@ -55,6 +57,10 @@ fn parity() {
 }
 
 fn main() {
+    if std::env::var_os("AUDIT_NATIVE_HDR").is_some() {
+        native_hdr::run();
+        return;
+    }
     if std::env::var_os("AUDIT_PARITY").is_some() {
         parity();
         return;

@@ -69,6 +69,20 @@ check-compare:
 version-audit:
     cargo run --release --manifest-path tools/version-audit/Cargo.toml
 
+# Interleaved pre-HDR/current and initial-HDR/current comparisons in memory.
+native-hdr-performance *args:
+    AUDIT_NATIVE_HDR=1 cargo run --release --manifest-path tools/version-audit/Cargo.toml -- {{args}}
+
+clippy-version-audit:
+    cargo clippy --manifest-path tools/version-audit/Cargo.toml -- -D warnings
+
+build-version-audit: clippy-version-audit
+    cargo build --release --manifest-path tools/version-audit/Cargo.toml
+
+# Invoke only the current kernel for a profiler; no timing instrumentation.
+profile-native-hdr kind output:
+    AUDIT_NATIVE_HDR=1 AUDIT_PROFILE={{kind}} perf record -F 499 -g -o {{output}} -- tools/version-audit/target/release/ssim2-version-audit
+
 # Inventory breaking changes relative to the latest crates.io release.
 semver-audit:
     cargo semver-checks check-release -p fast-ssim2 --baseline-version 0.8.2 --release-type patch
