@@ -152,6 +152,7 @@ fn native_default_targets_and_strided_integer_layouts() {
 }
 
 #[test]
+#[allow(deprecated)] // Native/PU21 score separation is an intentional compatibility check.
 fn native_hdr_does_not_use_pu21_or_clamp_highlights() {
     let case = Case {
         transfer: 8,
@@ -246,6 +247,7 @@ fn native_hdr_validates_anchors_and_honors_cancellation() {
 }
 
 #[test]
+#[allow(deprecated)] // Validate alpha rejection through every retained entry point.
 fn alpha_metadata_without_a_stored_channel_is_rejected() {
     use zenpixels::{AlphaMode, PixelFormat};
     for format in [

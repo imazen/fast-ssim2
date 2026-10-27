@@ -310,7 +310,7 @@ pub fn compute_ssimulacra2_maps_with_config(
     })
 }
 
-/// HDR variant (`hdr-pu` feature): SSIMULACRA2 with the cube-root opsin
+/// Deprecated PU21 variant (`hdr-pu` feature): SSIMULACRA2 with the cube-root opsin
 /// replaced by **PU21** perceptual encoding of absolute luminance (cd/m²).
 ///
 /// Accepted inputs:
@@ -325,17 +325,32 @@ pub fn compute_ssimulacra2_maps_with_config(
 /// **Scores are not comparable to [`compute_ssimulacra2`] scores** — this
 /// is a different perceptual-encoding regime for HDR content.
 #[cfg(feature = "hdr-pu")]
+#[deprecated(
+    note = "PU21 scoring is deprecated. Native HDR uses compute_ssimulacra2 without hdr-pu; PU21 and native scores are not interchangeable."
+)]
 pub fn compute_ssimulacra2_pu(
     source: &zenpixels::PixelSlice<'_>,
     distorted: &zenpixels::PixelSlice<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
-    compute_ssimulacra2_pu_with_config(source, distorted, &Ssimulacra2Config::default())
+    compute_ssimulacra2_pu_impl(source, distorted, &Ssimulacra2Config::default())
 }
 
 /// [`compute_ssimulacra2_pu`] with custom configuration (kernel +
 /// cancellation). Strip options return [`crate::Ssimulacra2Error::InvalidConfiguration`].
 #[cfg(feature = "hdr-pu")]
+#[deprecated(
+    note = "PU21 scoring is deprecated. Native HDR uses compute_ssimulacra2_with_config without hdr-pu; PU21 and native scores are not interchangeable."
+)]
 pub fn compute_ssimulacra2_pu_with_config(
+    source: &zenpixels::PixelSlice<'_>,
+    distorted: &zenpixels::PixelSlice<'_>,
+    config: &Ssimulacra2Config<'_>,
+) -> Result<f64, Ssimulacra2Error> {
+    compute_ssimulacra2_pu_impl(source, distorted, config)
+}
+
+#[cfg(feature = "hdr-pu")]
+fn compute_ssimulacra2_pu_impl(
     source: &zenpixels::PixelSlice<'_>,
     distorted: &zenpixels::PixelSlice<'_>,
     config: &Ssimulacra2Config<'_>,

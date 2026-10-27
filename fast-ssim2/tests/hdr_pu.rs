@@ -1,5 +1,7 @@
 //! PU21-integrated HDR scoring (`hdr-pu` feature).
 #![cfg(feature = "hdr-pu")]
+// Preserve the deprecated PU21 score contract deliberately.
+#![allow(deprecated)]
 
 use fast_ssim2::{PixelDescriptor, PixelSlice, compute_ssimulacra2_pu};
 

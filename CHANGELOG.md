@@ -4,6 +4,9 @@
 
 ### QUEUED BREAKING CHANGES
 
+### Deprecated
+- `hdr-pu`, `compute_ssimulacra2_pu` and `compute_ssimulacra2_pu_with_config`: native HDR uses the standard APIs without the feature; PU21 remains available with its existing score definition. Local/path builds warn on feature enablement and callers receive Rust deprecation warnings.
+
 ### Added
 - Native PQ/HLG and linear HDR through the existing comparison, cached-reference and spatial-map APIs, with BT.709/BT.2020/Display P3 conversion and explicit luminance anchors; native HDR frontends require whole-image evaluation (289d1ab0).
 - `compute_ssimulacra2_maps` / `compute_ssimulacra2_maps_with_config` with `Ssimulacra2Maps` / `Ssimulacra2ScaleMaps`: the per-scale, per-channel SSIM-error, edge-artifact and detail-lost terms the score pools. Opt-in; the score is bit-identical to the score-only path. Strip evaluation is refused for maps.

@@ -142,6 +142,7 @@ fn alpha_only_on_distorted_side_matches_explicit_opaque_reference() {
 
 #[cfg(feature = "hdr-pu")]
 #[test]
+#[allow(deprecated)] // The legacy PU21 contract remains covered during migration.
 fn hdr_composites_in_nits_and_rejects_strips() {
     use fast_ssim2::{compute_ssimulacra2_pu, compute_ssimulacra2_pu_with_config};
     let data: Vec<f32> = (0..64)

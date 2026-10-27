@@ -67,7 +67,7 @@ default = []
 unstable-internals = []
 imgref = ["zenpixels/imgref"]  # ImgRef/ImgVec → PixelSlice conversions (rgb-crate pixel types)
 rayon = ["dep:rayon"]
-hdr-pu = []  # PU21-integrated HDR scoring (absolute-nits / PQ / HLG inputs)
+hdr-pu = []  # Deprecated PU21 scoring; native HDR uses the standard APIs.
 
 [[example]]
 name = "mem_strip"
