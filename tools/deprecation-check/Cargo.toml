@@ -1,0 +1,27 @@
+[package]
+name = "fast-ssim2-deprecation-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+fast-ssim2 = { path = "../../fast-ssim2", default-features = false }
+
+[features]
+hdr-pu = ["fast-ssim2/hdr-pu"]
+
+[[bin]]
+name = "feature-only"
+path = "src/feature_only.rs"
+
+[[bin]]
+name = "caller"
+path = "src/caller.rs"
+required-features = ["hdr-pu"]
+
+[[bin]]
+name = "legacy"
+path = "src/legacy.rs"
+required-features = ["hdr-pu"]

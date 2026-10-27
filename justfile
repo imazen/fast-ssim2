@@ -62,6 +62,10 @@ docs-check:
 check-native-hdr-guide:
     python3 tools/check_native_hdr_guide.py
 
+# Check feature warnings, caller diagnostics, deny(deprecated), and explicit compatibility opt-in.
+check-deprecations:
+    python3 tools/check_deprecations.py
+
 # Workspace lint gate with every library feature (CLI video requires system libraries).
 clippy-workspace:
     cargo clippy --workspace --all-targets --features fast-ssim2/unstable-internals,fast-ssim2/hdr-pu,fast-ssim2/imgref,fast-ssim2/rayon -- -D warnings
