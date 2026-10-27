@@ -65,6 +65,17 @@ static jxl::ImageBundle Read(jxl::ImageMetadata* metadata, float* bg, bool gray 
 int main() {
   std::string mode;
   while (std::cin >> mode) {
+    if (mode == "profile") {
+      int transfer, primaries, gray;
+      std::cin >> transfer >> primaries >> gray;
+      auto color = jxl::ColorEncoding::LinearSRGB(gray != 0);
+      color.primaries = static_cast<jxl::Primaries>(primaries);
+      color.tf.SetTransferFunction(static_cast<jxl::TransferFunction>(transfer));
+      if (!color.CreateICC()) throw std::runtime_error("CreateICC failed");
+      for (uint8_t byte : color.ICC()) std::printf("%02x", byte);
+      std::printf("\n");
+      continue;
+    }
     if (mode == "matrix") {
       int primaries;
       std::cin >> primaries;

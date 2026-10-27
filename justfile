@@ -124,6 +124,14 @@ semver-major-audit:
 build-native-hdr-oracle source build output:
     bash tools/build-native-hdr-oracle.sh "{{source}}" "{{build}}" "{{output}}"
 
+# Preserve an original C++ CLI and copy it with round-trippable score printing.
+reference-cli-precision input output:
+    python3 tools/reference_cli_precision.py "{{input}}" "{{output}}"
+
+# Controlled PNG and in-memory reference comparison; output directory must be new.
+reference-spot raw cloud libjxl output:
+    cargo run --release -p fast-ssim2 --example reference_spot -- "{{raw}}" "{{cloud}}" "{{libjxl}}" "{{output}}"
+
 capture-native-hdr oracle output:
     python3 tools/native_hdr_fixtures.py {{oracle}} {{output}}
 

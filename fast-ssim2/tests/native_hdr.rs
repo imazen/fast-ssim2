@@ -42,6 +42,20 @@ fn native_hdr_scores_maps_and_cpp_reference() {
         let expected = compute_ssimulacra2_with_config(&a, &b, &Ssimulacra2Config::scalar())
             .unwrap()
             .to_bits();
+        assert_eq!(
+            compute_ssimulacra2(&a, &b).unwrap().to_bits(),
+            expected,
+            "default entry point: {line}"
+        );
+        assert_eq!(
+            Ssimulacra2Reference::new(&a)
+                .unwrap()
+                .compare(&b)
+                .unwrap()
+                .to_bits(),
+            expected,
+            "default cached entry point: {line}"
+        );
         // Captures use x86-64 glibc. Other libm implementations can differ in
         // the final f64 pow, even with identical frontend and aggregate bits.
         // Every platform still requires exact scalar/SIMD/cached/map equality.
