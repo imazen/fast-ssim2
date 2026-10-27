@@ -4,8 +4,14 @@ Use the ordinary `compute_ssimulacra2*`, `Ssimulacra2Reference` and spatial-map
 APIs. No feature flag is required. They use SSIMULACRA2's cube-root XYB encoding
 and weights, with the pinned reference's HDR color conversion.
 
-`hdr-pu` selects separate PU21 entry points. Those scores and luminance units
-have a different contract; they are not a substitute for native HDR scoring.
+The deprecated `hdr-pu` feature selects separate PU21 entry points. Those
+scores and luminance units have a different contract; they are not a
+substitute for native HDR scoring.
+Local/path builds warn when the feature is enabled, and the PU21 functions
+warn at call sites. Cargo normally hides dependency build-script warnings
+for registry/git packages. Explicitly allowing deprecated calls retains the
+PU21 score definition while callers migrate; changing to native HDR requires
+separate score baselines.
 
 ## Descriptors and samples
 

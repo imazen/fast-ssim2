@@ -7,7 +7,7 @@ for repeated comparisons. Runtime dispatch selects SIMD where available;
 
 **SDR and native HDR use the same API.** PQ, HLG and linear f32 HDR work with
 ordinary comparisons, cached references and spatial maps, without an HDR
-feature flag. The optional `hdr-pu` feature selects a separate PU21 scoring
+feature flag. The deprecated `hdr-pu` feature selects a separate PU21 scoring
 variant.
 
 ## Compare images
@@ -252,9 +252,9 @@ vary across platform math libraries even when frontend values match. The
 [performance review](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr-performance-2026-10-26.md)
 includes paired before/after timings, profiling and measurement limits.
 
-### Optional PU21 variant (`hdr-pu`)
+### Deprecated PU21 variant (`hdr-pu`)
 
-The optional `hdr-pu` feature provides `compute_ssimulacra2_pu` and
+The deprecated `hdr-pu` feature retains `compute_ssimulacra2_pu` and
 `compute_ssimulacra2_pu_with_config`, a separate PU21 encoding variant.
 Use it when reproducing PU21 scores; ordinary native HDR scoring uses the
 standard functions above. Switching between these paths changes the metric
@@ -264,13 +264,19 @@ a 1000-nit display. Primaries are consumed as supplied. Alpha composites on
 20/200-nit backgrounds. PU21 scores are not interchangeable with native scores;
 PU21 has no cached reference or strip API.
 
+Enabling `hdr-pu` emits a Cargo build warning for local/path builds. Cargo
+normally suppresses build-script warnings from registry/git dependencies;
+both PU21 functions also carry Rust deprecation warnings at call sites.
+Existing callers retaining PU21 baselines can explicitly allow `deprecated`
+on those calls during migration. The feature and functions remain available.
+
 ## Features and limits
 
 | Feature | Purpose |
 |---|---|
 | `imgref` | Forward `zenpixels/imgref` conversions |
 | `rayon` | Parallel kernels and opt-in parallel strips |
-| `hdr-pu` | Separate PU21 score variant; native HDR needs no feature |
+| `hdr-pu` | Deprecated PU21 score variant; native HDR needs no feature |
 | `unstable-internals` | Development tools only; exposes kernels without an API stability guarantee |
 
 No features are enabled by default. Runtime SIMD dispatch is available without
