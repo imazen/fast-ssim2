@@ -48,6 +48,15 @@ Raw interleaved bytes need no intermediate pixel vector.
 ## Configure a comparison
 
 `Ssimulacra2Config` combines backend selection, strip options, and cancellation.
+The default uses SIMD dispatch and full-image reference-order evaluation.
+`SimdImpl::Scalar` and `SimdImpl::Simd` select kernels with identical scores;
+`Ssimulacra2Config::simd()` is shorthand for `default()`. SIMD currently
+dispatches to AVX2/FMA, NEON, WASM SIMD128 or a scalar fallback.
+
+Reference compatibility depends on input conversion and the oracle build.
+The [Cloudinary/libjxl spot test](docs/reference-spot-2026-10-26.md) records
+their measured HDR differences and the default path's coverage.
+
 Builders retain the other options. Configuration and error types are
 non-exhaustive so callers can adopt future additions without exhaustive matches
 or struct literals.
