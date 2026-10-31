@@ -132,6 +132,14 @@ reference-cli-precision input output:
 reference-spot raw cloud libjxl output:
     cargo run --release -p fast-ssim2 --example reference_spot -- "{{raw}}" "{{cloud}}" "{{libjxl}}" "{{output}}"
 
+# Unmodified x86-64 RGB reference binary: capture exact CMS row boundaries.
+reference-cms-trace binary source distorted output:
+    python3 tools/reference_cms_trace.py "{{binary}}" "{{source}}" "{{distorted}}" "{{output}}"
+
+# Replay exact captured linear pixels with an explicit target; require oracle bits.
+reference-cms-replay trace oracle height target expected:
+    python3 tools/reference_cms_replay.py "{{trace}}" "{{oracle}}" {{height}} {{target}} --expect {{expected}}
+
 capture-native-hdr oracle output:
     python3 tools/native_hdr_fixtures.py {{oracle}} {{output}}
 
