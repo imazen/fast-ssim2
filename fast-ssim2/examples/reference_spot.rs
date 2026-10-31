@@ -1,4 +1,6 @@
 //! Compare identical PNG inputs and in-memory pixels against both C++ tools.
+//! `SSIM2_SPOT_METADATA=icc|cicp|icc+cicp` controls PNG color signaling;
+//! `SSIM2_SPOT_FORMATS` selects comma-separated format names.
 use fast_ssim2::{
     PixelDescriptor, PixelSlice, Ssimulacra2Config, Ssimulacra2Reference, StripConfig,
     TransferFunction, compute_ssimulacra2, compute_ssimulacra2_with_config,
@@ -139,9 +141,17 @@ fn write_png(
     } else {
         png::ColorType::Rgb
     };
-    info.icc_profile = Some(Cow::Owned(profile));
+    let metadata = std::env::var("SSIM2_SPOT_METADATA").unwrap_or_else(|_| "icc".into());
+    if metadata != "cicp" {
+        info.icc_profile = Some(Cow::Owned(profile));
+    }
     let encoder = png::Encoder::with_info(fs::File::create_new(path).unwrap(), info).unwrap();
     let mut writer = encoder.write_header().unwrap();
+    if metadata != "icc" {
+        writer
+            .write_chunk(png::chunk::cICP, &[format.primaries, format.transfer, 0, 1])
+            .unwrap();
+    }
     let bytes: Vec<u8> = if format.depth == 8 {
         data.iter().map(|&v| v as u8).collect()
     } else {
@@ -164,6 +174,8 @@ fn main() {
         Path::new(&args[3]),
     );
     fs::create_dir(output).expect("output directory must be new");
+    let metadata = std::env::var("SSIM2_SPOT_METADATA").unwrap_or_else(|_| "icc".into());
+    assert!(matches!(metadata.as_str(), "icc" | "cicp" | "icc+cicp"));
     let mut rows = String::new();
     for (label, oracle) in [
         ("raw_cloudinary", raw),
@@ -181,6 +193,7 @@ fn main() {
         .unwrap();
     }
     rows.push_str("# Scores are f64 hexadecimal bits; default/scalar/SIMD/cache must agree.\n");
+    writeln!(rows, "# png_metadata {metadata}").unwrap();
     rows.push_str("format\twidth\theight\tdefault\tscalar\tsimd\traw_cloudinary\tcloudinary_cli\tlibjxl_cli\tstrips\n");
     let formats = [
         Format {
@@ -274,8 +287,21 @@ fn main() {
             floats: false,
         },
     ];
+    if let Ok(selected) = std::env::var("SSIM2_SPOT_FORMATS") {
+        assert!(
+            selected
+                .split(',')
+                .all(|name| formats.iter().any(|f| f.name == name))
+        );
+    }
     for (width, height) in [(17, 13), (513, 257)] {
         for format in formats {
+            if let Ok(selected) = std::env::var("SSIM2_SPOT_FORMATS")
+                && !selected.split(',').any(|name| name == format.name)
+            {
+                continue;
+            }
+            assert!(!format.gray || metadata == "icc", "cICP controls use RGB");
             let target = match format.transfer {
                 16 => 10000.0,
                 18 => 1000.0,
