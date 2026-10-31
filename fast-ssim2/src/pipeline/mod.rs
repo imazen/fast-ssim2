@@ -11,10 +11,11 @@
 //! The SSIMULACRA2.1 pipeline — a bit-exact reimplementation of the
 //! reference (`ssimulacra2.cc` + vendored libjxl primitives).
 //!
-//! The standalone `ssimulacra2` (Jon Sneyers) and the `ssimulacra2` tool shipped
-//! in libjxl v0.12.0 produce identical scores (verified on 400+ image pairs
-//! and by source diff); this module reproduces that single behavior,
-//! including its floating-point quirks:
+//! The compatibility target is pinned Cloudinary SSIMULACRA2 2.1 and its
+//! bundled libjxl primitives, including their floating-point ordering.
+//! CLI builds can differ in ICC transfer recognition and color conversion;
+//! `docs/reference-spot-2026-10-26.md` records ICC-only and explicit PNG cICP
+//! controls against the official libjxl 0.12 executable. This pipeline keeps:
 //!
 //! - sRGB → linear via captured LUTs (lcms2's sampled-curve evaluation,
 //!   which differs from both the exact EOTF and `TF_SRGB`'s rational
@@ -24,10 +25,11 @@
 //! - `SSIMMap`/`EdgeDiffMap` with the f32-quotient/f64-aggregate split
 //! - `Score` with the reference's exact f64 op ordering
 //!
-//! Bit-exactness is guaranteed for 8-bit sRGB inputs (JPEG/PNG decoded to
-//! u8) — the captured lcms LUT reproduces the reference's linearization
+//! Opaque 8-bit sRGB inputs (JPEG/PNG decoded to u8) use a captured lcms LUT
+//! that reproduces the pinned reference's linearization
 //! bit-for-bit. `u16` and off-grid `f32` encoded inputs evaluate the sRGB
-//! polynomial instead — close to, but not guaranteed bit-identical with,
+//! polynomial instead, as do fractional-alpha sRGB inputs — close to, but
+//! not guaranteed bit-identical with,
 //! the reference's lcms evaluation. Native HDR uses a separate descriptor
 //! frontend; its pinned oracle and coverage are in `docs/native-hdr-parity.md`.
 

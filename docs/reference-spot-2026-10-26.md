@@ -186,3 +186,74 @@ Source references: libjxl's
 [XYB intensity scaling](https://github.com/libjxl/libjxl/blob/v0.12.0/lib/jxl/enc_xyb.cc),
 and the pinned Cloudinary bundle's
 [intensity defaults](https://github.com/cloudinary/ssimulacra2/blob/81feacf6a5b0bbd7ec11b4a881a4615033ab0b10/src/lib/jxl/luminance.cc).
+
+## Explicit HDR metadata control (2026-10-31)
+
+The original harness invoked both CLIs correctly, but its HDR comparison had
+an important limitation: Rust received explicit transfer/primaries descriptors,
+while the PNG files supplied only legacy sampled ICC profiles. The tools had
+to infer PQ/HLG from those curves. That is not a sufficient control for a
+blanket claim that Cloudinary is correct and libjxl is incorrect.
+
+The follow-up adds explicit PNG `cICP` signaling using the existing PNG encoder.
+PQ BT.2020 uses the four bytes `09 10 00 01`; HLG uses `09 12 00 01`.
+These identify primaries, transfer, RGB matrix and full range. The
+[PNG specification](https://www.w3.org/TR/png-3/#cICP-chunk) gives this chunk
+precedence over an embedded ICC profile when the decoder understands it.
+libjxl's [PNG decoder](https://github.com/libjxl/libjxl/blob/v0.12.0/lib/extras/dec/apng.cc)
+supports those fields and clears the ICC representation when it reads cICP.
+The older Cloudinary PNG decoder in this experiment does not use that chunk.
+
+Controls and observed results:
+
+- All twelve ICC+cICP PNGs preserve **every original PNG chunk byte-for-byte**;
+  the only addition is a CRC-verified cICP chunk. Pixel/IDAT bytes are unchanged.
+- With explicit cICP, libjxl recognizes PQ (transfer 16) and uses **10000 nits**
+  in both CMS and XYB calls for the traced 513×257 PQ pair.
+- CICP-only and ICC+cICP files produce **identical libjxl scores on all six
+  controlled pairs**. The older Cloudinary tool falls back to its default
+  interpretation for CICP-only files, so those outputs are not HDR oracles.
+- Replaying the cICP-tagged PQ pair's captured libjxl linear pixels at 10000
+  nits through Cloudinary's metric reproduces libjxl's final score exactly:
+  `4050bff78ab911d8`, or 66.99948375771726. Thus its remaining discrepancy is
+  before the metric kernels, in the conversion output.
+
+The larger (513×257) controlled results are:
+
+| Input | Cloudinary / Rust native | libjxl, ICC only | libjxl, explicit cICP | cICP delta from Cloudinary |
+|---|---:|---:|---:|---:|
+| PQ BT.2020 RGB | 66.99178281065342 | 82.55266789034945 | 66.99948375771726 | +0.00770094706384 |
+| HLG BT.2020 RGB | 84.51185831173865 | 88.51267443425317 | 84.50891711157686 | −0.00294120016179 |
+| Linear BT.2020 RGB | 92.52534731381078 | 92.59496424614555 | 92.47874996418629 | −0.04659734962449 |
+
+The large HDR gap in the first experiment therefore reflects different
+inference from legacy ICC profiles. It does **not** establish that libjxl
+misinterprets explicitly signaled PQ/HLG. The smaller, reproducible
+color-conversion differences still prevent a universal bit-identity claim.
+The experiments do not identify which conversion implementation is more
+accurate for arbitrary ICC profiles.
+
+Our native API retains explicit HDR semantics and the pinned Cloudinary
+compatibility target. [ITU-R BT.2100-3](https://www.itu.int/rec/R-REC-BT.2100-3-202502-I/en)
+Table 4 defines PQ using a 10000 cd/m² scale; Table 5 defines HLG's reference
+system gamma of 1.2 at a 1000 cd/m² display peak. HLG display peak remains
+configurable. This establishes the intended luminance interpretation, not a
+claim of perceptual validation of every HDR score or unique correctness of
+Cloudinary's floating-point approximations.
+
+Exact results are in the [ICC+cICP capture](../benchmarks/reference_cicp_with_icc_2026-10-31.tsv)
+and [CICP-only capture](../benchmarks/reference_cicp_only_2026-10-31.tsv).
+The generator accepts explicit metadata and format controls:
+
+```sh
+SSIM2_SPOT_METADATA=icc+cicp SSIM2_SPOT_FORMATS=rgb16-pq2020,rgb16-hlg2020,rgbf32-linear2020 \
+  just reference-spot RAW_CLOUD_ORACLE CLOUD_CLI_17G LIBJXL_CLI_17G NEW_OUTPUT_DIR
+# Repeat with SSIM2_SPOT_METADATA=cicp into another new directory.
+```
+
+Raw PNGs and the GDB trace remain under
+`/mnt/v/output/fast-ssim2/reference-cicp-2026-10-31/` and
+`/mnt/v/output/fast-ssim2/reference-cicp-only-2026-10-31/`, verified on the
+same x86-64 GNU Linux test host as the initial audit. The explicit-PQ trace
+SHA256 is `958e5239143be15f16b7549f138cacd4be8c1120154e2074a3f1c8eda26ce7d3`.
+Existing captures, executable hashes and assertions are retained.

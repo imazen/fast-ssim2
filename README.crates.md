@@ -258,6 +258,11 @@ The [native HDR parity record](https://github.com/imazen/fast-ssim2/blob/main/do
 records 5,505,024 exact frontend pixel comparisons and 264 exact x86-64 Linux
 GNU score pairs against pinned Cloudinary SSIMULACRA2 2.1. Final f64 scores can
 vary across platform math libraries even when frontend values match. The
+compatibility target is that pinned Cloudinary build. The
+[libjxl comparison](docs/reference-spot-2026-10-26.md#explicit-hdr-metadata-control-2026-10-31)
+separates legacy ICC inference from explicitly signaled PNG HDR; their CLI
+outputs are not universally bit-identical.
+The
 [performance review](https://github.com/imazen/fast-ssim2/blob/main/docs/native-hdr-performance-2026-10-26.md)
 includes paired before/after timings, profiling and measurement limits.
 
