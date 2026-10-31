@@ -1,0 +1,156 @@
+{
+  "date": "2026-10-31",
+  "production_source": "17ab79f216fca5a33cc892bac518c0b796508516",
+  "scope": "Unmodified x86-64 ELF reference CLIs; RGB ICC-tagged PNGs from the 2026-10-26 spot test",
+  "traces": [
+    {
+      "file": "pq17-cloud-targets.json",
+      "sha256": "69a96264046f2c673b67ddc77732b7791f592087d29cda285cd87adba14dfb09",
+      "binary_sha256": "c224bc71cf5b8624b1b0d131fc590a04a0ef26c9aa7c83984ad1f1927d194f4e",
+      "source_sha256": "b6b2af0a6f8cd6603c38eaaaeb5eff4b92d4136ee428a3ea49056848432721ec",
+      "distorted_sha256": "e8f265415c079c46283dbe560b17f5d405d819bb9d0bbe85e13196ea3d454b73",
+      "rows": 26,
+      "targets": [
+        10000.0
+      ],
+      "profiles": []
+    },
+    {
+      "file": "pq17-libjxl-profiles.json",
+      "sha256": "27a64094931ab6f56b7d0f702860b3f0e0c199055f1f41bbf428b8293e199d02",
+      "binary_sha256": "a7de3fb2fcc802bec6d7c8372060c2853c6e03fc06879a0263385dfa7a069691",
+      "source_sha256": "b6b2af0a6f8cd6603c38eaaaeb5eff4b92d4136ee428a3ea49056848432721ec",
+      "distorted_sha256": "e8f265415c079c46283dbe560b17f5d405d819bb9d0bbe85e13196ea3d454b73",
+      "rows": 26,
+      "targets": [
+        255.0
+      ],
+      "profiles": [
+        [
+          0,
+          1,
+          8
+        ],
+        [
+          0,
+          9,
+          2
+        ]
+      ]
+    },
+    {
+      "file": "pq513-libjxl-profiles.json",
+      "sha256": "7a3c36ac4d33d8b908b2ab1028fd9718c7c80832f0d05b57ceb36ced10b1a056",
+      "binary_sha256": "a7de3fb2fcc802bec6d7c8372060c2853c6e03fc06879a0263385dfa7a069691",
+      "source_sha256": "eceb6c31e47191531fd5950f59eb1d83c7000db6361cb92c61db3e545f242905",
+      "distorted_sha256": "a72f7faed39e184d75d972b471ae10c7543852f78c97c419f4ac9f742bb40455",
+      "rows": 514,
+      "targets": [
+        255.0
+      ],
+      "profiles": [
+        [
+          0,
+          1,
+          8
+        ],
+        [
+          0,
+          9,
+          2
+        ]
+      ]
+    },
+    {
+      "file": "hlg17-cloud-targets.json",
+      "sha256": "39b29b6f2343b994a0aab97deb1dfce6523d08978f0ec0ed38eaa39962ec6ce9",
+      "binary_sha256": "c224bc71cf5b8624b1b0d131fc590a04a0ef26c9aa7c83984ad1f1927d194f4e",
+      "source_sha256": "0ab3efbb2bb8127d60db30e00971f21be538a4101ad19e7abc018c55d28e0652",
+      "distorted_sha256": "6a2583b2d7e33b4da2683a0df19c52508eb33f47be8d4d1d92fad7aac5435127",
+      "rows": 26,
+      "targets": [
+        1000.0
+      ],
+      "profiles": []
+    },
+    {
+      "file": "hlg17-libjxl-profiles.json",
+      "sha256": "0f7cc9976315f9900f8ad344285f4b0c536eadc4b3ad877ae7cfa39069b77b96",
+      "binary_sha256": "a7de3fb2fcc802bec6d7c8372060c2853c6e03fc06879a0263385dfa7a069691",
+      "source_sha256": "0ab3efbb2bb8127d60db30e00971f21be538a4101ad19e7abc018c55d28e0652",
+      "distorted_sha256": "6a2583b2d7e33b4da2683a0df19c52508eb33f47be8d4d1d92fad7aac5435127",
+      "rows": 26,
+      "targets": [
+        255.0
+      ],
+      "profiles": [
+        [
+          0,
+          1,
+          8
+        ],
+        [
+          0,
+          9,
+          2
+        ]
+      ]
+    },
+    {
+      "file": "linear17-libjxl-profiles.json",
+      "sha256": "129c6a19d53c7f95885c5f0ce9dbc1c3ab5dfefc4b180fc9c3916a634a69a5b6",
+      "binary_sha256": "a7de3fb2fcc802bec6d7c8372060c2853c6e03fc06879a0263385dfa7a069691",
+      "source_sha256": "81bdf5dab725913bcd9ded8aeb8a0adc29473ab9bd05c945d234cb61ccfb45e2",
+      "distorted_sha256": "63015f2e4fb38a696243632657449b4d9b83e927180719393b05009850c15028",
+      "rows": 26,
+      "targets": [
+        255.0
+      ],
+      "profiles": [
+        [
+          0,
+          1,
+          8
+        ],
+        [
+          0,
+          9,
+          8
+        ]
+      ]
+    }
+  ],
+  "replay_expectations": [
+    {
+      "trace": "pq17-cloud-targets.json",
+      "height": 13,
+      "target": 10000,
+      "bits": "4056ef8bb6759321"
+    },
+    {
+      "trace": "pq17-libjxl-profiles.json",
+      "height": 13,
+      "target": 255,
+      "bits": "4057b0d27ac89f10"
+    },
+    {
+      "trace": "pq513-libjxl-profiles.json",
+      "height": 257,
+      "target": 255,
+      "bits": "4054a35ee924a66a"
+    },
+    {
+      "trace": "hlg17-libjxl-profiles.json",
+      "height": 13,
+      "target": 255,
+      "bits": "4058188ee67988f8"
+    },
+    {
+      "trace": "linear17-libjxl-profiles.json",
+      "height": 13,
+      "target": 255,
+      "bits": "405859b7918a73b8"
+    }
+  ],
+  "instrumentation_commit": "efdb79ac300eb0b661043e93b3dc65cbc8e63a78"
+}

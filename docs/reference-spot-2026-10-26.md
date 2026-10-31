@@ -113,3 +113,76 @@ scope is x86-64 GNU Linux; this does not establish cross-libm f64 equality.
 The successful 10-second run reported peak RSS 0.26 GiB, minimum available
 memory 9572 MiB and peak load 3.70 from `run-heavy`; those are wrapper observations
 for this small correctness run, not an isolated library-memory benchmark.
+
+## Follow-up: why the HDR scores differ (2026-10-31)
+
+A debugger trace now isolates the large RGB HDR discrepancy to ICC profile
+recognition and the resulting luminance interpretation in the tested builds.
+The RGB profiles emitted by the pinned Cloudinary encoder describe PQ/HLG with
+sampled ICC tone curves and have no `cicp` tag. The official libjxl 0.12 static
+tool reports their transfer as `JXL_TRANSFER_FUNCTION_UNKNOWN` (2), with BT.2020
+primaries (9). Its CMS and XYB calls use an intensity target of **255 nits**.
+The pinned Cloudinary CLI instead supplies **10000 nits for PQ** and **1000 nits
+for HLG** to its CMS. These are observations for these profiles and binaries,
+not a claim that libjxl cannot handle PQ/HLG signaled by other metadata.
+
+The distinction matters twice: the luminance anchor scales the XYB opsin
+coefficients, and recognized HLG enables the display-dependent OOTF. Unknown
+transfer falls back to evaluation of the ICC profile instead of the explicit
+PQ/HLG preprocessing. The tested builds use different CMS implementations:
+Cloudinary uses lcms2; the official libjxl binary includes and calls skcms.
+Small gamut-conversion and sampled-curve differences accompany the anchor
+change. The precise reason the profile-equivalence heuristic rejects these
+legacy sampled curves has not been isolated further.
+
+The trace reads the original executables' CMS input/output rows, public
+profile classification results, and intensity-target arguments. It changes
+neither executable nor pixels. Feeding the captured **linear RGB** into the
+same pinned Cloudinary metric with the **observed target** reproduces:
+
+| Captured conversion | Size | Replay target | Exact replay score bits |
+|---|---|---:|---|
+| Cloudinary PQ | 17×13 | 10000 | `4056ef8bb6759321` |
+| libjxl PQ | 17×13 | 255 | `4057b0d27ac89f10` |
+| libjxl PQ | 513×257 | 255 | `4054a35ee924a66a` |
+| libjxl HLG | 17×13 | 255 | `4058188ee67988f8` |
+| libjxl linear BT.2020 | 17×13 | 255 | `405859b7918a73b8` |
+
+Each matches the corresponding CLI's score bits from the original spot test.
+This explains the 513×257 PQ result of 66.99178281065342 versus
+82.55266789034945 without changing SSIMULACRA2's weights or metric kernels.
+For the small PQ pair, using libjxl's converted pixels but keeping the
+Cloudinary target of 10000 produces 91.74488690271055; using 255 produces
+libjxl's 94.76284665672233. Cloudinary's own result is 91.74290238840014.
+The smaller linear BT.2020 residual also reproduces solely from libjxl's
+converted RGB at the common 255-nit target.
+
+The native Rust API receives the transfer and primaries explicitly through
+its descriptor, so it does not need to infer PQ/HLG from an ICC curve.
+Its pinned Cloudinary parity target is unchanged. Universal equality with
+both CLI builds is therefore not an appropriate default contract for these
+ICC-tagged inputs.
+
+### Reproduction and artifacts
+
+[Trace metadata and exact replay expectations](../benchmarks/reference_cms_2026-10-31.json)
+record executable/input/trace hashes and the observed classifications and
+targets. Raw traces exceed 30 KB and remain with the original PNGs at
+`/mnt/v/output/fast-ssim2/reference-spot-2026-10-26/`, verified on the x86-64
+GNU Linux test host. This location is not required by ordinary CI.
+
+```sh
+# GDB with Python, unstripped x86-64 SysV reference executables; RGB only.
+SSIM2_TRACE_MODERN_XYB=1 just reference-cms-trace LIBJXL_CLI SOURCE_PNG DISTORTED_PNG NEW_TRACE
+just reference-cms-trace CLOUD_CLI SOURCE_PNG DISTORTED_PNG NEW_CLOUD_TRACE
+just reference-cms-replay NEW_TRACE RAW_CLOUD_ORACLE 257 255 4054a35ee924a66a
+```
+
+Use the appropriate height, target and expected bits for each captured pair.
+The trace's profile offsets follow `JxlColorEncoding`'s x86-64 layout; it is
+instrumentation for the pinned reference binaries, not a portable profiler.
+Source references: libjxl's
+[ICC transfer detection and CMS selection](https://github.com/libjxl/libjxl/blob/v0.12.0/lib/jxl/cms/jxl_cms.cc),
+[XYB intensity scaling](https://github.com/libjxl/libjxl/blob/v0.12.0/lib/jxl/enc_xyb.cc),
+and the pinned Cloudinary bundle's
+[intensity defaults](https://github.com/cloudinary/ssimulacra2/blob/81feacf6a5b0bbd7ec11b4a881a4615033ab0b10/src/lib/jxl/luminance.cc).
