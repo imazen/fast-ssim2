@@ -34,7 +34,7 @@ clap = { version = "4.6.6", features = ["derive"] }
 crossterm = "0.29.0"
 indicatif = "0.18.6"
 num-traits = { version = "0.2.19", optional = true }
-fast-ssim2 = { path = "../fast-ssim2", version = "0.9.0", default-features = false }
+fast-ssim2 = { path = "../fast-ssim2", version = "0.9.1", default-features = false }
 yuvxyb = "0.5.0"
 zenpixels = ">=0.2.16, <0.4.0"
 bytemuck = "1.25.2"

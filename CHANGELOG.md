@@ -4,14 +4,16 @@
 
 ### QUEUED BREAKING CHANGES
 
+## [0.9.1] - 2026-10-31
+
 ### Deprecated
-- `hdr-pu`, `compute_ssimulacra2_pu` and `compute_ssimulacra2_pu_with_config`: native HDR uses the standard APIs without the feature; PU21 remains available with its existing score definition. Local/path builds warn on feature enablement and callers receive Rust deprecation warnings.
+- `hdr-pu`, `compute_ssimulacra2_pu` and `compute_ssimulacra2_pu_with_config`: native HDR uses the standard APIs without the feature; PU21 remains available with its existing score definition. Local/path builds warn on feature enablement and callers receive Rust deprecation warnings (4338120).
 
 ### Added
 - Native PQ/HLG and linear HDR through the existing comparison, cached-reference and spatial-map APIs, with BT.709/BT.2020/Display P3 conversion and explicit luminance anchors; native HDR frontends require whole-image evaluation (289d1ab0).
-- `compute_ssimulacra2_maps` / `compute_ssimulacra2_maps_with_config` with `Ssimulacra2Maps` / `Ssimulacra2ScaleMaps`: the per-scale, per-channel SSIM-error, edge-artifact and detail-lost terms the score pools. Opt-in; the score is bit-identical to the score-only path. Strip evaluation is refused for maps.
-- `Ssimulacra2Reference::compare_with_maps` / `compare_with_maps_with_config`: the same maps against a cached reference, bit-identical to the cold path (encoded, sub-8, alpha and linear inputs; both kernels). `Ssimulacra2Maps::diffmap`: one full-resolution map whose per-pixel shares decompose the score's weighted L1/L4 aggregates, so its mean is the weighted sum the score transforms (score rebuilt from the mean within 8.3e-8 on four fixtures). `Ssimulacra2Maps` gains `width`/`height` (input size).
-- `VERSION`, the crate version, for score provenance.
+- `compute_ssimulacra2_maps` / `compute_ssimulacra2_maps_with_config` with `Ssimulacra2Maps` / `Ssimulacra2ScaleMaps`: the per-scale, per-channel SSIM-error, edge-artifact and detail-lost terms the score pools. Opt-in; the score is bit-identical to the score-only path. Strip evaluation is refused for maps (54fabca).
+- `Ssimulacra2Reference::compare_with_maps` / `compare_with_maps_with_config`: the same maps against a cached reference, bit-identical to the cold path (encoded, sub-8, alpha and linear inputs; both kernels). `Ssimulacra2Maps::diffmap`: one full-resolution map whose per-pixel shares decompose the score's weighted L1/L4 aggregates, so its mean is the weighted sum the score transforms (score rebuilt from the mean within 8.3e-8 on four fixtures). `Ssimulacra2Maps` gains `width`/`height` (input size) (54fabca).
+- `VERSION`, the crate version, for score provenance (54fabca).
 
 ### Fixed
 - Preserve pinned HLG grayscale power rounding on macOS ARM with a private portable kernel (837289a2).
@@ -20,6 +22,7 @@
 - Preserve native HDR signed-zero behavior and reject alpha metadata on layouts without stored alpha channels (9fe8cc47).
 
 ### Changed
+- Document pinned Cloudinary native HDR compatibility and libjxl ICC/cICP interpretation differences with controlled, unchanged-pixel comparisons (6ddc9e6).
 - Decode grayscale HLG once before RGB expansion, preserving the reference's bits (28b737ce).
 - Retain the bundled libjxl BSD-3-Clause notice for the HDR color port and record the combined package license expression (fad47d52).
 

@@ -20,6 +20,11 @@ test:
     cargo test --all-targets
     cargo test --doc
 
+# Exercise every target, including benchmark executables, with optimized kernels.
+release-check:
+    cargo test --all-targets --release
+    cargo test --doc --release
+
 # Input-layout regression tests, including HDR conversion.
 test-input:
     cargo test -p fast-ssim2 --lib --features hdr-pu source::tests
@@ -97,6 +102,10 @@ native-hdr-performance-summary input output commit binary host:
 # Inventory breaking changes relative to the latest crates.io release.
 semver-audit:
     cargo semver-checks check-release -p fast-ssim2 --baseline-version 0.8.2 --release-type patch
+
+# Infer the compatible 0.x release category from the manifest version.
+semver-release:
+    cargo semver-checks check-release -p fast-ssim2 --baseline-version 0.9.0
 
 # Reproduce SIMD128 conformance failures without relaxing assertions.
 test-wasm:

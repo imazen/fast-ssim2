@@ -58,7 +58,7 @@ checksum = "877362cb7b70d1c617f0cd3c67708bd58d894a86af5104018e2c10ebaee3c02f"
 
 [[package]]
 name = "fast-ssim2"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "archmage",
  "bytemuck",
