@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Use the canonical `zenpixels::hdr::DiffuseWhite` path in native float
+  source tests when resolving the unpublished pixel cohort. All input values
+  and bit-exact assertions are unchanged.
+
 ### QUEUED BREAKING CHANGES
 
 ## [0.9.1] - 2026-10-31

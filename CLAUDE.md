@@ -46,6 +46,10 @@ regressions. Do not relax assertions to accommodate a changed implementation.
 
 ## Known Bugs
 
+- Resolved in the stable dependency candidate (2026-11-07): two native-float
+  tests referenced the retired root `DiffuseWhite` alias. The canonical
+  `zenpixels::hdr::DiffuseWhite` path preserves inputs and bit assertions.
+
 The API review's channel offsets, grayscale expansion, alpha backgrounds,
 dimension checks, and ignored-configuration bugs have regression coverage and
 fixes in this migration. No unresolved instance of those review findings is

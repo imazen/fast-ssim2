@@ -258,7 +258,7 @@ fn native_hdr_frontend_matches_cpp() {
         .unwrap()
         .with_color_context(Arc::new(
             zenpixels::ColorContext::default()
-                .with_diffuse_white(zenpixels::DiffuseWhite::new(target)),
+                .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(target)),
         ));
         let prepared = funnel(&image).unwrap();
         let linear = crate::linearize_prepared(&prepared, 1, bg);
@@ -390,7 +390,7 @@ fn native_hdr_dense_frontend_matches_cpp() {
                         .unwrap()
                         .with_color_context(Arc::new(
                             zenpixels::ColorContext::default()
-                                .with_diffuse_white(zenpixels::DiffuseWhite::new(target)),
+                                .with_diffuse_white(zenpixels::hdr::DiffuseWhite::new(target)),
                         ));
                         let prepared = funnel(&image).unwrap();
                         let linear = crate::linearize_prepared(&prepared, 65536, *bg);
