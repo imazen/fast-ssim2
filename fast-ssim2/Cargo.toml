@@ -29,9 +29,9 @@ categories = ["multimedia::images", "algorithms"]
 rust-version = "1.89.0"
 
 [dependencies]
-archmage = { version = ">=0.9.17, <=0.9.31-beta.2", features = ["macros"] }
+archmage = { version = ">=0.9.17, <0.10.0", features = ["macros"] }
 imgref = { version = "1.12", optional = true }
-magetypes = { version = ">=0.9.17, <=0.9.31-beta.2" }
+magetypes = { version = ">=0.9.17, <0.10.0" }
 num-traits = "0.2.15"
 rayon = { version = "1.5.3", optional = true }
 thiserror = "2.0.18"
