@@ -4,7 +4,9 @@
 
 - Use the canonical `zenpixels::hdr::DiffuseWhite` path in native float
   source tests when resolving the unpublished pixel cohort. All input values
-  and bit-exact assertions are unchanged.
+  and bit-exact assertions are unchanged. Physically alpha-bearing fixture
+  layouts with ignored alpha declare `Opaque` instead of invalid absent-alpha
+  metadata; the stored samples and C++ expected values remain intact.
 
 ### QUEUED BREAKING CHANGES
 

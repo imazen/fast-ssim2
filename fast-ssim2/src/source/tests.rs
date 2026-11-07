@@ -232,7 +232,9 @@ fn native_hdr_frontend_matches_cpp() {
             .with_alpha(if fields[4] == "1" {
                 Some(AlphaMode::Straight)
             } else {
-                None
+                // The fixture retains a physical alpha lane but asks the
+                // frontend to ignore it, matching the C++ has_alpha=false.
+                Some(AlphaMode::Opaque)
             });
             target = fields[2].parse::<f32>().unwrap();
             bg = fields[3].parse::<f32>().unwrap();
