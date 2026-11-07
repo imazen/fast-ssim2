@@ -376,7 +376,11 @@ fn native_hdr_dense_frontend_matches_cpp() {
                         let desc = desc
                             .with_transfer(transfer)
                             .with_primaries(primaries)
-                            .with_alpha(alpha.then_some(AlphaMode::Straight));
+                            .with_alpha(Some(if alpha {
+                                AlphaMode::Straight
+                            } else {
+                                AlphaMode::Opaque
+                            }));
                         let bytes = if transfer == TransferFunction::Linear {
                             bytemuck::cast_slice(&floats)
                         } else {
