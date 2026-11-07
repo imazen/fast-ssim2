@@ -20,3 +20,7 @@ opt-level = 2
 # zenanalyze 0.2.0 isn't on crates.io — zenjpeg resolves it via the
 # upstream git rev (same pin as zenjpeg's own workspace).
 zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+
+# The pinned decoder family requires unpublished pixel crates.
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "18afc75f1fd40c7feafeef6deae4df8e97e5e1b9" }
+zenpixels-convert = { git = "https://github.com/imazen/zenpixels", rev = "18afc75f1fd40c7feafeef6deae4df8e97e5e1b9" }
