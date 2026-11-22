@@ -18,5 +18,5 @@ opt-level = 2
 
 [patch.crates-io]
 # zenanalyze 0.2.0 isn't on crates.io — zenjpeg resolves it via the
-# upstream git rev (same pin as zenjpeg's own workspace).
-zenanalyze = { git = "https://github.com/imazen/zenanalyze" }
+# upstream git rev (pinned to the last rev compatible with published zenpixels 0.2.x).
+zenanalyze = { git = "https://github.com/imazen/zenanalyze", rev = "6bbcacb11313923ded6e5eeebb725878c5736453" }
