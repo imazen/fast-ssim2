@@ -117,9 +117,9 @@ fn add_noise(img: &RgbImage, amp: i32, seed: u64) -> RgbImage {
     let mut lcg = Lcg(seed);
     let mut out = img.clone();
     for p in out.pixels_mut() {
-        for c in 0..3 {
+        for ch in &mut p.0 {
             let n = (lcg.next_u8() as i32 % (2 * amp + 1)) - amp;
-            p.0[c] = (p.0[c] as i32 + n).clamp(0, 255) as u8;
+            *ch = (*ch as i32 + n).clamp(0, 255) as u8;
         }
     }
     out
