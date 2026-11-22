@@ -4,6 +4,13 @@
 
 ### QUEUED BREAKING CHANGES
 
+### Changed
+- Bump `archmage` / `magetypes` to `0.9.32`, `enough` / `almost-enough` to `0.4.5`, `linear-srgb` to `0.6.12`, `thiserror` to `2.0.21`, and `zenbench` to `0.1.11`, and pin the workspace `zenanalyze` patch to its `zenpixels` `0.2.x`-compatible revision (`6bbcacb1`).
+- Refresh `docs/public-api` snapshots for the current toolchain (no public API changes) and fix `clippy::needless_range_loop` in `examples/photo_parity.rs`.
+
+### Fixed
+- Pass `CROSS_CONTAINER_OPTS: --security-opt seccomp=unconfined` on the `i686` CI job.
+
 ## [0.9.1] - 2026-10-31
 
 ### Deprecated
