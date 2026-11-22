@@ -5,6 +5,7 @@
 ### QUEUED BREAKING CHANGES
 
 ### Changed
+- Upgrade `archmage` and `magetypes` to `0.9.33` (including `compare_tool` and `tools/` lockfiles).
 - Bump `archmage` / `magetypes` to `0.9.32`, `enough` / `almost-enough` to `0.4.5`, `linear-srgb` to `0.6.12`, `thiserror` to `2.0.21`, and `zenbench` to `0.1.11`, and pin the workspace `zenanalyze` patch to its `zenpixels` `0.2.x`-compatible revision (`6bbcacb1`).
 - Refresh `docs/public-api` snapshots for the current toolchain (no public API changes) and fix `clippy::needless_range_loop` in `examples/photo_parity.rs`.
 

@@ -29,9 +29,9 @@ categories = ["multimedia::images", "algorithms"]
 rust-version = "1.89.0"
 
 [dependencies]
-archmage = { version = "0.9.32", features = ["macros"] }
+archmage = { version = "0.9.33", features = ["macros"] }
 enough = "0.4.5"
-magetypes = { version = "0.9.32" }
+magetypes = { version = "0.9.33" }
 num-traits = "0.2.19"
 rayon = { version = "1.12.0", optional = true }
 thiserror = "2.0.21"
@@ -56,7 +56,7 @@ iai-callgrind = "0.16.1"
 # `testable_dispatch` lets benches/tier_isolation.rs disable the baseline SIMD
 # token (NEON on aarch64) so the scalar arm is real rather than a second
 # measurement of the SIMD path.
-archmage = { version = "0.9.32", features = ["std", "macros", "testable_dispatch"] }
+archmage = { version = "0.9.33", features = ["std", "macros", "testable_dispatch"] }
 
 [package.metadata.docs.rs]
 features = ["imgref", "rayon", "hdr-pu"]
