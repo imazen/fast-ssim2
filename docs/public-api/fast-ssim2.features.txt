@@ -16,5 +16,5 @@
 
 ## items (2 lines)
 
-pub fn compute_ssimulacra2_pu(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>) -> core::result::Result<f64, Ssimulacra2Error>
-pub fn compute_ssimulacra2_pu_with_config(&zenpixels::buffer::PixelSlice<'_>, &zenpixels::buffer::PixelSlice<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn compute_ssimulacra2_pu(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>) -> core::result::Result<f64, Ssimulacra2Error>
+pub fn compute_ssimulacra2_pu_with_config(&zenpixels::buffer::PixelView<'_>, &zenpixels::buffer::PixelView<'_>, &Ssimulacra2Config<'_>) -> core::result::Result<f64, Ssimulacra2Error>

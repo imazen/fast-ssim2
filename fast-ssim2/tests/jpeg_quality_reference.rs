@@ -15,14 +15,9 @@ use image::ImageReader;
 use std::path::PathBuf;
 
 /// Owned sRGB u8 raster (the bit-exact input path).
-fn rgb8_owned(data: Vec<u8>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        data,
-        w as u32,
-        h as u32,
-        zenpixels::PixelDescriptor::RGB8_SRGB,
-    )
-    .unwrap()
+fn rgb8_owned(data: Vec<u8>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_bytes(data, w as u32, h as u32, zenpixels::PixelFormat::RGB8_SRGB)
+        .unwrap()
 }
 
 /// JPEG quality test case with C++ verified score
@@ -67,7 +62,7 @@ fn test_data_path() -> PathBuf {
         .join("jpeg_quality")
 }
 
-fn load_image(filename: &str) -> zenpixels::PixelBuffer {
+fn load_image(filename: &str) -> zenpixels::PixelBuf {
     let path = test_data_path().join(filename);
     let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
         // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
@@ -106,7 +101,7 @@ fn test_jpeg_quality_vs_cpp_reference() {
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
 
-        let score = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice())
+        let score = compute_ssimulacra2(&source.as_view(), &distorted.as_view())
             .expect("SSIMULACRA2 computation failed");
 
         let error = (score - case.cpp_score).abs();
@@ -138,7 +133,7 @@ fn test_jpeg_quality_ordering() {
 
     for case in JPEG_QUALITY_CASES {
         let distorted = load_image(case.filename);
-        let score = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice())
+        let score = compute_ssimulacra2(&source.as_view(), &distorted.as_view())
             .expect("SSIMULACRA2 computation failed");
 
         assert!(
@@ -169,7 +164,7 @@ fn test_jpeg_quality_with_configs() {
 
     for (name, config) in configs {
         let score =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &config)
+            compute_ssimulacra2_with_config(&source.as_view(), &distorted.as_view(), &config)
                 .expect("SSIMULACRA2 computation failed");
 
         let error = (score - cpp_score).abs();

@@ -37,7 +37,7 @@ rayon = { version = "1.12.0", optional = true }
 thiserror = "2.0.20"
 linear-srgb = { version = "0.6.7", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.25.2", default-features = false }
-zenpixels = { version = ">=0.2.16, <0.4.0", default-features = false }
+zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false }
 
 [dev-dependencies]
 almost-enough = "0.4.4"
@@ -50,7 +50,7 @@ sha2 = "0.11.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "8f703a6eeaad080045aa4c1b3713a25df2e15529" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "80dac328d0b9279413d037c0291477c8df6ae53b" }
 enough = "0.4.4"
 iai-callgrind = "0.16.1"
 # `testable_dispatch` lets benches/tier_isolation.rs disable the baseline SIMD
@@ -65,7 +65,7 @@ features = ["imgref", "rayon", "hdr-pu"]
 default = []
 # Development-only kernel access; no API stability guarantee.
 unstable-internals = []
-imgref = ["zenpixels/imgref"]  # ImgRef/ImgVec → PixelSlice conversions (rgb-crate pixel types)
+imgref = ["zenpixels/imgref"]  # ImgRef/ImgVec → PixelView conversions (rgb-crate pixel types)
 rayon = ["dep:rayon"]
 hdr-pu = []  # Deprecated PU21 scoring; native HDR uses the standard APIs.
 

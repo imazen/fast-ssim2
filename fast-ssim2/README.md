@@ -12,24 +12,24 @@ variant.
 
 ## Compare images
 
-Inputs are borrowed `PixelSlice` views. The descriptor declares the pixel
+Inputs are borrowed `PixelView` views. The `PixelFormat` declares the pixel
 layout and color semantics; stride is **bytes per row**, including padding.
 Dimensions are `u32`; stride is `usize`. Both images must have the same original
 width and height, even when they are smaller than 8×8.
 
 ```rust
-use fast_ssim2::{PixelDescriptor, PixelSlice, compute_ssimulacra2};
+use fast_ssim2::{PixelView, compute_ssimulacra2, formats};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (width, height) = (16u32, 16u32);
     let source_bytes = vec![128u8; width as usize * height as usize * 3];
     let distorted_bytes = vec![120u8; source_bytes.len()];
     let stride = width as usize * 3;
-    let source = PixelSlice::new(
-        &source_bytes, width, height, stride, PixelDescriptor::RGB8_SRGB,
+    let source = PixelView::new(
+        &source_bytes, width, height, stride, &formats::RGB8_SRGB,
     )?;
-    let distorted = PixelSlice::new(
-        &distorted_bytes, width, height, stride, PixelDescriptor::RGB8_SRGB,
+    let distorted = PixelView::new(
+        &distorted_bytes, width, height, stride, &formats::RGB8_SRGB,
     )?;
     let score = compute_ssimulacra2(&source, &distorted)?;
     println!("SSIMULACRA2: {score}");
@@ -41,8 +41,9 @@ Higher scores indicate closer agreement. Identical images score 100; severe
 distortions can produce negative scores. Scores are not percentages, and a
 single threshold does not guarantee that a difference is invisible.
 
-`PixelBuffer` owners pass `&buffer.as_slice()`. With the `imgref` feature,
-`zenpixels` provides conversions from supported `imgref`/`rgb` pixel types.
+`PixelBuf` owners pass `&buffer.as_view()`. With the `imgref` feature,
+`zenpixels` provides conversions from supported `imgref`/`rgb` pixel types
+(`PixelView::from_imgref` / `PixelBuf::from_imgvec`).
 Raw interleaved bytes need no intermediate pixel vector.
 
 ## Configure a comparison
@@ -63,13 +64,12 @@ or struct literals.
 
 ```rust
 use fast_ssim2::{
-    PixelDescriptor, PixelSlice, SimdImpl, Ssimulacra2Config, StripConfig,
-    compute_ssimulacra2_with_config,
+    PixelView, SimdImpl, Ssimulacra2Config, StripConfig, compute_ssimulacra2_with_config, formats,
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pixels = vec![128u8; 16 * 16 * 3];
-    let image = PixelSlice::new(&pixels, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+    let image = PixelView::new(&pixels, 16, 16, 48, &formats::RGB8_SRGB)?;
     let config = Ssimulacra2Config::default()
         .with_impl(SimdImpl::Scalar)
         .with_strip(StripConfig::new(128).with_halo_rows(96));
@@ -100,15 +100,15 @@ once and increases intermediate memory use. Results merge in fixed strip order.
 ## Reuse a reference
 
 ```rust
-use fast_ssim2::{PixelDescriptor, PixelSlice, Ssimulacra2Reference};
+use fast_ssim2::{PixelView, Ssimulacra2Reference, formats};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_bytes = vec![128u8; 16 * 16 * 3];
-    let source = PixelSlice::new(&source_bytes, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+    let source = PixelView::new(&source_bytes, 16, 16, 48, &formats::RGB8_SRGB)?;
     let reference = Ssimulacra2Reference::new(&source)?;
     for value in [120u8, 124, 128] {
         let bytes = vec![value; source_bytes.len()];
-        let distorted = PixelSlice::new(&bytes, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+        let distorted = PixelView::new(&bytes, 16, 16, 48, &formats::RGB8_SRGB)?;
         println!("{value}: {}", reference.compare(&distorted)?);
     }
     Ok(())
@@ -132,14 +132,14 @@ scale, then a weighted sum and a nonlinear transform. The returned score is
 bit-identical to `compute_ssimulacra2_with_config` with the same configuration.
 
 ```rust
-use fast_ssim2::{PixelDescriptor, PixelSlice, compute_ssimulacra2_maps};
+use fast_ssim2::{PixelView, compute_ssimulacra2_maps, formats};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a: Vec<u8> = (0..32 * 32 * 3).map(|i| (i * 7 % 251) as u8).collect();
     let mut b = a.clone();
     b[3 * (16 * 32 + 16)] ^= 0x40; // one changed pixel
-    let source = PixelSlice::new(&a, 32, 32, 96, PixelDescriptor::RGB8_SRGB)?;
-    let distorted = PixelSlice::new(&b, 32, 32, 96, PixelDescriptor::RGB8_SRGB)?;
+    let source = PixelView::new(&a, 32, 32, 96, &formats::RGB8_SRGB)?;
+    let distorted = PixelView::new(&b, 32, 32, 96, &formats::RGB8_SRGB)?;
     let maps = compute_ssimulacra2_maps(&source, &distorted)?;
     let finest = &maps.scales[0];
     assert_eq!((finest.width, finest.height), (32, 32));
@@ -174,11 +174,11 @@ interrupt a pixel operation already in progress.
 An already-cancelled token returns `Ssimulacra2Error::Cancelled`.
 
 ```rust
-use fast_ssim2::{PixelDescriptor, PixelSlice, Ssimulacra2Config, compute_ssimulacra2_with_config};
+use fast_ssim2::{PixelView, Ssimulacra2Config, compute_ssimulacra2_with_config, formats};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bytes = vec![128u8; 16 * 16 * 3];
-    let image = PixelSlice::new(&bytes, 16, 16, 48, PixelDescriptor::RGB8_SRGB)?;
+    let image = PixelView::new(&bytes, 16, 16, 48, &formats::RGB8_SRGB)?;
     // Replace Unstoppable with your application's enough::Stop implementation.
     let stop = enough::Unstoppable;
     let config = Ssimulacra2Config::default().with_stop(&stop);
@@ -189,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Input semantics
 
-The descriptor controls interpretation; sample type alone does not determine
+The pixel format controls interpretation; sample type alone does not determine
 transfer function. The sRGB path requires full-range BT.709 primaries and
 supports these layouts; native HDR inputs are described below:
 
@@ -202,10 +202,10 @@ supports these layouts; native HDR inputs are described below:
 
 Integer samples span their full type range. SDR float inputs use normalized
 color values; alpha is normalized to 0–1. Grayscale expands to equal RGB
-channels. Alpha mode comes from the descriptor: straight alpha is composited,
+channels. Alpha mode comes from the pixel format: straight alpha is composited,
 premultiplied alpha is unmultiplied first, and absent/opaque alpha is ignored.
 Integer unpremultiplication rounds back to integer samples. X channels are
-padding under their standard descriptors.
+padding under their standard formats.
 
 If either image has alpha, scoring evaluates two backgrounds and takes the
 lower score. Encoded inputs composite at sRGB values 0.1 and 0.9 before
@@ -215,7 +215,7 @@ For sRGB conversion, only opaque u8 uses the captured LUT throughout;
 u16, float, and fractional-alpha sRGB conversions do not promise binary-reference
 bit equality. Native HDR has its own reference-parity coverage below.
 
-Unsupported descriptors return `UnsupportedInput`. Convert other color spaces
+Unsupported pixel formats return `UnsupportedInput`. Convert other color spaces
 upstream, for example with [zenpixels-convert](https://lib.rs/crates/zenpixels-convert).
 
 ## HDR
@@ -228,7 +228,7 @@ and grayscale layouts support padded rows.
 
 Linear samples are relative to a luminance anchor. Defaults match the pinned
 C++ reference: 255 nits for linear, 10000 for PQ, and 1000 for HLG. Set
-`PixelSlice::with_diffuse_white(zenpixels::DiffuseWhite::new(nits))` to state
+`PixelFormat::with_white(zenpixels::DiffuseWhite::new(nits).unwrap())` to state
 the luminance represented by linear 1.0, or the HLG display peak. For absolute
 linear nits, use an anchor of 1.0. Linear values above 1 and negative
 gamut-conversion results are retained. PQ/HLG, wide-gamut and anchored-linear
@@ -237,17 +237,16 @@ inputs require whole-image evaluation; strip options return `InvalidConfiguratio
 For example, linear BT.2020 with 1.0 representing 1000 nits:
 
 ```rust
-use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
-use zenpixels::{ColorPrimaries, DiffuseWhite};
+use fast_ssim2::{PixelFormat, PixelView, compute_ssimulacra2};
+use zenpixels::{DiffuseWhite, Primaries};
 
 let source = [0.25_f32, 0.5, 0.75];
 let distorted = [0.26_f32, 0.5, 0.74];
-let descriptor = PixelDescriptor::RGBF32_LINEAR
-    .with_primaries(ColorPrimaries::Bt2020);
-let a = PixelSlice::new(bytemuck::cast_slice(&source), 1, 1, 12, descriptor)?
-    .with_diffuse_white(DiffuseWhite::new(1000.0));
-let b = PixelSlice::new(bytemuck::cast_slice(&distorted), 1, 1, 12, descriptor)?
-    .with_diffuse_white(DiffuseWhite::new(1000.0));
+let format = PixelFormat::RGBF32_LINEAR
+    .with_primaries(Primaries::Bt2020)
+    .with_white(DiffuseWhite::new(1000.0).unwrap());
+let a = PixelView::new(bytemuck::cast_slice(&source), 1, 1, 12, &format)?;
+let b = PixelView::new(bytemuck::cast_slice(&distorted), 1, 1, 12, &format)?;
 assert!(compute_ssimulacra2(&a, &b)?.is_finite());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```

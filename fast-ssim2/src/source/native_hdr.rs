@@ -6,7 +6,7 @@
 //! PQ coefficients and HLG operation order follow bundled libjxl (BSD-3-Clause).
 
 use super::*;
-use zenpixels::ColorPrimaries;
+use zenpixels::{HlgMode, Primaries};
 
 pub(crate) struct NativeInput {
     encoded: [Vec<f32>; 3],
@@ -14,84 +14,88 @@ pub(crate) struct NativeInput {
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) intensity_target: f32,
-    transfer: TransferFunction,
-    primaries: ColorPrimaries,
+    transfer: Transfer,
+    primaries: Primaries,
     gray: bool,
 }
 
 impl NativeInput {
-    pub(crate) fn new(slice: &PixelSlice<'_>) -> Result<Self, Ssimulacra2Error> {
-        validate_alpha_layout(slice)?;
-        let d = slice.descriptor();
-        if d.signal_range != SignalRange::Full {
+    pub(crate) fn new(view: &PixelView<'_>) -> Result<Self, Ssimulacra2Error> {
+        let fmt = view.format();
+        if fmt.layout.packing != BitPacking::Full {
+            return Err(Ssimulacra2Error::UnsupportedInput(
+                "bit-packed pixel layouts are not supported",
+            ));
+        }
+        validate_alpha_layout(fmt)?;
+        let color = extract_color(&fmt.color)?;
+        if color.range != SignalRange::Full {
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "native HDR requires full signal range",
             ));
         }
-        let (bytes, gray, bgr) = match d.format {
-            PixelFormat::Rgb8 | PixelFormat::Rgba8 | PixelFormat::Rgbx8 => (1, false, false),
-            PixelFormat::Bgra8 | PixelFormat::Bgrx8 => (1, false, true),
-            PixelFormat::Gray8 => (1, true, false),
-            PixelFormat::Rgb16 | PixelFormat::Rgba16 => (2, false, false),
-            PixelFormat::Gray16 | PixelFormat::GrayA16 => (2, true, false),
-            PixelFormat::RgbF32 | PixelFormat::RgbaF32 => (4, false, false),
-            PixelFormat::GrayF32 | PixelFormat::GrayAF32 => (4, true, false),
+        let (bytes, gray, bgr) = match (fmt.layout.sample, fmt.layout.order) {
+            (SampleType::U8, ChannelOrder::Rgb | ChannelOrder::Rgba | ChannelOrder::Rgbx) => {
+                (1, false, false)
+            }
+            (SampleType::U8, ChannelOrder::Bgra | ChannelOrder::Bgrx) => (1, false, true),
+            (SampleType::U8, ChannelOrder::Gray) => (1, true, false),
+            (SampleType::U16, ChannelOrder::Rgb | ChannelOrder::Rgba) => (2, false, false),
+            (SampleType::U16, ChannelOrder::Gray | ChannelOrder::GrayAlpha) => (2, true, false),
+            (SampleType::F32, ChannelOrder::Rgb | ChannelOrder::Rgba) => (4, false, false),
+            (SampleType::F32, ChannelOrder::Gray | ChannelOrder::GrayAlpha) => (4, true, false),
             _ => {
                 return Err(Ssimulacra2Error::UnsupportedInput(
                     "unsupported native HDR pixel layout",
                 ));
             }
         };
-        if d.transfer == TransferFunction::Linear && bytes != 4 {
+        if color.transfer == Transfer::Linear && bytes != 4 {
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "linear transfer requires an f32 format",
             ));
         }
         if !gray
             && !matches!(
-                d.primaries,
-                ColorPrimaries::Bt709 | ColorPrimaries::Bt2020 | ColorPrimaries::DisplayP3
+                color.primaries,
+                Primaries::Bt709 | Primaries::Bt2020 | Primaries::DisplayP3
             )
         {
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "native HDR supports BT.709, BT.2020 and Display P3 primaries",
             ));
         }
-        let default_target = match d.transfer {
-            TransferFunction::Pq => 10000.0,
-            TransferFunction::Hlg => 1000.0,
+        let default_target = match color.transfer {
+            Transfer::Pq => 10000.0,
+            Transfer::Hlg(HlgMode::Display(r)) => r.peak().nits(),
+            Transfer::Hlg(_) => 1000.0,
             _ => 255.0,
         };
-        let intensity_target = slice
-            .color_context()
-            .and_then(|c| c.diffuse_white)
-            .map_or(default_target, |w| w.nits());
+        let intensity_target = color.white.map_or(default_target, |w| w.nits());
         if !intensity_target.is_finite() || intensity_target <= 0.0 {
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "luminance anchor must be finite and positive",
             ));
         }
-        let (width, height) = (slice.width() as usize, slice.rows() as usize);
+        let (width, height) = (view.width() as usize, view.height() as usize);
         let n = checked_dimensions(width, height)?;
-        let data = if d.alpha == Some(AlphaMode::Premultiplied) {
-            Cow::Owned(unpremultiply(slice))
+        let data = if color.alpha == AlphaMode::Premultiplied {
+            Cow::Owned(unpremultiply(view))
         } else {
-            Cow::Borrowed(slice.as_strided_bytes())
+            Cow::Borrowed(view.as_strided_bytes())
         };
-        let bpp = d.format.bytes_per_pixel();
+        let bpp = fmt.layout.bytes_per_pixel();
+        let stride = view.stride_bytes();
         let read = |p: &[u8]| match bytes {
             1 => p[0] as f32 * (1.0 / 255.0),
             2 => u16::from_ne_bytes([p[0], p[1]]) as f32 * (1.0 / 65535.0),
             _ => f32::from_ne_bytes([p[0], p[1], p[2], p[3]]),
         };
         let mut encoded = core::array::from_fn(|_| Vec::with_capacity(n));
-        let mut alpha = matches!(
-            d.alpha,
-            Some(AlphaMode::Straight | AlphaMode::Premultiplied)
-        )
-        .then(|| Vec::with_capacity(n));
+        let mut alpha = matches!(color.alpha, AlphaMode::Straight | AlphaMode::Premultiplied)
+            .then(|| Vec::with_capacity(n));
         for y in 0..height {
-            for px in data[y * slice.stride()..][..width * bpp].chunks_exact(bpp) {
+            for px in data[y * stride..][..width * bpp].chunks_exact(bpp) {
                 for (c, plane) in encoded.iter_mut().enumerate() {
                     let c = if gray {
                         0
@@ -113,8 +117,8 @@ impl NativeInput {
             width,
             height,
             intensity_target,
-            transfer: d.transfer,
-            primaries: d.primaries,
+            transfer: color.transfer,
+            primaries: color.primaries,
             gray,
         })
     }
@@ -138,7 +142,7 @@ impl NativeInput {
                     }
                 });
                 rgb = match self.transfer {
-                    TransferFunction::Pq => {
+                    Transfer::Pq => {
                         let scale = if self.intensity_target == 10000.0 {
                             1.0
                         } else {
@@ -146,7 +150,7 @@ impl NativeInput {
                         };
                         rgb.map(|v| scale * pq_decode(v))
                     }
-                    TransferFunction::Hlg => {
+                    Transfer::Hlg(_) => {
                         hlg_decode(rgb, self.primaries, self.intensity_target, self.gray)
                     }
                     _ => rgb,
@@ -197,7 +201,7 @@ fn hlg_inverse_oetf(v: f32) -> f32 {
     (scene as f32).copysign(v)
 }
 
-fn hlg_decode(rgb: [f32; 3], primaries: ColorPrimaries, target: f32, gray: bool) -> [f32; 3] {
+fn hlg_decode(rgb: [f32; 3], primaries: Primaries, target: f32, gray: bool) -> [f32; 3] {
     // Ingest expands grayscale into identical channels. Decode its single
     // stored channel once, as the reference CMS does, then expand the result.
     let mut rgb = if gray {
@@ -214,8 +218,8 @@ fn hlg_decode(rgb: [f32; 3], primaries: ColorPrimaries, target: f32, gray: bool)
         return [super::native_hdr_pow::powf(rgb[0], gamma); 3];
     }
     let lum = match primaries {
-        ColorPrimaries::Bt2020 => [0x3e8680a4, 0x3f2d9148, 0x3d72e65a],
-        ColorPrimaries::DisplayP3 => [0x3e6a784e, 0x3f3115c7, 0x3da2612d],
+        Primaries::Bt2020 => [0x3e8680a4, 0x3f2d9148, 0x3d72e65a],
+        Primaries::DisplayP3 => [0x3e6a784e, 0x3f3115c7, 0x3da2612d],
         _ => [0x3e59bee3, 0x3f37153b, 0x3d93d85f],
     }
     .map(f32::from_bits);
@@ -234,11 +238,11 @@ fn hlg_decode(rgb: [f32; 3], primaries: ColorPrimaries, target: f32, gray: bool)
 }
 
 #[allow(clippy::excessive_precision)] // Exact oracle-captured f64 coefficients.
-fn gamut_to_srgb(rgb: [f32; 3], primaries: ColorPrimaries) -> [f32; 3] {
+fn gamut_to_srgb(rgb: [f32; 3], primaries: Primaries) -> [f32; 3] {
     // Inverse destination ICC colorants times source ICC colorants, computed
     // in f64. These include the reference profiles' 15.16 quantization.
     let m = match primaries {
-        ColorPrimaries::Bt2020 => [
+        Primaries::Bt2020 => [
             [
                 1.6605489717172115,
                 -0.58764255219249795,
@@ -255,7 +259,7 @@ fn gamut_to_srgb(rgb: [f32; 3], primaries: ColorPrimaries) -> [f32; 3] {
                 1.1187154637140566,
             ],
         ],
-        ColorPrimaries::DisplayP3 => [
+        Primaries::DisplayP3 => [
             [
                 1.2249939720802692,
                 -0.22493976928479925,

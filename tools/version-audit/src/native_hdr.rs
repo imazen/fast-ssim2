@@ -1,5 +1,4 @@
 //! In-memory, interleaved native-HDR regression audit. No decoding is timed.
-use current::{PixelDescriptor, PixelSlice, TransferFunction};
 use std::{sync::Arc, time::Duration};
 
 #[derive(Clone, Copy, Debug)]
@@ -17,19 +16,33 @@ impl Kind {
         matches!(self, Self::Pq | Self::Hlg | Self::HlgGray)
     }
 
-    fn descriptor(self) -> PixelDescriptor {
+    fn descriptor_legacy(self) -> zenpixels::PixelDescriptor {
         match self {
-            Self::Rgb8 => PixelDescriptor::RGB8_SRGB,
-            Self::Rgba8 => PixelDescriptor::RGBA8_SRGB,
-            Self::Linear => PixelDescriptor::RGBF32_LINEAR,
-            Self::Pq | Self::Hlg => PixelDescriptor::RGB16_SRGB
+            Self::Rgb8 => zenpixels::PixelDescriptor::RGB8_SRGB,
+            Self::Rgba8 => zenpixels::PixelDescriptor::RGBA8_SRGB,
+            Self::Linear => zenpixels::PixelDescriptor::RGBF32_LINEAR,
+            Self::Pq | Self::Hlg => zenpixels::PixelDescriptor::RGB16_SRGB
                 .with_primaries(zenpixels::ColorPrimaries::Bt2020)
                 .with_transfer(if matches!(self, Self::Pq) {
-                    TransferFunction::Pq
+                    zenpixels::TransferFunction::Pq
                 } else {
-                    TransferFunction::Hlg
+                    zenpixels::TransferFunction::Hlg
                 }),
-            Self::HlgGray => PixelDescriptor::GRAY16_SRGB.with_transfer(TransferFunction::Hlg),
+            Self::HlgGray => {
+                zenpixels::PixelDescriptor::GRAY16_SRGB.with_transfer(zenpixels::TransferFunction::Hlg)
+            }
+        }
+    }
+
+    fn format_current(self) -> current::PixelFormat {
+        match self {
+            Self::Rgb8 => current::PixelFormat::RGB8_SRGB,
+            Self::Rgba8 => current::PixelFormat::RGBA8_SRGB,
+            Self::Linear => current::PixelFormat::RGBF32_LINEAR,
+            Self::Pq => current::PixelFormat::RGB16_BT2100_PQ,
+            Self::Hlg => current::PixelFormat::RGB16_BT2100_HLG_SCENE,
+            Self::HlgGray => current::PixelFormat::GRAY16_SRGB
+                .with_transfer(current::Transfer::Hlg(zenpixels_05::HlgMode::Scene)),
         }
     }
 }
@@ -93,9 +106,9 @@ impl Pair {
         }
     }
 
-    fn image<'a>(&self, bytes: &'a [u8]) -> PixelSlice<'a> {
-        let descriptor = self.kind.descriptor();
-        PixelSlice::new(
+    fn image_legacy<'a>(&self, bytes: &'a [u8]) -> zenpixels::PixelSlice<'a> {
+        let descriptor = self.kind.descriptor_legacy();
+        zenpixels::PixelSlice::new(
             bytes,
             self.width,
             self.height,
@@ -104,15 +117,39 @@ impl Pair {
         )
         .unwrap()
     }
+
+    fn image_current<'a>(&self, bytes: &'a [u8]) -> current::PixelView<'a> {
+        let format = self.kind.format_current();
+        current::PixelView::new_with_format_cow(
+            bytes,
+            self.width,
+            self.height,
+            self.width as usize * format.layout.bytes_per_pixel(),
+            zenpixels_05::FormatCow::from_owned(format),
+        )
+        .unwrap()
+    }
 }
 
-macro_rules! score {
+macro_rules! score_legacy {
     ($module:ident, $pair:expr) => {{
         let pair = $pair;
         $module::compute_ssimulacra2_with_config(
-            &pair.image(&pair.source),
-            &pair.image(&pair.distorted),
+            &pair.image_legacy(&pair.source),
+            &pair.image_legacy(&pair.distorted),
             &$module::Ssimulacra2Config::simd(),
+        )
+        .unwrap()
+    }};
+}
+
+macro_rules! score_current {
+    ($pair:expr) => {{
+        let pair = $pair;
+        current::compute_ssimulacra2_with_config(
+            &pair.image_current(&pair.source),
+            &pair.image_current(&pair.distorted),
+            &current::Ssimulacra2Config::simd(),
         )
         .unwrap()
     }};
@@ -129,7 +166,7 @@ pub(super) fn run() {
         };
         let pair = Pair::new(1920, 1080, kind);
         for _ in 0..32 {
-            std::hint::black_box(score!(current, std::hint::black_box(&pair)));
+            std::hint::black_box(score_current!(std::hint::black_box(&pair)));
         }
         return;
     }
@@ -153,11 +190,11 @@ pub(super) fn run() {
             ] {
                 let pair = Arc::new(Pair::new(w, h, kind));
                 let before = if kind.native() {
-                    score!(initial_hdr, &pair)
+                    score_legacy!(initial_hdr, &pair)
                 } else {
-                    score!(pre_hdr, &pair)
+                    score_legacy!(pre_hdr, &pair)
                 };
-                let after = score!(current, &pair);
+                let after = score_current!(&pair);
                 // Changed SSIM rounding can change score bits; timing must
                 // still compare the same input and a successful nonidentity score.
                 assert!(before.is_finite() && after.is_finite());
@@ -178,12 +215,12 @@ pub(super) fn run() {
                     g.config().max_wall_time = Duration::from_secs(120);
                     let old = Arc::clone(&pair);
                     if kind.native() {
-                        g.bench(label, move |b| b.iter(|| score!(initial_hdr, &old)));
+                        g.bench(label, move |b| b.iter(|| score_legacy!(initial_hdr, &old)));
                     } else {
-                        g.bench(label, move |b| b.iter(|| score!(pre_hdr, &old)));
+                        g.bench(label, move |b| b.iter(|| score_legacy!(pre_hdr, &old)));
                     }
                     let new = Arc::clone(&pair);
-                    g.bench("current", move |b| b.iter(|| score!(current, &new)));
+                    g.bench("current", move |b| b.iter(|| score_current!(&new)));
                 });
                 if w == 1920 && matches!(kind, Kind::Rgb8 | Kind::Hlg) {
                     suite.compare(format!("cached_{kind:?}_{w}x{h}"), |g| {
@@ -195,7 +232,7 @@ pub(super) fn run() {
                             g.baseline("initial_hdr");
                             let old = Arc::clone(&pair);
                             let reference = initial_hdr::Ssimulacra2Reference::new_with_config(
-                                &old.image(&old.source),
+                                &old.image_legacy(&old.source),
                                 &initial_hdr::Ssimulacra2Config::simd(),
                             )
                             .unwrap();
@@ -203,7 +240,7 @@ pub(super) fn run() {
                                 b.iter(|| {
                                     reference
                                         .compare_with_config(
-                                            &old.image(&old.distorted),
+                                            &old.image_legacy(&old.distorted),
                                             &initial_hdr::Ssimulacra2Config::simd(),
                                         )
                                         .unwrap()
@@ -213,7 +250,7 @@ pub(super) fn run() {
                             g.baseline("pre_hdr");
                             let old = Arc::clone(&pair);
                             let reference = pre_hdr::Ssimulacra2Reference::new_with_config(
-                                &old.image(&old.source),
+                                &old.image_legacy(&old.source),
                                 &pre_hdr::Ssimulacra2Config::simd(),
                             )
                             .unwrap();
@@ -221,7 +258,7 @@ pub(super) fn run() {
                                 b.iter(|| {
                                     reference
                                         .compare_with_config(
-                                            &old.image(&old.distorted),
+                                            &old.image_legacy(&old.distorted),
                                             &pre_hdr::Ssimulacra2Config::simd(),
                                         )
                                         .unwrap()
@@ -230,7 +267,7 @@ pub(super) fn run() {
                         }
                         let new = Arc::clone(&pair);
                         let reference = current::Ssimulacra2Reference::new_with_config(
-                            &new.image(&new.source),
+                            &new.image_current(&new.source),
                             &current::Ssimulacra2Config::simd(),
                         )
                         .unwrap();
@@ -238,7 +275,7 @@ pub(super) fn run() {
                             b.iter(|| {
                                 reference
                                     .compare_with_config(
-                                        &new.image(&new.distorted),
+                                        &new.image_current(&new.distorted),
                                         &current::Ssimulacra2Config::simd(),
                                     )
                                     .unwrap()

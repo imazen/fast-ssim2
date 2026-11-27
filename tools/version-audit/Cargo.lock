@@ -368,20 +368,6 @@ dependencies = [
 [[package]]
 name = "fast-ssim2"
 version = "0.9.0"
-dependencies = [
- "archmage",
- "bytemuck",
- "enough",
- "linear-srgb",
- "magetypes",
- "num-traits",
- "thiserror 2.0.21",
- "zenpixels",
-]
-
-[[package]]
-name = "fast-ssim2"
-version = "0.9.0"
 source = "git+https://github.com/imazen/fast-ssim2?rev=25ec2fea8644a2231b64f28c04189ccaf381acd4#25ec2fea8644a2231b64f28c04189ccaf381acd4"
 dependencies = [
  "archmage",
@@ -391,7 +377,7 @@ dependencies = [
  "magetypes",
  "num-traits",
  "thiserror 2.0.21",
- "zenpixels",
+ "zenpixels 0.2.16",
 ]
 
 [[package]]
@@ -406,7 +392,21 @@ dependencies = [
  "magetypes",
  "num-traits",
  "thiserror 2.0.21",
- "zenpixels",
+ "zenpixels 0.2.16",
+]
+
+[[package]]
+name = "fast-ssim2"
+version = "0.9.1"
+dependencies = [
+ "archmage",
+ "bytemuck",
+ "enough",
+ "linear-srgb",
+ "magetypes",
+ "num-traits",
+ "thiserror 2.0.21",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -835,13 +835,14 @@ dependencies = [
  "bytemuck",
  "fast-ssim2 0.7.1",
  "fast-ssim2 0.8.2",
- "fast-ssim2 0.9.0",
  "fast-ssim2 0.9.0 (git+https://github.com/imazen/fast-ssim2?rev=25ec2fea8644a2231b64f28c04189ccaf381acd4)",
  "fast-ssim2 0.9.0 (git+https://github.com/imazen/fast-ssim2?rev=d1b74ed7d1798ff1cc4d47294d84b6d33837a0a3)",
+ "fast-ssim2 0.9.1",
  "imgref",
  "sha2",
  "zenbench",
- "zenpixels",
+ "zenpixels 0.2.16",
+ "zenpixels 0.5.0",
 ]
 
 [[package]]
@@ -1306,6 +1307,15 @@ name = "zenpixels"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5851fd39b312749a3c367a0cd3522bd95d43276cfa613e9c18df748447cef3a8"
+dependencies = [
+ "bytemuck",
+ "whereat",
+]
+
+[[package]]
+name = "zenpixels"
+version = "0.5.0"
+source = "git+https://github.com/imazen/zenpixels?rev=7fa068834f8074c2630a352b25f355f7c90751f8#7fa068834f8074c2630a352b25f355f7c90751f8"
 dependencies = [
  "bytemuck",
  "whereat",

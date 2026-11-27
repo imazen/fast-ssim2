@@ -4,19 +4,19 @@ use rand::RngExt;
 use std::hint::black_box;
 
 /// Owned encoded-sRGB `f32` pixels (k/255 grid stays LUT-exact).
-fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+        zenpixels::PixelFormat::RGBF32_LINEAR.with_transfer(zenpixels::Transfer::Srgb),
     )
     .unwrap()
 }
 use zenbench::criterion_compat::*;
 use zenbench::{criterion_group, criterion_main};
 
-fn make_rgb_pair(width: usize, height: usize) -> (zenpixels::PixelBuffer, zenpixels::PixelBuffer) {
+fn make_rgb_pair(width: usize, height: usize) -> (zenpixels::PixelBuf, zenpixels::PixelBuf) {
     let mut rng = rand::rng();
     let source_data: Vec<[f32; 3]> = (0..width * height)
         .map(|_| {
@@ -52,8 +52,8 @@ fn bench_ssimulacra2(c: &mut Criterion) {
         c.bench_function(format!("ssimulacra2_{w}x{h}"), |b| {
             b.iter(|| {
                 compute_ssimulacra2(
-                    black_box(&source.as_slice()),
-                    black_box(&distorted.as_slice()),
+                    black_box(&source.as_view()),
+                    black_box(&distorted.as_view()),
                 )
                 .unwrap()
             })

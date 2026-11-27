@@ -1,8 +1,29 @@
 use super::*;
-use zenpixels::PixelDescriptor;
+use zenpixels::{FormatCow, HlgMode, PixelFormat, SampleLayout};
 
-fn floats(values: &[f32], desc: PixelDescriptor, stride: usize) -> PixelSlice<'_> {
-    PixelSlice::new(bytemuck::cast_slice(values), 1, 2, stride, desc).unwrap()
+fn graya16_srgb() -> PixelFormat {
+    PixelFormat::new(
+        SampleLayout::GRAYA16,
+        ColorSpace::GRAY_SRGB.with_alpha(AlphaMode::Straight),
+    )
+}
+
+fn grayaf32_linear() -> PixelFormat {
+    PixelFormat::new(
+        SampleLayout::GRAYAF32,
+        ColorSpace::GRAY_LINEAR.with_alpha(AlphaMode::Straight),
+    )
+}
+
+fn floats<'a>(values: &'a [f32], fmt: PixelFormat, stride: usize) -> PixelView<'a> {
+    PixelView::new_with_format_cow(
+        bytemuck::cast_slice(values),
+        1,
+        2,
+        stride,
+        FormatCow::from_owned(fmt),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -10,7 +31,7 @@ fn linear_alpha_and_gray_respect_layout_and_stride() {
     let rgba = [
         0.2, 0.4, 0.6, 0.5, 99.0, 99.0, 99.0, 99.0, 0.8, 0.6, 0.4, 0.25,
     ];
-    let p = funnel(&floats(&rgba, PixelDescriptor::RGBAF32_LINEAR, 32)).unwrap();
+    let p = funnel(&floats(&rgba, PixelFormat::RGBAF32_LINEAR, 32)).unwrap();
     let PreparedInput::Linear { planes, alpha, .. } = p else {
         panic!("linear expected")
     };
@@ -22,12 +43,12 @@ fn linear_alpha_and_gray_respect_layout_and_stride() {
         } else {
             [0.25, 0.5, 99.0, 99.0, 0.75, 0.25]
         };
-        let desc = PixelDescriptor::GRAYAF32_LINEAR.with_alpha(Some(if premult {
+        let fmt = grayaf32_linear().with_alpha(if premult {
             AlphaMode::Premultiplied
         } else {
             AlphaMode::Straight
-        }));
-        let p = funnel(&floats(&gray, desc, 16)).unwrap();
+        });
+        let p = funnel(&floats(&gray, fmt, 16)).unwrap();
         let PreparedInput::Linear { planes, alpha, .. } = p else {
             panic!("linear expected")
         };
@@ -38,7 +59,7 @@ fn linear_alpha_and_gray_respect_layout_and_stride() {
         assert_eq!(alpha.unwrap(), [0.5, 0.25]);
     }
     let gray = [0.25, 99.0, 0.75];
-    let p = funnel(&floats(&gray, PixelDescriptor::GRAYF32_LINEAR, 8)).unwrap();
+    let p = funnel(&floats(&gray, PixelFormat::GRAYF32_LINEAR, 8)).unwrap();
     let PreparedInput::Linear { planes, .. } = p else {
         panic!("linear expected")
     };
@@ -50,12 +71,12 @@ fn linear_alpha_and_gray_respect_layout_and_stride() {
 fn hdr_layouts_decode_the_same_colors() {
     use crate::pipeline::pu21::{hlg_triple_to_nits, pq_channel_to_nits};
     for transfer in [
-        TransferFunction::Pq,
-        TransferFunction::Hlg,
-        TransferFunction::Linear,
+        Transfer::Pq,
+        Transfer::Hlg(HlgMode::Scene),
+        Transfer::Linear,
     ] {
         for bits in [8, 16, 32] {
-            if transfer == TransferFunction::Linear && bits != 32 {
+            if transfer == Transfer::Linear && bits != 32 {
                 continue;
             }
             for gray in [false, true] {
@@ -63,18 +84,18 @@ fn hdr_layouts_decode_the_same_colors() {
                     if gray && alpha && bits == 8 {
                         continue;
                     }
-                    let desc = match (bits, gray, alpha) {
-                        (8, false, false) => PixelDescriptor::RGB8_SRGB,
-                        (8, false, true) => PixelDescriptor::RGBA8_SRGB,
-                        (8, true, false) => PixelDescriptor::GRAY8_SRGB,
-                        (16, false, false) => PixelDescriptor::RGB16_SRGB,
-                        (16, false, true) => PixelDescriptor::RGBA16_SRGB,
-                        (16, true, false) => PixelDescriptor::GRAY16_SRGB,
-                        (16, true, true) => PixelDescriptor::GRAYA16_SRGB,
-                        (32, false, false) => PixelDescriptor::RGBF32_LINEAR,
-                        (32, false, true) => PixelDescriptor::RGBAF32_LINEAR,
-                        (32, true, false) => PixelDescriptor::GRAYF32_LINEAR,
-                        (32, true, true) => PixelDescriptor::GRAYAF32_LINEAR,
+                    let fmt = match (bits, gray, alpha) {
+                        (8, false, false) => PixelFormat::RGB8_SRGB,
+                        (8, false, true) => PixelFormat::RGBA8_SRGB,
+                        (8, true, false) => PixelFormat::GRAY8_SRGB,
+                        (16, false, false) => PixelFormat::RGB16_SRGB,
+                        (16, false, true) => PixelFormat::RGBA16_SRGB,
+                        (16, true, false) => PixelFormat::GRAY16_SRGB,
+                        (16, true, true) => graya16_srgb(),
+                        (32, false, false) => PixelFormat::RGBF32_LINEAR,
+                        (32, false, true) => PixelFormat::RGBAF32_LINEAR,
+                        (32, true, false) => PixelFormat::GRAYF32_LINEAR,
+                        (32, true, true) => grayaf32_linear(),
                         _ => unreachable!(),
                     }
                     .with_transfer(transfer);
@@ -84,53 +105,72 @@ fn hdr_layouts_decode_the_same_colors() {
                         &[51, 102, 153, 128]
                     };
                     let count = (if gray { 1 } else { 3 }) + usize::from(alpha);
-                    let mut pixel = Vec::new();
-                    for &v in &values[..count] {
-                        match bits {
-                            8 => pixel.push(v),
-                            16 => pixel.extend_from_slice(&(v as u16 * 257).to_ne_bytes()),
-                            _ => pixel.extend_from_slice(&(v as f32 * (1.0 / 255.0)).to_ne_bytes()),
+                    // Build aligned backing storage per sample width.
+                    let mut buf_u8 = Vec::new();
+                    let mut buf_u16 = Vec::new();
+                    let mut buf_f32 = Vec::new();
+                    let stride = count * (bits / 8) * 2;
+                    let bytes: &[u8] = match bits {
+                        8 => {
+                            buf_u8.extend_from_slice(&values[..count]);
+                            buf_u8.resize(stride, 0xff);
+                            buf_u8.extend_from_slice(&values[..count]);
+                            &buf_u8
                         }
-                    }
-                    let stride = pixel.len() * 2;
-                    let mut bytes = pixel.clone();
-                    bytes.resize(stride, 0xff);
-                    bytes.extend_from_slice(&pixel);
-                    let slice = PixelSlice::new(&bytes, 1, 2, stride, desc).unwrap();
+                        16 => {
+                            let px: Vec<u16> =
+                                values[..count].iter().map(|&v| v as u16 * 257).collect();
+                            buf_u16.extend_from_slice(&px);
+                            buf_u16.resize(count * 2, u16::MAX);
+                            buf_u16.extend_from_slice(&px);
+                            bytemuck::cast_slice(&buf_u16)
+                        }
+                        _ => {
+                            let px: Vec<f32> = values[..count]
+                                .iter()
+                                .map(|&v| v as f32 * (1.0 / 255.0))
+                                .collect();
+                            buf_f32.extend_from_slice(&px);
+                            buf_f32.resize(count * 2, f32::from_bits(u32::MAX));
+                            buf_f32.extend_from_slice(&px);
+                            bytemuck::cast_slice(&buf_f32)
+                        }
+                    };
+                    let view = PixelView::new(bytes, 1, 2, stride, &fmt).unwrap();
                     let PreparedInput::Linear {
                         planes, alpha: a, ..
-                    } = funnel_nits(&slice).unwrap()
+                    } = funnel_nits(&view).unwrap()
                     else {
                         panic!("linear expected")
                     };
                     let rgb = if gray { [0.2; 3] } else { [0.2, 0.4, 0.6] };
                     let expected = match transfer {
-                        TransferFunction::Pq => rgb.map(pq_channel_to_nits),
-                        TransferFunction::Hlg => hlg_triple_to_nits(rgb),
+                        Transfer::Pq => rgb.map(pq_channel_to_nits),
+                        Transfer::Hlg(_) => hlg_triple_to_nits(rgb),
                         _ => rgb,
                     };
                     for c in 0..3 {
                         for &actual in &planes[c] {
                             assert!(
                                 (actual - expected[c]).abs() <= 0.001 * expected[c].max(1.0),
-                                "{desc:?}: {actual} != {}",
+                                "{fmt:?}: {actual} != {}",
                                 expected[c]
                             );
                         }
                     }
                     assert_eq!(a.is_some(), alpha);
                     if bits == 8 && !gray && alpha {
-                        let mut bgr = bytes.clone();
+                        let mut bgr = buf_u8.clone();
                         for y in 0..2 {
                             bgr.swap(y * stride, y * stride + 2);
                         }
-                        let desc = PixelDescriptor::BGRA8_SRGB.with_transfer(transfer);
-                        let slice = PixelSlice::new(&bgr, 1, 2, stride, desc).unwrap();
+                        let bgr_fmt = PixelFormat::BGRA8_SRGB.with_transfer(transfer);
+                        let view = PixelView::new(&bgr, 1, 2, stride, &bgr_fmt).unwrap();
                         let PreparedInput::Linear {
                             planes: bgr_planes,
                             alpha: bgr_alpha,
                             ..
-                        } = funnel_nits(&slice).unwrap()
+                        } = funnel_nits(&view).unwrap()
                         else {
                             panic!("linear expected")
                         };
@@ -176,14 +216,8 @@ fn native_hdr_gray_power_keeps_cpp_rounding() {
     // Independent C++ frontend-gray capture, HLG at 1000 nits, code 271/65535.
     // f64::powf followed by an f32 cast differs by one bit from this oracle.
     let samples = [f32::from_bits(0x3b878088)];
-    let image = PixelSlice::new(
-        bytemuck::cast_slice(&samples),
-        1,
-        1,
-        4,
-        PixelDescriptor::GRAYF32_LINEAR.with_transfer(TransferFunction::Hlg),
-    )
-    .unwrap();
+    let fmt = PixelFormat::GRAYF32_LINEAR.with_transfer(Transfer::Hlg(HlgMode::Scene));
+    let image = PixelView::new(bytemuck::cast_slice(&samples), 1, 1, 4, &fmt).unwrap();
     let prepared = funnel(&image).unwrap();
     let linear = crate::linearize_prepared(&prepared, 1, 0.5);
     for plane in &linear {
@@ -193,8 +227,7 @@ fn native_hdr_gray_power_keeps_cpp_rounding() {
 
 #[test]
 fn native_hdr_frontend_matches_cpp() {
-    use std::sync::Arc;
-    let mut descriptor = PixelDescriptor::RGBF32_LINEAR;
+    let mut format = PixelFormat::RGBF32_LINEAR;
     let mut target = 255.0;
     let mut bg = 0.5;
     for line in include_str!("native_hdr_cpp.tsv")
@@ -212,30 +245,31 @@ fn native_hdr_frontend_matches_cpp() {
             .or_else(|| line.strip_prefix("case-gray "))
         {
             let fields: Vec<_> = case.split_whitespace().collect();
-            descriptor = if line.starts_with("case-gray") {
-                PixelDescriptor::GRAYAF32_LINEAR
+            target = fields[2].parse::<f32>().unwrap();
+            bg = fields[3].parse::<f32>().unwrap();
+            format = if line.starts_with("case-gray") {
+                grayaf32_linear()
             } else {
-                PixelDescriptor::RGBAF32_LINEAR
+                PixelFormat::RGBAF32_LINEAR
             }
             .with_transfer(match fields[0] {
-                "8" => TransferFunction::Linear,
-                "16" => TransferFunction::Pq,
-                "18" => TransferFunction::Hlg,
+                "8" => Transfer::Linear,
+                "16" => Transfer::Pq,
+                "18" => Transfer::Hlg(HlgMode::Scene),
                 _ => panic!("transfer"),
             })
             .with_primaries(match fields[1] {
-                "1" => zenpixels::ColorPrimaries::Bt709,
-                "9" => zenpixels::ColorPrimaries::Bt2020,
-                "11" => zenpixels::ColorPrimaries::DisplayP3,
+                "1" => Primaries::Bt709,
+                "9" => Primaries::Bt2020,
+                "11" => Primaries::DisplayP3,
                 _ => panic!("primaries"),
             })
             .with_alpha(if fields[4] == "1" {
-                Some(AlphaMode::Straight)
+                AlphaMode::Straight
             } else {
-                None
-            });
-            target = fields[2].parse::<f32>().unwrap();
-            bg = fields[3].parse::<f32>().unwrap();
+                AlphaMode::Opaque
+            })
+            .with_white(DiffuseWhite::new(target).unwrap());
             continue;
         }
         assert_eq!(line.len(), 80);
@@ -243,30 +277,26 @@ fn native_hdr_frontend_matches_cpp() {
             .map(|i| f32::from_bits(u32::from_str_radix(&line[i * 8..i * 8 + 8], 16).unwrap()))
             .collect();
         let gray = [values[0], values[3]];
-        let samples = if descriptor.format == PixelFormat::GrayAF32 {
+        let samples = if format.layout == SampleLayout::GRAYAF32 {
             &gray[..]
         } else {
             &values[..4]
         };
-        let image = PixelSlice::new(
+        let image = PixelView::new(
             bytemuck::cast_slice(samples),
             1,
             1,
-            descriptor.format.bytes_per_pixel(),
-            descriptor,
+            format.layout.bytes_per_pixel(),
+            &format,
         )
-        .unwrap()
-        .with_color_context(Arc::new(
-            zenpixels::ColorContext::default()
-                .with_diffuse_white(zenpixels::DiffuseWhite::new(target)),
-        ));
+        .unwrap();
         let prepared = funnel(&image).unwrap();
         let linear = crate::linearize_prepared(&prepared, 1, bg);
         for c in 0..3 {
             assert_eq!(
                 linear[c][0].to_bits(),
                 values[4 + c].to_bits(),
-                "{descriptor:?}, target={target}, bg={bg}, pixel={:?}, channel={c}",
+                "{format:?}, target={target}, bg={bg}, pixel={:?}, channel={c}",
                 &values[..4]
             );
         }
@@ -281,13 +311,13 @@ fn native_hdr_frontend_matches_cpp() {
             assert_eq!(
                 xyb[c].to_bits(),
                 values[7 + c].to_bits(),
-                "scalar XYB {descriptor:?}, target={target}, channel={c}"
+                "scalar XYB {format:?}, target={target}, channel={c}"
             );
             for &value in &simd[c] {
                 assert_eq!(
                     value.to_bits(),
                     values[7 + c].to_bits(),
-                    "SIMD XYB {descriptor:?}, target={target}, channel={c}"
+                    "SIMD XYB {format:?}, target={target}, channel={c}"
                 );
             }
         }
@@ -304,21 +334,24 @@ fn native_hdr_dense_frontend_matches_cpp() {
         fmt::Write,
         io::Write as IoWrite,
         process::{Command, Stdio},
-        sync::Arc,
     };
     let oracle =
         std::env::var_os("SSIM2_HDR_ORACLE").expect("SSIM2_HDR_ORACLE must name the C++ oracle");
     let mut checked = 0usize;
     for (tf, transfer, targets) in [
-        (8, TransferFunction::Linear, &[255.0, 203.0][..]),
-        (16, TransferFunction::Pq, &[10000.0, 255.0][..]),
-        (18, TransferFunction::Hlg, &[1000.0, 300.0, 203.0][..]),
+        (8, Transfer::Linear, &[255.0, 203.0][..]),
+        (16, Transfer::Pq, &[10000.0, 255.0][..]),
+        (
+            18,
+            Transfer::Hlg(HlgMode::Scene),
+            &[1000.0, 300.0, 203.0][..],
+        ),
     ] {
         for (p, primaries, gray) in [
-            (1, zenpixels::ColorPrimaries::Bt709, false),
-            (9, zenpixels::ColorPrimaries::Bt2020, false),
-            (11, zenpixels::ColorPrimaries::DisplayP3, false),
-            (1, zenpixels::ColorPrimaries::Bt709, true),
+            (1, Primaries::Bt709, false),
+            (9, Primaries::Bt2020, false),
+            (11, Primaries::DisplayP3, false),
+            (1, Primaries::Bt709, true),
         ] {
             for &target in targets {
                 for alpha in [false, true] {
@@ -365,33 +398,34 @@ fn native_hdr_dense_frontend_matches_cpp() {
                             .iter()
                             .map(|&v| v as f32 * (1.0 / 65535.0))
                             .collect();
-                        let desc = match (transfer == TransferFunction::Linear, gray) {
-                            (true, false) => PixelDescriptor::RGBAF32_LINEAR,
-                            (true, true) => PixelDescriptor::GRAYAF32_LINEAR,
-                            (false, false) => PixelDescriptor::RGBA16_SRGB,
-                            (false, true) => PixelDescriptor::GRAYA16_SRGB,
+                        let fmt = match (transfer == Transfer::Linear, gray) {
+                            (true, false) => PixelFormat::RGBAF32_LINEAR,
+                            (true, true) => grayaf32_linear(),
+                            (false, false) => PixelFormat::RGBA16_SRGB,
+                            (false, true) => graya16_srgb(),
                         };
-                        let desc = desc
+                        let fmt = fmt
                             .with_transfer(transfer)
                             .with_primaries(primaries)
-                            .with_alpha(alpha.then_some(AlphaMode::Straight));
-                        let bytes = if transfer == TransferFunction::Linear {
+                            .with_alpha(if alpha {
+                                AlphaMode::Straight
+                            } else {
+                                AlphaMode::Opaque
+                            })
+                            .with_white(DiffuseWhite::new(target).unwrap());
+                        let bytes = if transfer == Transfer::Linear {
                             bytemuck::cast_slice(&floats)
                         } else {
                             bytemuck::cast_slice(&samples)
                         };
-                        let image = PixelSlice::new(
+                        let image = PixelView::new(
                             bytes,
                             65536,
                             1,
-                            65536 * desc.format.bytes_per_pixel(),
-                            desc,
+                            65536 * fmt.layout.bytes_per_pixel(),
+                            &fmt,
                         )
-                        .unwrap()
-                        .with_color_context(Arc::new(
-                            zenpixels::ColorContext::default()
-                                .with_diffuse_white(zenpixels::DiffuseWhite::new(target)),
-                        ));
+                        .unwrap();
                         let prepared = funnel(&image).unwrap();
                         let linear = crate::linearize_prepared(&prepared, 65536, *bg);
                         let mut xyb = linear.clone();
@@ -425,12 +459,12 @@ fn native_hdr_dense_frontend_matches_cpp() {
                                 assert_eq!(
                                     linear[c][i].to_bits(),
                                     expected[c],
-                                    "linear: {desc:?} target={target} bg={bg} code={i} channel={c}"
+                                    "linear: {fmt:?} target={target} bg={bg} code={i} channel={c}"
                                 );
                                 assert_eq!(
                                     xyb[c][i].to_bits(),
                                     expected[c + 3],
-                                    "XYB: {desc:?} target={target} bg={bg} code={i} channel={c}"
+                                    "XYB: {fmt:?} target={target} bg={bg} code={i} channel={c}"
                                 );
                             }
                             checked += 1;

@@ -20,7 +20,7 @@ use enough::Stop;
 pub use precompute::Ssimulacra2Reference;
 pub use spatial::{Ssimulacra2Maps, Ssimulacra2ScaleMaps};
 pub use strip::{HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, StripConfig};
-pub use zenpixels::{PixelBuffer, PixelDescriptor, PixelSlice, TransferFunction};
+pub use zenpixels::{PixelBuf, PixelFormat, PixelView, Transfer, formats};
 
 // sRGB→linear for callers: use `linear_srgb::default::*` directly.
 
@@ -47,7 +47,7 @@ impl SimdImpl {
 /// Configuration for SSIMULACRA2 computation.
 ///
 /// [`crate::SimdImpl`] selects scalar or runtime-dispatched SIMD kernels.
-/// Input conversion follows the pixel descriptor; see the crate-level input
+/// Input conversion follows the pixel format; see the crate-level input
 /// semantics for the scope of reference parity.
 /// Per-call options. `Default` = SIMD kernels, whole-image, unstoppable
 /// — identical to plain [`compute_ssimulacra2`].
@@ -153,9 +153,9 @@ pub enum Ssimulacra2Error {
     #[error("Invalid configuration: {0}")]
     InvalidConfiguration(&'static str),
 
-    /// An input [`crate::PixelSlice`]'s descriptor declares
+    /// An input [`crate::PixelView`]'s format declares
     /// an unsupported transfer, primaries, signal range or pixel layout.
-    /// Native PQ/HLG and supported linear HDR descriptors are accepted.
+    /// Native PQ/HLG and supported linear HDR formats are accepted.
     #[error("Unsupported input: {0}")]
     UnsupportedInput(&'static str),
 
@@ -203,36 +203,36 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Applications should apply their own resource limits before scoring.
 pub const MAX_IMAGE_PIXELS: usize = 16_384 * 16_384;
 
-/// Computes the SSIMULACRA2 score from two [`PixelSlice`]s —
-/// borrowed, self-describing views over pixel bytes (stride, format,
-/// transfer, primaries, and alpha all live in the descriptor).
+/// Computes the SSIMULACRA2 score from two [`PixelView`]s —
+/// borrowed, self-describing views over pixel bytes (stride, layout,
+/// transfer, primaries, and alpha all live in the [`PixelFormat`]).
 ///
-/// Wrap raw buffers with `PixelSlice::new(bytes, w, h, stride, descriptor)`;
-/// `imgref`/`rgb`-crate images convert via `PixelSlice::from` (the
-/// `imgref` feature forwards to `zenpixels/imgref`); `PixelBuffer`
-/// callers pass `&buf.as_slice()`.
+/// Wrap raw buffers with `PixelView::new(bytes, w, h, stride, &formats::RGB8_SRGB)`;
+/// `imgref`/`rgb`-crate images convert via `PixelView::from_imgref` (the
+/// `imgref` feature forwards to `zenpixels/imgref`); `PixelBuf`
+/// callers pass `&buf.as_view()`.
 ///
 /// # Color space conventions
-/// The descriptor declares transfer function and primaries explicitly.
+/// The format declares transfer function and primaries explicitly.
 /// SDR integer inputs declare sRGB; native HDR inputs declare PQ/HLG or Linear.
 /// Native HDR luminance anchors and supported gamuts are described in the crate docs.
 /// Grayscale types are expanded to RGB (R=G=B).
 ///
 /// # Example
 /// ```
-/// use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
+/// use fast_ssim2::{PixelView, compute_ssimulacra2, formats};
 /// # let (w, h) = (8u32, 8u32);
 /// # let rgb = vec![128; 8 * 8 * 3];
 /// # let rgb2 = rgb.clone();
 ///
-/// let source = PixelSlice::new(&rgb, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB)?;
-/// let distorted = PixelSlice::new(&rgb2, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB)?;
+/// let source = PixelView::new(&rgb, w, h, w as usize * 3, &formats::RGB8_SRGB)?;
+/// let distorted = PixelView::new(&rgb2, w, h, w as usize * 3, &formats::RGB8_SRGB)?;
 /// let score = compute_ssimulacra2(&source, &distorted)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn compute_ssimulacra2(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
     compute_ssimulacra2_with_config(source, distorted, &Ssimulacra2Config::default())
 }
@@ -247,8 +247,8 @@ pub fn compute_ssimulacra2(
 /// Use [`crate::Ssimulacra2Config::strips`] for default strip options,
 /// or compose options with [`crate::Ssimulacra2Config::with_strip`].
 pub fn compute_ssimulacra2_with_config(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
     config: &Ssimulacra2Config<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
     validate_pair(source, distorted)?;
@@ -268,8 +268,8 @@ pub fn compute_ssimulacra2_with_config(
 /// # Errors
 /// As [`compute_ssimulacra2`].
 pub fn compute_ssimulacra2_maps(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
 ) -> Result<Ssimulacra2Maps, Ssimulacra2Error> {
     compute_ssimulacra2_maps_with_config(source, distorted, &Ssimulacra2Config::default())
 }
@@ -286,8 +286,8 @@ pub fn compute_ssimulacra2_maps(
 /// [`Ssimulacra2Error::InvalidConfiguration`] for strip evaluation, which
 /// never holds a whole scale's planes at once.
 pub fn compute_ssimulacra2_maps_with_config(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
     config: &Ssimulacra2Config<'_>,
 ) -> Result<Ssimulacra2Maps, Ssimulacra2Error> {
     validate_pair(source, distorted)?;
@@ -306,7 +306,7 @@ pub fn compute_ssimulacra2_maps_with_config(
         scales,
         alpha_background,
         width: source.width() as usize,
-        height: source.rows() as usize,
+        height: source.height() as usize,
     })
 }
 
@@ -314,8 +314,8 @@ pub fn compute_ssimulacra2_maps_with_config(
 /// replaced by **PU21** perceptual encoding of absolute luminance (cd/m²).
 ///
 /// Accepted inputs:
-/// - `TransferFunction::Linear` f32 — pixels are absolute nits.
-/// - `TransferFunction::Pq`/`Hlg` (u8/u16/f32) — EOTF-decoded to nits
+/// - `Transfer::Linear` f32 — pixels are absolute nits.
+/// - `Transfer::Pq`/`Hlg` (u8/u16/f32) — EOTF-decoded to nits
 ///   internally (PQ: ST 2084 → 0–10 000 cd/m²; HLG: inverse-OETF +
 ///   system-gamma 1.2 OOTF on a 1000 cd/m² reference display).
 ///
@@ -329,8 +329,8 @@ pub fn compute_ssimulacra2_maps_with_config(
     note = "PU21 scoring is deprecated. Native HDR uses compute_ssimulacra2 without hdr-pu; PU21 and native scores are not interchangeable."
 )]
 pub fn compute_ssimulacra2_pu(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
     compute_ssimulacra2_pu_impl(source, distorted, &Ssimulacra2Config::default())
 }
@@ -342,8 +342,8 @@ pub fn compute_ssimulacra2_pu(
     note = "PU21 scoring is deprecated. Native HDR uses compute_ssimulacra2_with_config without hdr-pu; PU21 and native scores are not interchangeable."
 )]
 pub fn compute_ssimulacra2_pu_with_config(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
     config: &Ssimulacra2Config<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
     compute_ssimulacra2_pu_impl(source, distorted, config)
@@ -351,8 +351,8 @@ pub fn compute_ssimulacra2_pu_with_config(
 
 #[cfg(feature = "hdr-pu")]
 fn compute_ssimulacra2_pu_impl(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
     config: &Ssimulacra2Config<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
     validate_pair(source, distorted)?;
@@ -402,10 +402,10 @@ fn compute_ssimulacra2_pu_impl(
 }
 
 fn validate_pair(
-    source: &PixelSlice<'_>,
-    distorted: &PixelSlice<'_>,
+    source: &PixelView<'_>,
+    distorted: &PixelView<'_>,
 ) -> Result<(), Ssimulacra2Error> {
-    if source.width() != distorted.width() || source.rows() != distorted.rows() {
+    if source.width() != distorted.width() || source.height() != distorted.height() {
         return Err(Ssimulacra2Error::NonMatchingImageDimensions);
     }
     Ok(())
@@ -488,8 +488,8 @@ fn composite_linear_stop(
 /// LUTs; already-linear inputs are used as-is (the reference binary
 /// never sees such inputs, so bit-exactness there is undefined).
 fn compute_pair(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
     kernel: pipeline::Kernel,
     stop: &dyn enough::Stop,
 ) -> Result<f64, Ssimulacra2Error> {
@@ -501,8 +501,8 @@ type PairMaps = (Vec<Ssimulacra2ScaleMaps>, Option<f32>);
 
 /// [`compute_pair`], also returning the per-scale maps when `with_maps`.
 fn compute_pair_impl(
-    source: &zenpixels::PixelSlice<'_>,
-    distorted: &zenpixels::PixelSlice<'_>,
+    source: &zenpixels::PixelView<'_>,
+    distorted: &zenpixels::PixelView<'_>,
     kernel: pipeline::Kernel,
     stop: &dyn enough::Stop,
     with_maps: bool,
@@ -670,38 +670,40 @@ mod tests {
 
     use super::*;
 
-    /// Wrap `&[[f32; 3]]` as an encoded-sRGB `PixelSlice`.
-    fn srgb_f32(data: &[[f32; 3]], w: usize, h: usize) -> zenpixels::PixelSlice<'_> {
-        zenpixels::PixelSlice::new(
+    /// Wrap `&[[f32; 3]]` as an encoded-sRGB `PixelView`.
+    fn srgb_f32(data: &[[f32; 3]], w: usize, h: usize) -> zenpixels::PixelView<'_> {
+        zenpixels::PixelView::new_with_format_cow(
             bytemuck::cast_slice(data),
             w as u32,
             h as u32,
             w * 12,
-            zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+            zenpixels::FormatCow::from_owned(
+                zenpixels::PixelFormat::RGBF32_LINEAR.with_transfer(zenpixels::Transfer::Srgb),
+            ),
         )
         .unwrap()
     }
 
-    /// Wrap `&[[f32; 3]]` as a linear `PixelSlice`.
-    fn lin_f32(data: &[[f32; 3]], w: usize, h: usize) -> zenpixels::PixelSlice<'_> {
-        zenpixels::PixelSlice::new(
+    /// Wrap `&[[f32; 3]]` as a linear `PixelView`.
+    fn lin_f32(data: &[[f32; 3]], w: usize, h: usize) -> zenpixels::PixelView<'_> {
+        zenpixels::PixelView::new(
             bytemuck::cast_slice(data),
             w as u32,
             h as u32,
             w * 12,
-            zenpixels::PixelDescriptor::RGBF32_LINEAR,
+            &zenpixels::formats::RGBF32_LINEAR,
         )
         .unwrap()
     }
 
     /// Wrap `&[[u8; 3]]` as `RGB8_SRGB`.
-    fn rgb8_slice(data: &[[u8; 3]], w: usize, h: usize) -> zenpixels::PixelSlice<'_> {
-        zenpixels::PixelSlice::new(
+    fn rgb8_slice(data: &[[u8; 3]], w: usize, h: usize) -> zenpixels::PixelView<'_> {
+        zenpixels::PixelView::new(
             bytemuck::cast_slice(data),
             w as u32,
             h as u32,
             w * 3,
-            zenpixels::PixelDescriptor::RGB8_SRGB,
+            &zenpixels::formats::RGB8_SRGB,
         )
         .unwrap()
     }

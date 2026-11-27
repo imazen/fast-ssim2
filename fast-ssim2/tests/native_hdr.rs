@@ -2,11 +2,12 @@
 #[path = "common/native_hdr.rs"]
 mod native_hdr;
 use fast_ssim2::{
-    PixelDescriptor, PixelSlice, Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Reference,
-    StripConfig, TransferFunction, compute_ssimulacra2, compute_ssimulacra2_maps_with_config,
+    PixelFormat, PixelView, Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Reference, StripConfig,
+    Transfer, compute_ssimulacra2, compute_ssimulacra2_maps_with_config,
     compute_ssimulacra2_with_config,
 };
 use native_hdr::Case;
+use zenpixels::{AlphaMode, BufferError, ColorError, HlgMode};
 
 #[test]
 fn native_hdr_scores_maps_and_cpp_reference() {
@@ -102,7 +103,7 @@ fn native_hdr_scores_maps_and_cpp_reference() {
 
 #[test]
 fn native_default_targets_and_strided_integer_layouts() {
-    for transfer in [TransferFunction::Pq, TransferFunction::Hlg] {
+    for transfer in [Transfer::Pq, Transfer::Hlg(HlgMode::Scene)] {
         for (width, height) in [(1, 2), (17, 13)] {
             for alpha in [false, true] {
                 for bgr in [false, true] {
@@ -132,23 +133,24 @@ fn native_default_targets_and_strided_integer_layouts() {
                             floats.push(a as f32 * (1.0 / 255.0));
                         }
                     }
-                    let desc = if bgr {
-                        PixelDescriptor::BGRA8_SRGB
+                    let fmt_a = if bgr {
+                        PixelFormat::BGRA8_SRGB
                     } else {
-                        PixelDescriptor::RGBA8_SRGB
+                        PixelFormat::RGBA8_SRGB
                     }
                     .with_transfer(transfer);
+                    let fmt_b = PixelFormat::RGBAF32_LINEAR.with_transfer(transfer);
                     let a =
-                        PixelSlice::new(&rgba, width as u32, height as u32, stride, desc).unwrap();
-                    let b = PixelSlice::new(
+                        PixelView::new(&rgba, width as u32, height as u32, stride, &fmt_a).unwrap();
+                    let b = PixelView::new(
                         bytemuck::cast_slice(&floats),
                         width as u32,
                         height as u32,
                         width * 16,
-                        PixelDescriptor::RGBAF32_LINEAR.with_transfer(transfer),
+                        &fmt_b,
                     )
                     .unwrap();
-                    assert_eq!(compute_ssimulacra2(&a, &b).unwrap(), 100.0, "{desc:?}");
+                    assert_eq!(compute_ssimulacra2(&a, &b).unwrap(), 100.0, "{fmt_a:?}");
                     let cfg = Ssimulacra2Config::strips(8);
                     assert!(matches!(
                         compute_ssimulacra2_with_config(&a, &b, &cfg),
@@ -250,61 +252,40 @@ fn native_hdr_validates_anchors_and_honors_cancellation() {
         ));
     }
     for target in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        let invalid = case
-            .image(&pixels, false)
-            .with_diffuse_white(zenpixels::DiffuseWhite::new(target));
-        assert!(matches!(
-            compute_ssimulacra2(&invalid, &invalid),
-            Err(Ssimulacra2Error::UnsupportedInput(_))
-        ));
+        assert!(
+            zenpixels::DiffuseWhite::new(target).is_none(),
+            "non-positive or non-finite anchor {target} must be rejected at construction"
+        );
     }
 }
 
 #[test]
-#[allow(deprecated)] // Validate alpha rejection through every retained entry point.
 fn alpha_metadata_without_a_stored_channel_is_rejected() {
-    use zenpixels::{AlphaMode, PixelFormat};
-    for format in [
-        PixelFormat::Rgb8,
-        PixelFormat::Rgb16,
-        PixelFormat::RgbF32,
-        PixelFormat::Gray8,
-        PixelFormat::Gray16,
-        PixelFormat::GrayF32,
+    for base in [
+        PixelFormat::RGB8_SRGB,
+        PixelFormat::RGB16_SRGB,
+        PixelFormat::RGBF32_LINEAR,
+        PixelFormat::GRAY8_SRGB,
+        PixelFormat::GRAY16_SRGB,
+        PixelFormat::GRAYF32_LINEAR,
     ] {
         for transfer in [
-            TransferFunction::Srgb,
-            TransferFunction::Pq,
-            TransferFunction::Hlg,
-            TransferFunction::Linear,
+            Transfer::Srgb,
+            Transfer::Pq,
+            Transfer::Hlg(HlgMode::Scene),
+            Transfer::Linear,
         ] {
             for alpha in [AlphaMode::Straight, AlphaMode::Premultiplied] {
-                let mut desc = PixelDescriptor::RGB8_SRGB
-                    .with_transfer(transfer)
-                    .with_alpha(Some(alpha));
-                desc.format = format;
-                let bpp = format.bytes_per_pixel();
+                let fmt = base.clone().with_transfer(transfer).with_alpha(alpha);
+                let bpp = fmt.layout.bytes_per_pixel();
                 let data = vec![0u32; 64 * bpp / 4];
-                let image =
-                    PixelSlice::new(bytemuck::cast_slice(&data), 8, 8, 8 * bpp, desc).unwrap();
-                assert!(
-                    matches!(
-                        compute_ssimulacra2(&image, &image),
-                        Err(Ssimulacra2Error::UnsupportedInput(_))
-                    ),
-                    "{desc:?}"
+                let err = PixelView::new(bytemuck::cast_slice(&data), 8, 8, 8 * bpp, &fmt)
+                    .expect_err("alpha metadata without a stored channel must fail validation");
+                assert_eq!(
+                    *err.error(),
+                    BufferError::InvalidFormat(ColorError::AlphaLayoutMismatch),
+                    "{fmt:?}"
                 );
-                assert!(matches!(
-                    Ssimulacra2Reference::new(&image),
-                    Err(Ssimulacra2Error::UnsupportedInput(_))
-                ));
-                #[cfg(feature = "hdr-pu")]
-                if transfer != TransferFunction::Srgb {
-                    assert!(matches!(
-                        fast_ssim2::compute_ssimulacra2_pu(&image, &image),
-                        Err(Ssimulacra2Error::UnsupportedInput(_))
-                    ));
-                }
             }
         }
     }

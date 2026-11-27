@@ -1,4 +1,4 @@
-//! Input funnel: a [`zenpixels::PixelSlice`] (borrowed, self-describing,
+//! Input funnel: a [`zenpixels::PixelView`] (borrowed, self-describing,
 //! strided) becomes either an [`EncodedSrgb`] (quantized/encoded inputs —
 //! u8 takes the reference-captured LUT for bit-exact parity; u16/f32
 //! evaluate the sRGB polynomial) or deinterleaved linear `f32` planes
@@ -7,13 +7,60 @@
 
 use std::borrow::Cow;
 
-use zenpixels::{AlphaMode, PixelFormat, PixelSlice, SignalRange, TransferFunction};
+use zenpixels::{
+    AlphaMode, BitPacking, ChannelOrder, ColorSpace, DiffuseWhite, PixelFormat, PixelView,
+    Primaries, SampleType, SignalRange, Transfer,
+};
 
 use crate::Ssimulacra2Error;
 use crate::pipeline::{EncodedData, EncodedSrgb};
 
 mod native_hdr;
 mod native_hdr_pow;
+
+pub(crate) struct ColorParams {
+    pub(crate) primaries: Primaries,
+    pub(crate) transfer: Transfer,
+    pub(crate) range: SignalRange,
+    pub(crate) alpha: AlphaMode,
+    pub(crate) white: Option<DiffuseWhite>,
+    pub(crate) is_gray: bool,
+}
+
+pub(crate) fn extract_color(color: &ColorSpace) -> Result<ColorParams, Ssimulacra2Error> {
+    match *color {
+        ColorSpace::Rgb {
+            primaries,
+            transfer,
+            range,
+            alpha,
+            white,
+        } => Ok(ColorParams {
+            primaries,
+            transfer,
+            range,
+            alpha,
+            white,
+            is_gray: false,
+        }),
+        ColorSpace::Gray {
+            transfer,
+            range,
+            alpha,
+            white,
+        } => Ok(ColorParams {
+            primaries: Primaries::Bt709,
+            transfer,
+            range,
+            alpha,
+            white,
+            is_gray: true,
+        }),
+        _ => Err(Ssimulacra2Error::UnsupportedInput(
+            "unsupported color space — only RGB and Gray are supported; convert via zenpixels-convert first",
+        )),
+    }
+}
 
 /// Result of [`funnel`] — the encoded path preserves the original bytes
 /// (LUT-exact); the linear path holds premultiplied-ready planes.
@@ -72,20 +119,12 @@ pub(crate) fn checked_dimensions(w: usize, h: usize) -> Result<usize, Ssimulacra
     Ok(npix)
 }
 
-fn validate_alpha_layout(slice: &PixelSlice<'_>) -> Result<(), Ssimulacra2Error> {
-    let desc = slice.descriptor();
+fn validate_alpha_layout(fmt: &PixelFormat) -> Result<(), Ssimulacra2Error> {
     if matches!(
-        desc.alpha,
-        Some(AlphaMode::Straight | AlphaMode::Premultiplied)
-    ) && matches!(
-        desc.format,
-        PixelFormat::Rgb8
-            | PixelFormat::Rgb16
-            | PixelFormat::RgbF32
-            | PixelFormat::Gray8
-            | PixelFormat::Gray16
-            | PixelFormat::GrayF32
-    ) {
+        fmt.color.alpha(),
+        AlphaMode::Straight | AlphaMode::Premultiplied
+    ) && !fmt.layout.order.has_alpha_slot()
+    {
         return Err(Ssimulacra2Error::UnsupportedInput(
             "alpha semantics require a stored alpha channel",
         ));
@@ -93,64 +132,69 @@ fn validate_alpha_layout(slice: &PixelSlice<'_>) -> Result<(), Ssimulacra2Error>
     Ok(())
 }
 
-/// Interpret `slice` per its [`PixelDescriptor`], materializing the
-/// planes the pipeline needs. See the crate docs for which descriptors
-/// are rejected. Native PQ/HLG and supported linear HDR descriptors use the
+/// Interpret `view` per its [`PixelFormat`], materializing the
+/// planes the pipeline needs. See the crate docs for which formats
+/// are rejected. Native PQ/HLG and supported linear HDR formats use the
 /// reference color conversion; the encoded sRGB path keeps its captured LUT.
-pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra2Error> {
-    let desc = slice.descriptor();
-    let (w, h) = (slice.width() as usize, slice.rows() as usize);
+pub(crate) fn funnel(view: &PixelView<'_>) -> Result<PreparedInput, Ssimulacra2Error> {
+    let fmt = view.format();
+    let (w, h) = (view.width() as usize, view.height() as usize);
     let npix = checked_dimensions(w, h)?;
-
-    if matches!(desc.transfer, TransferFunction::Pq | TransferFunction::Hlg)
-        || (desc.transfer == TransferFunction::Linear
-            && (desc.primaries != zenpixels::ColorPrimaries::Bt709
-                || slice
-                    .color_context()
-                    .is_some_and(|c| c.diffuse_white.is_some())))
-    {
-        return native_hdr::NativeInput::new(slice).map(PreparedInput::Native);
+    if fmt.layout.packing != BitPacking::Full {
+        return Err(Ssimulacra2Error::UnsupportedInput(
+            "bit-packed pixel layouts are not supported",
+        ));
     }
-    validate_alpha_layout(slice)?;
+    let color = extract_color(&fmt.color)?;
 
-    // Descriptor gates — reject what the SDR metric can't honestly score.
-    match desc.transfer {
-        TransferFunction::Srgb => {}
-        TransferFunction::Linear => {
-            if !matches!(
-                desc.format,
-                PixelFormat::RgbaF32
-                    | PixelFormat::RgbF32
-                    | PixelFormat::GrayF32
-                    | PixelFormat::GrayAF32
-            ) {
+    if matches!(color.transfer, Transfer::Pq | Transfer::Hlg(_))
+        || (color.transfer == Transfer::Linear
+            && ((!color.is_gray && color.primaries != Primaries::Bt709) || color.white.is_some()))
+    {
+        return native_hdr::NativeInput::new(view).map(PreparedInput::Native);
+    }
+    validate_alpha_layout(fmt)?;
+
+    // Format gates — reject what the SDR metric can't honestly score.
+    match color.transfer {
+        Transfer::Srgb => {}
+        Transfer::Linear => {
+            if fmt.layout.sample != SampleType::F32
+                || !matches!(
+                    fmt.layout.order,
+                    ChannelOrder::Rgba
+                        | ChannelOrder::Rgb
+                        | ChannelOrder::Gray
+                        | ChannelOrder::GrayAlpha
+                )
+            {
                 return Err(Ssimulacra2Error::UnsupportedInput(
                     "linear transfer requires an f32 format",
                 ));
             }
         }
-        TransferFunction::Pq | TransferFunction::Hlg => {
+        Transfer::Pq | Transfer::Hlg(_) => {
             return Err(Ssimulacra2Error::UnsupportedInput(
                 "HDR transfers (PQ, HLG) — convert via zenpixels-convert first",
             ));
         }
-        TransferFunction::Bt709 | TransferFunction::Gamma22 => {
+        Transfer::Unknown => {
             return Err(Ssimulacra2Error::UnsupportedInput(
-                "non-sRGB encoded transfer — the LUT is sRGB-shaped; convert upstream",
+                "unknown transfer — state it explicitly (e.g. RGB8_SRGB) so the bytes aren't silently misread",
             ));
         }
         _ => {
             return Err(Ssimulacra2Error::UnsupportedInput(
-                "unknown transfer — state it explicitly (e.g. RGB8_SRGB) so                  the bytes aren't silently misread",
+                "non-sRGB encoded transfer — the LUT is sRGB-shaped; convert upstream",
             ));
         }
     }
-    if desc.primaries != zenpixels::ColorPrimaries::Bt709 {
+    if !color.is_gray && color.primaries != Primaries::Bt709 {
         return Err(Ssimulacra2Error::UnsupportedInput(
             "non-BT.709 primaries — gamut-convert via zenpixels-convert first",
         ));
     }
-    if desc.signal_range != SignalRange::Full {
+    if color.range != SignalRange::Full {
         return Err(Ssimulacra2Error::UnsupportedInput(
             "narrow/limited signal range — expand to full range upstream",
         ));
@@ -158,16 +202,13 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
 
     // Premultiplied alpha is un-multiplied into an owned buffer; every
     // other layout is consumed borrowed (zero-copy).
-    let data: Cow<'_, [u8]> = if matches!(desc.alpha, Some(AlphaMode::Premultiplied)) {
-        Cow::Owned(unpremultiply(slice))
+    let data: Cow<'_, [u8]> = if color.alpha == AlphaMode::Premultiplied {
+        Cow::Owned(unpremultiply(view))
     } else {
-        Cow::Borrowed(slice.as_strided_bytes())
+        Cow::Borrowed(view.as_strided_bytes())
     };
-    let stride = slice.stride();
-    let premult_alpha = matches!(
-        desc.alpha,
-        Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied)
-    );
+    let stride = view.stride_bytes();
+    let premult_alpha = matches!(color.alpha, AlphaMode::Straight | AlphaMode::Premultiplied);
 
     let f32_alpha_of = |data: &[u8], stride: usize, bpp: usize| -> Vec<f32> {
         let mut a = Vec::with_capacity(npix);
@@ -180,195 +221,174 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
         a
     };
 
-    Ok(match (desc.format, desc.transfer) {
-        // ---------------------------------------------------- encoded u8
-        (PixelFormat::Rgb8, _) => {
-            let mut rgb = Vec::with_capacity(npix * 3);
-            for y in 0..h {
-                let row = &data[y * stride..];
-                rgb.extend_from_slice(&row[..w * 3]);
+    Ok(
+        match (fmt.layout.sample, fmt.layout.order, color.transfer) {
+            // ---------------------------------------------------- encoded u8
+            (SampleType::U8, ChannelOrder::Rgb, _) => {
+                let mut rgb = Vec::with_capacity(npix * 3);
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    rgb.extend_from_slice(&row[..w * 3]);
+                }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::U8(rgb),
+                    alpha: None,
+                })
             }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::U8(rgb),
-                alpha: None,
-            })
-        }
-        (PixelFormat::Rgba8, _) | (PixelFormat::Rgbx8, _) => {
-            let mut rgb = Vec::with_capacity(npix * 3);
-            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for px in row[..w * 4].chunks_exact(4) {
-                    rgb.extend_from_slice(&px[..3]);
-                    if let Some(a) = alpha.as_mut() {
-                        a.push(px[3] as f32 * (1.0 / 255.0));
+            (SampleType::U8, ChannelOrder::Rgba | ChannelOrder::Rgbx, _) => {
+                let mut rgb = Vec::with_capacity(npix * 3);
+                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for px in row[..w * 4].chunks_exact(4) {
+                        rgb.extend_from_slice(&px[..3]);
+                        if let Some(a) = alpha.as_mut() {
+                            a.push(px[3] as f32 * (1.0 / 255.0));
+                        }
                     }
                 }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::U8(rgb),
+                    alpha,
+                })
             }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::U8(rgb),
-                alpha,
-            })
-        }
-        (PixelFormat::Bgra8, _) | (PixelFormat::Bgrx8, _) => {
-            let mut rgb = Vec::with_capacity(npix * 3);
-            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for px in row[..w * 4].chunks_exact(4) {
-                    rgb.extend_from_slice(&[px[2], px[1], px[0]]);
-                    if let Some(a) = alpha.as_mut() {
-                        a.push(px[3] as f32 * (1.0 / 255.0));
+            (SampleType::U8, ChannelOrder::Bgra | ChannelOrder::Bgrx, _) => {
+                let mut rgb = Vec::with_capacity(npix * 3);
+                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for px in row[..w * 4].chunks_exact(4) {
+                        rgb.extend_from_slice(&[px[2], px[1], px[0]]);
+                        if let Some(a) = alpha.as_mut() {
+                            a.push(px[3] as f32 * (1.0 / 255.0));
+                        }
                     }
                 }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::U8(rgb),
+                    alpha,
+                })
             }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::U8(rgb),
-                alpha,
-            })
-        }
-        (PixelFormat::Gray8, _) => {
-            let mut g = Vec::with_capacity(npix);
-            for y in 0..h {
-                let row = &data[y * stride..];
-                g.extend_from_slice(&row[..w]);
-            }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::U8(g.into_iter().flat_map(|v| [v; 3]).collect()),
-                alpha: None,
-            })
-        }
-        // --------------------------------------------------- encoded u16
-        (PixelFormat::Rgb16, _) => {
-            let mut rgb = Vec::with_capacity(npix * 3);
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for c in row[..w * 6].chunks_exact(2) {
-                    rgb.push(u16::from_ne_bytes([c[0], c[1]]));
+            (SampleType::U8, ChannelOrder::Gray, _) => {
+                let mut g = Vec::with_capacity(npix);
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    g.extend_from_slice(&row[..w]);
                 }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::U8(g.into_iter().flat_map(|v| [v; 3]).collect()),
+                    alpha: None,
+                })
             }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::U16(rgb),
-                alpha: None,
-            })
-        }
-        (PixelFormat::Rgba16, _) => {
-            let mut rgb = Vec::with_capacity(npix * 3);
-            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for px in row[..w * 8].chunks_exact(8) {
-                    for c in 0..3 {
-                        rgb.push(u16::from_ne_bytes([px[2 * c], px[2 * c + 1]]));
-                    }
-                    if let Some(a) = alpha.as_mut() {
-                        a.push(u16::from_ne_bytes([px[6], px[7]]) as f32 * (1.0 / 65535.0));
+            // --------------------------------------------------- encoded u16
+            (SampleType::U16, ChannelOrder::Rgb, _) => {
+                let mut rgb = Vec::with_capacity(npix * 3);
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for c in row[..w * 6].chunks_exact(2) {
+                        rgb.push(u16::from_ne_bytes([c[0], c[1]]));
                     }
                 }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::U16(rgb),
+                    alpha: None,
+                })
             }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::U16(rgb),
-                alpha,
-            })
-        }
-        (PixelFormat::Gray16, _) => {
-            let mut g = Vec::with_capacity(npix);
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for c in row[..w * 2].chunks_exact(2) {
-                    g.push(u16::from_ne_bytes([c[0], c[1]]));
-                }
-            }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::U16(g.into_iter().flat_map(|v| [v; 3]).collect()),
-                alpha: None,
-            })
-        }
-        // -------------------------------------- encoded f32
-        // sRGB-encoded f32 is the *general* path — a rational polynomial
-        // (`linear-srgb`), no grid tricks: encoded-f32 is a marginal input
-        // class (decoders emit integers; linear pipelines emit Linear-f32),
-        // and callers with u8-quantized data get bit-exact results by
-        // handing us u8 directly.
-        (PixelFormat::RgbF32, TransferFunction::Srgb) => {
-            let mut rgb = Vec::with_capacity(npix * 3);
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for c in row[..w * 12].chunks_exact(4) {
-                    rgb.push(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]));
-                }
-            }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::F32(rgb),
-                alpha: None,
-            })
-        }
-        (PixelFormat::RgbaF32, TransferFunction::Srgb) => {
-            let mut rgb = Vec::with_capacity(npix * 3);
-            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for px in row[..w * 16].chunks_exact(16) {
-                    for c in 0..3 {
-                        rgb.push(f32::from_ne_bytes([
-                            px[4 * c],
-                            px[4 * c + 1],
-                            px[4 * c + 2],
-                            px[4 * c + 3],
-                        ]));
-                    }
-                    if let Some(a) = alpha.as_mut() {
-                        a.push(f32::from_ne_bytes([px[12], px[13], px[14], px[15]]));
+            (SampleType::U16, ChannelOrder::Rgba, _) => {
+                let mut rgb = Vec::with_capacity(npix * 3);
+                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for px in row[..w * 8].chunks_exact(8) {
+                        for c in 0..3 {
+                            rgb.push(u16::from_ne_bytes([px[2 * c], px[2 * c + 1]]));
+                        }
+                        if let Some(a) = alpha.as_mut() {
+                            a.push(u16::from_ne_bytes([px[6], px[7]]) as f32 * (1.0 / 65535.0));
+                        }
                     }
                 }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::U16(rgb),
+                    alpha,
+                })
             }
-            PreparedInput::Encoded(EncodedSrgb {
-                width: w,
-                height: h,
-                data: EncodedData::F32(rgb),
-                alpha,
-            })
-        }
-        // ------------------------------------------------- linear f32
-        (PixelFormat::RgbF32, TransferFunction::Linear) => {
-            let mut planes = [
-                Vec::with_capacity(npix),
-                Vec::with_capacity(npix),
-                Vec::with_capacity(npix),
-            ];
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for px in row[..w * 12].chunks_exact(12) {
-                    for (c, ch) in px.chunks_exact(4).enumerate() {
-                        planes[c].push(f32::from_ne_bytes([ch[0], ch[1], ch[2], ch[3]]));
+            (SampleType::U16, ChannelOrder::Gray, _) => {
+                let mut g = Vec::with_capacity(npix);
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for c in row[..w * 2].chunks_exact(2) {
+                        g.push(u16::from_ne_bytes([c[0], c[1]]));
                     }
                 }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::U16(g.into_iter().flat_map(|v| [v; 3]).collect()),
+                    alpha: None,
+                })
             }
-            PreparedInput::Linear {
-                planes,
-                alpha: None,
-                width: w,
-                height: h,
+            // -------------------------------------- encoded f32
+            // sRGB-encoded f32 is the *general* path — a rational polynomial
+            // (`linear-srgb`), no grid tricks: encoded-f32 is a marginal input
+            // class (decoders emit integers; linear pipelines emit Linear-f32),
+            // and callers with u8-quantized data get bit-exact results by
+            // handing us u8 directly.
+            (SampleType::F32, ChannelOrder::Rgb, Transfer::Srgb) => {
+                let mut rgb = Vec::with_capacity(npix * 3);
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for c in row[..w * 12].chunks_exact(4) {
+                        rgb.push(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]));
+                    }
+                }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::F32(rgb),
+                    alpha: None,
+                })
             }
-        }
-        (PixelFormat::RgbaF32, TransferFunction::Linear) => PreparedInput::Linear {
-            planes: {
+            (SampleType::F32, ChannelOrder::Rgba, Transfer::Srgb) => {
+                let mut rgb = Vec::with_capacity(npix * 3);
+                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for px in row[..w * 16].chunks_exact(16) {
+                        for c in 0..3 {
+                            rgb.push(f32::from_ne_bytes([
+                                px[4 * c],
+                                px[4 * c + 1],
+                                px[4 * c + 2],
+                                px[4 * c + 3],
+                            ]));
+                        }
+                        if let Some(a) = alpha.as_mut() {
+                            a.push(f32::from_ne_bytes([px[12], px[13], px[14], px[15]]));
+                        }
+                    }
+                }
+                PreparedInput::Encoded(EncodedSrgb {
+                    width: w,
+                    height: h,
+                    data: EncodedData::F32(rgb),
+                    alpha,
+                })
+            }
+            // ------------------------------------------------- linear f32
+            (SampleType::F32, ChannelOrder::Rgb, Transfer::Linear) => {
                 let mut planes = [
                     Vec::with_capacity(npix),
                     Vec::with_capacity(npix),
@@ -376,72 +396,99 @@ pub(crate) fn funnel(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra
                 ];
                 for y in 0..h {
                     let row = &data[y * stride..];
-                    for px in row[..w * 16].chunks_exact(16) {
-                        for c in 0..3 {
-                            planes[c].push(f32::from_ne_bytes([
-                                px[4 * c],
-                                px[4 * c + 1],
-                                px[4 * c + 2],
-                                px[4 * c + 3],
-                            ]));
+                    for px in row[..w * 12].chunks_exact(12) {
+                        for (c, ch) in px.chunks_exact(4).enumerate() {
+                            planes[c].push(f32::from_ne_bytes([ch[0], ch[1], ch[2], ch[3]]));
                         }
                     }
                 }
-                planes
+                PreparedInput::Linear {
+                    planes,
+                    alpha: None,
+                    width: w,
+                    height: h,
+                }
+            }
+            (SampleType::F32, ChannelOrder::Rgba, Transfer::Linear) => PreparedInput::Linear {
+                planes: {
+                    let mut planes = [
+                        Vec::with_capacity(npix),
+                        Vec::with_capacity(npix),
+                        Vec::with_capacity(npix),
+                    ];
+                    for y in 0..h {
+                        let row = &data[y * stride..];
+                        for px in row[..w * 16].chunks_exact(16) {
+                            for c in 0..3 {
+                                planes[c].push(f32::from_ne_bytes([
+                                    px[4 * c],
+                                    px[4 * c + 1],
+                                    px[4 * c + 2],
+                                    px[4 * c + 3],
+                                ]));
+                            }
+                        }
+                    }
+                    planes
+                },
+                alpha: premult_alpha.then(|| f32_alpha_of(&data, stride, 16)),
+                width: w,
+                height: h,
             },
-            alpha: premult_alpha.then(|| f32_alpha_of(&data, stride, 16)),
-            width: w,
-            height: h,
-        },
-        (PixelFormat::GrayF32, TransferFunction::Linear) => {
-            let mut g = Vec::with_capacity(npix);
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for c in row[..w * 4].chunks_exact(4) {
-                    g.push(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]));
+            (SampleType::F32, ChannelOrder::Gray, Transfer::Linear) => {
+                let mut g = Vec::with_capacity(npix);
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for c in row[..w * 4].chunks_exact(4) {
+                        g.push(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]));
+                    }
+                }
+                PreparedInput::Linear {
+                    planes: [g.clone(), g.clone(), g],
+                    alpha: None,
+                    width: w,
+                    height: h,
                 }
             }
-            PreparedInput::Linear {
-                planes: [g.clone(), g.clone(), g],
-                alpha: None,
-                width: w,
-                height: h,
-            }
-        }
-        (PixelFormat::GrayAF32, TransferFunction::Linear) => {
-            let mut g = Vec::with_capacity(npix);
-            let mut a = Vec::with_capacity(npix);
-            for y in 0..h {
-                let row = &data[y * stride..];
-                for px in row[..w * 8].chunks_exact(8) {
-                    g.push(f32::from_ne_bytes([px[0], px[1], px[2], px[3]]));
-                    a.push(f32::from_ne_bytes([px[4], px[5], px[6], px[7]]));
+            (SampleType::F32, ChannelOrder::GrayAlpha, Transfer::Linear) => {
+                let mut g = Vec::with_capacity(npix);
+                let mut a = Vec::with_capacity(npix);
+                for y in 0..h {
+                    let row = &data[y * stride..];
+                    for px in row[..w * 8].chunks_exact(8) {
+                        g.push(f32::from_ne_bytes([px[0], px[1], px[2], px[3]]));
+                        a.push(f32::from_ne_bytes([px[4], px[5], px[6], px[7]]));
+                    }
+                }
+                PreparedInput::Linear {
+                    planes: [g.clone(), g.clone(), g],
+                    alpha: premult_alpha.then_some(a),
+                    width: w,
+                    height: h,
                 }
             }
-            PreparedInput::Linear {
-                planes: [g.clone(), g.clone(), g],
-                alpha: premult_alpha.then_some(a),
-                width: w,
-                height: h,
-            }
-        }
-        _ => {
-            return Err(Ssimulacra2Error::UnsupportedInput(
-                "unsupported pixel format for SSIMULACRA2 — RGB/RGBA/BGRA/Gray \
+            _ => {
+                return Err(Ssimulacra2Error::UnsupportedInput(
+                    "unsupported pixel format for SSIMULACRA2 — RGB/RGBA/BGRA/Gray \
                  in u8/u16/f32-sRGB or f32-linear only",
-            ));
-        }
-    })
+                ));
+            }
+        },
+    )
 }
 
 /// Un-premultiply to straight alpha, native domain (ported from zensim's
 /// zenpixels adapter — quantizes back for integer formats).
-fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
-    let (w, h) = (slice.width() as usize, slice.rows() as usize);
-    let stride = slice.stride();
-    let mut out = slice.as_strided_bytes().to_vec();
-    match slice.descriptor().format {
-        PixelFormat::Rgba8 | PixelFormat::Bgra8 | PixelFormat::Rgbx8 | PixelFormat::Bgrx8 => {
+fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
+    let (w, h) = (view.width() as usize, view.height() as usize);
+    let stride = view.stride_bytes();
+    let layout = view.format().layout;
+    let mut out = view.as_strided_bytes().to_vec();
+    match (layout.sample, layout.order) {
+        (
+            SampleType::U8,
+            ChannelOrder::Rgba | ChannelOrder::Bgra | ChannelOrder::Rgbx | ChannelOrder::Bgrx,
+        ) => {
             for y in 0..h {
                 let row_start = y * stride;
                 for x in 0..w {
@@ -460,8 +507,8 @@ fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
                 }
             }
         }
-        PixelFormat::Rgba16 | PixelFormat::GrayA16 => {
-            let bpp = slice.descriptor().format.bytes_per_pixel();
+        (SampleType::U16, ChannelOrder::Rgba | ChannelOrder::GrayAlpha) => {
+            let bpp = layout.bytes_per_pixel();
             let alpha_offset = bpp - 2;
             for y in 0..h {
                 let row_start = y * stride;
@@ -483,8 +530,8 @@ fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
                 }
             }
         }
-        PixelFormat::RgbaF32 | PixelFormat::GrayAF32 => {
-            let bpp = slice.descriptor().format.bytes_per_pixel();
+        (SampleType::F32, ChannelOrder::Rgba | ChannelOrder::GrayAlpha) => {
+            let bpp = layout.bytes_per_pixel();
             let alpha_offset = bpp - 4;
             for y in 0..h {
                 let row_start = y * stride;
@@ -526,41 +573,48 @@ fn unpremultiply(slice: &PixelSlice<'_>) -> Vec<u8> {
 /// [`funnel`] variant for the PU21 path: produces linear planes of
 /// **absolute luminance in cd/m²**.
 ///
-/// Accepted descriptors:
+/// Accepted formats:
 /// - `Linear` f32 — treated as absolute nits directly.
 /// - `Pq`/`Hlg` (u8/u16/f32) — EOTF-decoded to nits. BT.2020 primaries
 ///   are *not* gamut-converted (the opsin matrix consumes whatever
 ///   primaries the source declares — same convention as zensim's PU path).
 #[cfg(feature = "hdr-pu")]
-pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimulacra2Error> {
+pub(crate) fn funnel_nits(view: &PixelView<'_>) -> Result<PreparedInput, Ssimulacra2Error> {
     use crate::pipeline::pu21;
 
-    let desc = slice.descriptor();
-    let (w, h) = (slice.width() as usize, slice.rows() as usize);
+    let fmt = view.format();
+    let (w, h) = (view.width() as usize, view.height() as usize);
     let npix = checked_dimensions(w, h)?;
-    validate_alpha_layout(slice)?;
-    if desc.signal_range != SignalRange::Full {
+    if fmt.layout.packing != BitPacking::Full {
+        return Err(Ssimulacra2Error::UnsupportedInput(
+            "bit-packed pixel layouts are not supported",
+        ));
+    }
+    validate_alpha_layout(fmt)?;
+    let color = extract_color(&fmt.color)?;
+    if color.range != SignalRange::Full {
         return Err(Ssimulacra2Error::UnsupportedInput(
             "narrow/limited signal range — expand to full range upstream",
         ));
     }
 
-    let pq = matches!(desc.transfer, TransferFunction::Pq);
-    let hlg = matches!(desc.transfer, TransferFunction::Hlg);
-    let linear = matches!(desc.transfer, TransferFunction::Linear);
+    let pq = matches!(color.transfer, Transfer::Pq);
+    let hlg = matches!(color.transfer, Transfer::Hlg(_));
+    let linear = matches!(color.transfer, Transfer::Linear);
     if !(pq || hlg || linear) {
         return Err(Ssimulacra2Error::UnsupportedInput(
-            "PU path needs Linear f32 (nits) or Pq/Hlg descriptors",
+            "PU path needs Linear f32 (nits) or Pq/Hlg formats",
         ));
     }
     if linear
-        && !matches!(
-            desc.format,
-            PixelFormat::RgbF32
-                | PixelFormat::RgbaF32
-                | PixelFormat::GrayF32
-                | PixelFormat::GrayAF32
-        )
+        && !(fmt.layout.sample == SampleType::F32
+            && matches!(
+                fmt.layout.order,
+                ChannelOrder::Rgb
+                    | ChannelOrder::Rgba
+                    | ChannelOrder::Gray
+                    | ChannelOrder::GrayAlpha
+            ))
     {
         return Err(Ssimulacra2Error::UnsupportedInput(
             "linear transfer requires an f32 format",
@@ -568,16 +622,13 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
     }
 
     // Premultiplied alpha un-multiplied in code-value space first.
-    let data: Cow<'_, [u8]> = if matches!(desc.alpha, Some(AlphaMode::Premultiplied)) {
-        Cow::Owned(unpremultiply(slice))
+    let data: Cow<'_, [u8]> = if color.alpha == AlphaMode::Premultiplied {
+        Cow::Owned(unpremultiply(view))
     } else {
-        Cow::Borrowed(slice.as_strided_bytes())
+        Cow::Borrowed(view.as_strided_bytes())
     };
-    let stride = slice.stride();
-    let alpha_present = matches!(
-        desc.alpha,
-        Some(AlphaMode::Straight) | Some(AlphaMode::Premultiplied)
-    );
+    let stride = view.stride_bytes();
+    let alpha_present = matches!(color.alpha, AlphaMode::Straight | AlphaMode::Premultiplied);
 
     // Decode one channel's code value → [0,1], then to nits. For HLG the
     // per-pixel OOTF needs the full triple — handled in the px loop below.
@@ -639,34 +690,44 @@ pub(crate) fn funnel_nits(slice: &PixelSlice<'_>) -> Result<PreparedInput, Ssimu
         (planes, alpha)
     };
 
-    let (planes, alpha) = match desc.format {
-        PixelFormat::Rgb8
-        | PixelFormat::Rgba8
-        | PixelFormat::Rgbx8
-        | PixelFormat::Bgra8
-        | PixelFormat::Bgrx8
-        | PixelFormat::Gray8 => {
-            let bpp = desc.format.bytes_per_pixel();
-            let (a_off, gray) = match desc.format {
-                PixelFormat::Gray8 => (0, true),
+    let bpp = fmt.layout.bytes_per_pixel();
+    let (planes, alpha) = match (fmt.layout.sample, fmt.layout.order) {
+        (
+            SampleType::U8,
+            ChannelOrder::Rgb
+            | ChannelOrder::Rgba
+            | ChannelOrder::Rgbx
+            | ChannelOrder::Bgra
+            | ChannelOrder::Bgrx
+            | ChannelOrder::Gray,
+        ) => {
+            let (a_off, gray) = match fmt.layout.order {
+                ChannelOrder::Gray => (0, true),
                 _ => (3, false),
             };
             let rd = |p: &[u8]| p[0] as f32 * (1.0 / 255.0);
-            let bgr = matches!(desc.format, PixelFormat::Bgra8 | PixelFormat::Bgrx8);
+            let bgr = matches!(fmt.layout.order, ChannelOrder::Bgra | ChannelOrder::Bgrx);
             rgb_planes(&data, bpp, 1, &rd, gray, alpha_present, a_off, bgr)
         }
-        PixelFormat::Rgb16 | PixelFormat::Rgba16 | PixelFormat::Gray16 | PixelFormat::GrayA16 => {
-            let bpp = desc.format.bytes_per_pixel();
-            let gray = matches!(desc.format, PixelFormat::Gray16 | PixelFormat::GrayA16);
+        (
+            SampleType::U16,
+            ChannelOrder::Rgb | ChannelOrder::Rgba | ChannelOrder::Gray | ChannelOrder::GrayAlpha,
+        ) => {
+            let gray = matches!(
+                fmt.layout.order,
+                ChannelOrder::Gray | ChannelOrder::GrayAlpha
+            );
             let rd = |p: &[u8]| u16::from_ne_bytes([p[0], p[1]]) as f32 * (1.0 / 65535.0);
             rgb_planes(&data, bpp, 2, &rd, gray, alpha_present, bpp - 2, false)
         }
-        PixelFormat::RgbF32
-        | PixelFormat::RgbaF32
-        | PixelFormat::GrayF32
-        | PixelFormat::GrayAF32 => {
-            let bpp = desc.format.bytes_per_pixel();
-            let gray = matches!(desc.format, PixelFormat::GrayF32 | PixelFormat::GrayAF32);
+        (
+            SampleType::F32,
+            ChannelOrder::Rgb | ChannelOrder::Rgba | ChannelOrder::Gray | ChannelOrder::GrayAlpha,
+        ) => {
+            let gray = matches!(
+                fmt.layout.order,
+                ChannelOrder::Gray | ChannelOrder::GrayAlpha
+            );
             let rd = |p: &[u8]| f32::from_ne_bytes([p[0], p[1], p[2], p[3]]);
             rgb_planes(&data, bpp, 4, &rd, gray, alpha_present, bpp - 4, false)
         }

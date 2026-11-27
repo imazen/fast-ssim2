@@ -154,7 +154,7 @@ mod tests {
     use crate::pipeline::score::{ScaleAggregates, score};
     use crate::pipeline::{EncodedData, EncodedSrgb};
     use crate::pipeline::{blur_planes, linearize, planes_to_positive_xyb};
-    use crate::{PixelDescriptor, PixelSlice, compute_ssimulacra2_maps};
+    use crate::{PixelView, compute_ssimulacra2_maps, formats};
 
     fn textured(w: usize, h: usize, seed: u32) -> Vec<u8> {
         (0..w * h * 3)
@@ -190,8 +190,8 @@ mod tests {
         let (w, h) = (53, 37);
         let (a, b) = (textured(w, h, 1), textured(w, h, 99));
         let (sa, sb) = (
-            PixelSlice::new(&a, w as u32, h as u32, w * 3, PixelDescriptor::RGB8_SRGB).unwrap(),
-            PixelSlice::new(&b, w as u32, h as u32, w * 3, PixelDescriptor::RGB8_SRGB).unwrap(),
+            PixelView::new(&a, w as u32, h as u32, w * 3, &formats::RGB8_SRGB).unwrap(),
+            PixelView::new(&b, w as u32, h as u32, w * 3, &formats::RGB8_SRGB).unwrap(),
         );
         let maps = compute_ssimulacra2_maps(&sa, &sb).unwrap();
 

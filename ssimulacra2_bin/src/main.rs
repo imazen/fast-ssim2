@@ -170,27 +170,28 @@ fn compare_images(source: &Path, distorted: &Path) {
     let source = image::open(source).expect("Failed to open source file");
     let distorted = image::open(distorted).expect("Failed to open distorted file");
 
+    let format = zenpixels::PixelFormat::RGBF32_LINEAR.with_transfer(zenpixels::Transfer::Srgb);
     let source_data = source.to_rgb32f().as_chunks::<3>().0.to_vec();
 
-    let source_data = zenpixels::PixelSlice::new(
+    let source_data = zenpixels::PixelView::new(
         bytemuck::cast_slice::<f32, u8>(source_data.as_flattened()),
         source.width(),
         source.height(),
         source.width() as usize * 12,
-        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+        &format,
     )
-    .expect("Failed to build source PixelSlice");
+    .expect("Failed to build source PixelView");
 
     let distorted_data = distorted.to_rgb32f().as_chunks::<3>().0.to_vec();
 
-    let distorted_data = zenpixels::PixelSlice::new(
+    let distorted_data = zenpixels::PixelView::new(
         bytemuck::cast_slice::<f32, u8>(distorted_data.as_flattened()),
         distorted.width(),
         distorted.height(),
         distorted.width() as usize * 12,
-        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+        &format,
     )
-    .expect("Failed to build distorted PixelSlice");
+    .expect("Failed to build distorted PixelView");
 
     let result = compute_ssimulacra2(&source_data, &distorted_data)
         .expect("Failed to calculate ssimulacra2");

@@ -22,17 +22,17 @@ use fast_ssim2::{
     Ssimulacra2Config, Ssimulacra2Reference, compute_ssimulacra2, compute_ssimulacra2_with_config,
 };
 
-fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32_LINEAR,
+        zenpixels::PixelFormat::RGBF32_LINEAR,
     )
     .unwrap()
 }
 
-fn make_pair(width: usize, height: usize) -> (zenpixels::PixelBuffer, zenpixels::PixelBuffer) {
+fn make_pair(width: usize, height: usize) -> (zenpixels::PixelBuf, zenpixels::PixelBuf) {
     let mut src = Vec::with_capacity(width * height);
     let mut dst = Vec::with_capacity(width * height);
     for y in 0..height {
@@ -80,20 +80,17 @@ fn main() {
 
     let t1 = Instant::now();
     let score = match mode.as_str() {
-        "full" => compute_ssimulacra2(&src.as_slice(), &dst.as_slice()).expect("full"),
+        "full" => compute_ssimulacra2(&src.as_view(), &dst.as_view()).expect("full"),
         "strip" => compute_ssimulacra2_with_config(
-            &src.as_slice(),
-            &dst.as_slice(),
+            &src.as_view(),
+            &dst.as_view(),
             &Ssimulacra2Config::strips(strip_h as usize),
         )
         .expect("strip"),
         "wstrip" => {
-            let r = Ssimulacra2Reference::new(&src.as_slice()).expect("ref");
-            r.compare_with_config(
-                &dst.as_slice(),
-                &Ssimulacra2Config::strips(strip_h as usize),
-            )
-            .expect("compare_strip")
+            let r = Ssimulacra2Reference::new(&src.as_view()).expect("ref");
+            r.compare_with_config(&dst.as_view(), &Ssimulacra2Config::strips(strip_h as usize))
+                .expect("compare_strip")
         }
         other => {
             eprintln!("unknown mode: {other}");

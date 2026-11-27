@@ -1,7 +1,6 @@
 //! Deterministic inputs shared by native-HDR regression tests and oracle capture.
-use fast_ssim2::{PixelDescriptor, PixelSlice, TransferFunction};
-use std::sync::Arc;
-use zenpixels::{ColorContext, ColorPrimaries, DiffuseWhite};
+use fast_ssim2::{PixelFormat, PixelView, Transfer};
+use zenpixels::{AlphaMode, DiffuseWhite, FormatCow, HlgMode, Primaries};
 
 pub struct Case {
     pub transfer: u8,
@@ -47,36 +46,38 @@ impl Case {
             .collect()
     }
 
-    pub fn image<'a>(&self, data: &'a [f32], distorted: bool) -> PixelSlice<'a> {
+    pub fn image<'a>(&self, data: &'a [f32], distorted: bool) -> PixelView<'a> {
         let has_alpha = if distorted {
             self.alpha & 2 != 0
         } else {
             self.alpha & 1 != 0
         };
-        let desc = PixelDescriptor::RGBAF32_LINEAR
+        let fmt = PixelFormat::RGBAF32_LINEAR
             .with_transfer(match self.transfer {
-                8 => TransferFunction::Linear,
-                16 => TransferFunction::Pq,
-                18 => TransferFunction::Hlg,
+                8 => Transfer::Linear,
+                16 => Transfer::Pq,
+                18 => Transfer::Hlg(HlgMode::Scene),
                 _ => panic!("transfer"),
             })
             .with_primaries(match self.primaries {
-                1 => ColorPrimaries::Bt709,
-                9 => ColorPrimaries::Bt2020,
-                11 => ColorPrimaries::DisplayP3,
+                1 => Primaries::Bt709,
+                9 => Primaries::Bt2020,
+                11 => Primaries::DisplayP3,
                 _ => panic!("primaries"),
             })
-            .with_alpha(has_alpha.then_some(zenpixels::AlphaMode::Straight));
-        PixelSlice::new(
+            .with_alpha(if has_alpha {
+                AlphaMode::Straight
+            } else {
+                AlphaMode::Opaque
+            })
+            .with_white(DiffuseWhite::new(self.target).unwrap());
+        PixelView::new_with_format_cow(
             bytemuck::cast_slice(data),
             self.width as u32,
             self.height as u32,
             self.width * 16,
-            desc,
+            FormatCow::from_owned(fmt),
         )
         .unwrap()
-        .with_color_context(Arc::new(
-            ColorContext::default().with_diffuse_white(DiffuseWhite::new(self.target)),
-        ))
     }
 }

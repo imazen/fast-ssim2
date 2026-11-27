@@ -5,7 +5,7 @@
 use crate::pipeline::{Kernel, Opts, XybFlavor};
 use crate::precompute::Ssimulacra2Reference;
 use crate::{Ssimulacra2Config, Ssimulacra2Error};
-use zenpixels::PixelSlice;
+use zenpixels::PixelView;
 
 /// Default number of halo rows above and below each strip.
 ///
@@ -93,8 +93,8 @@ impl StripConfig {
 
 /// Internal SDR strip runner. Materializes inputs before processing strips.
 pub(crate) fn compute_strip_inner(
-    source: &PixelSlice<'_>,
-    distorted: &PixelSlice<'_>,
+    source: &PixelView<'_>,
+    distorted: &PixelView<'_>,
     config: &Ssimulacra2Config<'_>,
 ) -> Result<f64, Ssimulacra2Error> {
     use crate::source::PreparedInput;
@@ -171,10 +171,11 @@ impl Ssimulacra2Reference {
     /// [`Ssimulacra2Reference::compare_with_config`] with `config.strip`.
     pub(crate) fn compare_strip_inner(
         &self,
-        distorted: &PixelSlice<'_>,
+        distorted: &PixelView<'_>,
         config: &Ssimulacra2Config<'_>,
     ) -> Result<f64, Ssimulacra2Error> {
-        if distorted.width() as usize != self.width() || distorted.rows() as usize != self.height()
+        if distorted.width() as usize != self.width()
+            || distorted.height() as usize != self.height()
         {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }

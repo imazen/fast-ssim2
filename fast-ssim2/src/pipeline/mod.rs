@@ -30,7 +30,7 @@
 //! bit-for-bit. `u16` and off-grid `f32` encoded inputs evaluate the sRGB
 //! polynomial instead, as do fractional-alpha sRGB inputs — close to, but
 //! not guaranteed bit-identical with,
-//! the reference's lcms evaluation. Native HDR uses a separate descriptor
+//! the reference's lcms evaluation. Native HDR uses a separate pixel-format
 //! frontend; its pinned oracle and coverage are in `docs/native-hdr-parity.md`.
 
 pub mod gauss;
@@ -70,7 +70,7 @@ pub(crate) fn par_ok(pixels: usize) -> bool {
 
 /// Encoded sRGB pixel data fed to the pipeline.
 ///
-/// Produced by the descriptor-driven input funnel for inputs
+/// Produced by the format-driven input funnel for inputs
 /// that carry quantized/encoded sRGB values rather than linear data.
 pub enum EncodedData {
     /// Interleaved RGB u8 triples (e.g. PNG-8 decode).

@@ -12,22 +12,12 @@ fn main() {
         let i2 = d2.into_rgba8();
         (w, h) = i1.dimensions();
         let (p1, p2) = (i1.into_raw(), i2.into_raw());
-        let s1 = zenpixels::PixelSlice::new(
-            &p1,
-            w,
-            h,
-            (w * 4) as usize,
-            zenpixels::PixelDescriptor::RGBA8_SRGB,
-        )
-        .unwrap();
-        let s2 = zenpixels::PixelSlice::new(
-            &p2,
-            w,
-            h,
-            (w * 4) as usize,
-            zenpixels::PixelDescriptor::RGBA8_SRGB,
-        )
-        .unwrap();
+        let s1 =
+            zenpixels::PixelView::new(&p1, w, h, (w * 4) as usize, &zenpixels::formats::RGBA8_SRGB)
+                .unwrap();
+        let s2 =
+            zenpixels::PixelView::new(&p2, w, h, (w * 4) as usize, &zenpixels::formats::RGBA8_SRGB)
+                .unwrap();
         let sh: u32 = std::env::args()
             .nth(3)
             .unwrap_or("64".into())
@@ -50,22 +40,10 @@ fn main() {
     let i2 = d2.into_rgb8();
     (w, h) = i1.dimensions();
     let (p1, p2) = (i1.into_raw(), i2.into_raw());
-    let s1 = zenpixels::PixelSlice::new(
-        &p1,
-        w,
-        h,
-        (w * 3) as usize,
-        zenpixels::PixelDescriptor::RGB8_SRGB,
-    )
-    .unwrap();
-    let s2 = zenpixels::PixelSlice::new(
-        &p2,
-        w,
-        h,
-        (w * 3) as usize,
-        zenpixels::PixelDescriptor::RGB8_SRGB,
-    )
-    .unwrap();
+    let s1 = zenpixels::PixelView::new(&p1, w, h, (w * 3) as usize, &zenpixels::formats::RGB8_SRGB)
+        .unwrap();
+    let s2 = zenpixels::PixelView::new(&p2, w, h, (w * 3) as usize, &zenpixels::formats::RGB8_SRGB)
+        .unwrap();
     let sh: u32 = std::env::args()
         .nth(3)
         .unwrap_or("64".into())

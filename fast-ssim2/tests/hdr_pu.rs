@@ -3,15 +3,15 @@
 // Preserve the deprecated PU21 score contract deliberately.
 #![allow(deprecated)]
 
-use fast_ssim2::{PixelDescriptor, PixelSlice, compute_ssimulacra2_pu};
+use fast_ssim2::{PixelFormat, PixelView, compute_ssimulacra2_pu, formats};
 
-fn nits_slice(data: &[f32], w: usize, h: usize) -> PixelSlice<'_> {
-    PixelSlice::new(
+fn nits_slice(data: &[f32], w: usize, h: usize) -> PixelView<'_> {
+    PixelView::new(
         bytemuck::cast_slice(data),
         w as u32,
         h as u32,
         w * 12,
-        PixelDescriptor::RGBF32_LINEAR,
+        &formats::RGBF32_LINEAR,
     )
     .unwrap()
 }
@@ -58,12 +58,12 @@ fn pq_encoded_input_works() {
     let code = ((c1 + c2 * y) / (1.0 + c3 * y)).powf(m2);
     let cv = (code.clamp(0.0, 1.0) * 65535.0).round() as u16;
     let data: Vec<u16> = vec![cv; 64 * 64 * 3];
-    let slice = PixelSlice::new(
+    let slice = PixelView::new(
         bytemuck::cast_slice(&data),
         64,
         64,
         64 * 6,
-        PixelDescriptor::RGB16_BT2100_PQ,
+        &formats::RGB16_BT2100_PQ,
     )
     .unwrap();
     let score = compute_ssimulacra2_pu(&slice, &slice).unwrap();
@@ -76,7 +76,7 @@ fn pq_encoded_input_works() {
 #[test]
 fn srgb_descriptor_rejected_in_pu_mode() {
     let data = vec![128u8; 64 * 64 * 3];
-    let s = PixelSlice::new(&data, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+    let s = PixelView::new(&data, 64, 64, 64 * 3, &formats::RGB8_SRGB).unwrap();
     assert!(compute_ssimulacra2_pu(&s, &s).is_err());
 }
 
@@ -88,12 +88,12 @@ fn linear_nits_with_alpha_composites() {
     for i in 0..64 * 64 {
         data[i * 4 + 3] = if i % 7 == 0 { 0.0 } else { 1.0 };
     }
-    let pa = PixelSlice::new(
+    let pa = PixelView::new(
         bytemuck::cast_slice(&data),
         64,
         64,
         64 * 16,
-        PixelDescriptor::RGBAF32_LINEAR,
+        &formats::RGBAF32_LINEAR,
     )
     .unwrap();
     let opaque: Vec<f32> = vec![100.0; 64 * 64 * 3];
@@ -107,14 +107,8 @@ fn bt2020_primaries_accepted_in_pu() {
     // Linear-f32 with BT.2020 primaries — no gamut conversion, opsin
     // consumes primaries as-is (zensim convention).
     let data = vec![150.0f32; 64 * 64 * 3];
-    let s = PixelSlice::new(
-        bytemuck::cast_slice(&data),
-        64,
-        64,
-        64 * 12,
-        PixelDescriptor::RGBF32_LINEAR.with_primaries(zenpixels::ColorPrimaries::Bt2020),
-    )
-    .unwrap();
+    let fmt = PixelFormat::RGBF32_LINEAR.with_primaries(zenpixels::Primaries::Bt2020);
+    let s = PixelView::new(bytemuck::cast_slice(&data), 64, 64, 64 * 12, &fmt).unwrap();
     let score = compute_ssimulacra2_pu(&s, &s).unwrap();
     assert!((score - 100.0).abs() < 0.01, "identical BT.2020: {score}");
 }

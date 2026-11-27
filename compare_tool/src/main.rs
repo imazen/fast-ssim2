@@ -1,7 +1,7 @@
 use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic};
 use std::env;
 
-fn load_rgb(path: &str) -> (Rgb, fast_ssim2::PixelBuffer) {
+fn load_rgb(path: &str) -> (Rgb, fast_ssim2::PixelBuf) {
     let img = image::open(path).unwrap().into_rgb8();
     let (w, h) = (img.width() as usize, img.height() as usize);
     let pixels: Vec<[f32; 3]> = img
@@ -22,11 +22,11 @@ fn load_rgb(path: &str) -> (Rgb, fast_ssim2::PixelBuffer) {
         ColorPrimaries::BT709,
     )
     .unwrap();
-    let buffer = fast_ssim2::PixelBuffer::from_vec(
+    let buffer = fast_ssim2::PixelBuf::from_bytes(
         img.into_raw(),
         w as u32,
         h as u32,
-        fast_ssim2::PixelDescriptor::RGB8_SRGB,
+        fast_ssim2::PixelFormat::RGB8_SRGB,
     )
     .unwrap();
     (rgb, buffer)
@@ -47,12 +47,12 @@ fn main() {
 
     // fast-ssim2 default (SIMD kernels)
     let fast_simd =
-        fast_ssim2::compute_ssimulacra2(&src_buf.as_slice(), &dst_buf.as_slice()).unwrap();
+        fast_ssim2::compute_ssimulacra2(&src_buf.as_view(), &dst_buf.as_view()).unwrap();
 
     // fast-ssim2 scalar-kernel path (bit-identical output)
     let fast_scalar = fast_ssim2::compute_ssimulacra2_with_config(
-        &src_buf.as_slice(),
-        &dst_buf.as_slice(),
+        &src_buf.as_view(),
+        &dst_buf.as_view(),
         &fast_ssim2::Ssimulacra2Config::scalar(),
     )
     .unwrap();

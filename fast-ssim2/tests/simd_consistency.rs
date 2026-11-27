@@ -12,18 +12,18 @@
 use archmage::testing::{CompileTimePolicy, for_each_token_permutation};
 use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 
-fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32_LINEAR,
+        zenpixels::PixelFormat::RGBF32_LINEAR,
     )
     .unwrap()
 }
 
 /// Generate a deterministic test image of varied linear RGB pixels.
-fn generate_test_image(width: usize, height: usize) -> zenpixels::PixelBuffer {
+fn generate_test_image(width: usize, height: usize) -> zenpixels::PixelBuf {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -37,7 +37,7 @@ fn generate_test_image(width: usize, height: usize) -> zenpixels::PixelBuffer {
 }
 
 /// Generate a slightly different image (simulated distortion).
-fn generate_distorted_image(width: usize, height: usize) -> zenpixels::PixelBuffer {
+fn generate_distorted_image(width: usize, height: usize) -> zenpixels::PixelBuf {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -61,8 +61,8 @@ fn ssimulacra2_all_tiers_within_tolerance() {
     // 0-100 scale catches algorithmic bugs while allowing FMA divergence.
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let score = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::simd(),
         )
         .expect("score");
@@ -87,15 +87,15 @@ fn ssimulacra2_roundtrip_stability() {
 
     let _ = for_each_token_permutation(CompileTimePolicy::Warn, |perm| {
         let score1 = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::simd(),
         )
         .expect("score1");
 
         let score2 = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::simd(),
         )
         .expect("score2");

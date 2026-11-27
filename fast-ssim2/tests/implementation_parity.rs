@@ -8,23 +8,18 @@ use image::ImageReader;
 use std::path::PathBuf;
 
 /// Owned sRGB u8 raster (the bit-exact input path).
-fn rgb8_owned(data: Vec<u8>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        data,
-        w as u32,
-        h as u32,
-        zenpixels::PixelDescriptor::RGB8_SRGB,
-    )
-    .unwrap()
+fn rgb8_owned(data: Vec<u8>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_bytes(data, w as u32, h as u32, zenpixels::PixelFormat::RGB8_SRGB)
+        .unwrap()
 }
 
 /// Owned sRGB-encoded f32 raster — the general (poly) input path.
-fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+        zenpixels::PixelFormat::RGBF32_LINEAR.with_transfer(zenpixels::Transfer::Srgb),
     )
     .unwrap()
 }
@@ -35,7 +30,7 @@ fn test_data_path() -> PathBuf {
         .join("jpeg_quality")
 }
 
-fn load_image(filename: &str) -> zenpixels::PixelBuffer {
+fn load_image(filename: &str) -> zenpixels::PixelBuf {
     let path = test_data_path().join(filename);
     let img = if filename.ends_with(".jpg") || filename.ends_with(".jpeg") {
         // zenjpeg's default IdctMethod::Libjpeg is byte-exact vs
@@ -91,7 +86,7 @@ fn compute_score_from_data(
 
     let distorted = srgb_f32_owned(distorted_data.to_vec(), nz_width.get(), nz_height.get());
 
-    compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), config).unwrap()
+    compute_ssimulacra2_with_config(&source.as_view(), &distorted.as_view(), config).unwrap()
 }
 
 // ============================================================================
@@ -102,8 +97,8 @@ fn compute_score_from_data(
 fn test_identical_images_exact_score_scalar() {
     let source = load_image("source.png");
     let score = compute_ssimulacra2_with_config(
-        &source.as_slice(),
-        &source.as_slice(),
+        &source.as_view(),
+        &source.as_view(),
         &Ssimulacra2Config::scalar(),
     )
     .unwrap();
@@ -118,8 +113,8 @@ fn test_identical_images_exact_score_scalar() {
 fn test_identical_images_exact_score_simd() {
     let source = load_image("source.png");
     let score = compute_ssimulacra2_with_config(
-        &source.as_slice(),
-        &source.as_slice(),
+        &source.as_view(),
+        &source.as_view(),
         &Ssimulacra2Config::simd(),
     )
     .unwrap();
@@ -178,8 +173,8 @@ fn test_simd_scores_pinned_real_images() {
     for case in REAL_IMAGE_CASES {
         let distorted = load_image(case.distorted_file);
         let score = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::simd(),
         )
         .unwrap();
@@ -204,15 +199,15 @@ fn test_scalar_vs_simd_real_images() {
         let distorted = load_image(case.distorted_file);
 
         let scalar_score = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::scalar(),
         )
         .unwrap();
 
         let simd_score = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::simd(),
         )
         .unwrap();
@@ -288,8 +283,8 @@ fn test_jpeg_quality_ordering_preserved() {
     for file in files {
         let distorted = load_image(file);
         let score = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::simd(),
         )
         .unwrap();

@@ -24,17 +24,17 @@ use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use fast_ssim2::{PixelDescriptor, PixelSlice};
+use fast_ssim2::{PixelView, formats};
 use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 use image::{ImageReader, RgbImage};
 
-fn to_rgb(img: &RgbImage) -> PixelSlice<'_> {
-    PixelSlice::new(
+fn to_rgb(img: &RgbImage) -> PixelView<'_> {
+    PixelView::new(
         img.as_raw(),
         img.width(),
         img.height(),
         img.width() as usize * 3,
-        PixelDescriptor::RGB8_SRGB,
+        &formats::RGB8_SRGB,
     )
     .unwrap()
 }

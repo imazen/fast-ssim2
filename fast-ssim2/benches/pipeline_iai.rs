@@ -1,7 +1,7 @@
 //! iai-callgrind bench: instruction counts for the pipeline.
 //! Deterministic input → instruction counts are load-independent.
 use fast_ssim2::pipeline::{self, EncodedSrgb, Kernel};
-use fast_ssim2::{PixelBuffer, Ssimulacra2Config, compute_ssimulacra2_with_config};
+use fast_ssim2::{PixelBuf, Ssimulacra2Config, compute_ssimulacra2_with_config};
 use iai_callgrind::{library_benchmark, library_benchmark_group, main as iai_main};
 use std::hint::black_box;
 
@@ -76,7 +76,7 @@ fn edge_simd((a, b, c, d): (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>)) -> [f64; 12
     ))
 }
 
-fn lin512() -> (PixelBuffer, PixelBuffer) {
+fn lin512() -> (PixelBuf, PixelBuf) {
     let mk = |seed: u32| {
         let px: Vec<[f32; 3]> = (0..512 * 512)
             .map(|i| {
@@ -92,9 +92,9 @@ fn lin512() -> (PixelBuffer, PixelBuffer) {
 
 #[library_benchmark]
 #[bench::lin(lin512())]
-fn linear_input_512((a, b): (PixelBuffer, PixelBuffer)) -> f64 {
+fn linear_input_512((a, b): (PixelBuf, PixelBuf)) -> f64 {
     black_box(
-        compute_ssimulacra2_with_config(&a.as_slice(), &b.as_slice(), &Ssimulacra2Config::simd())
+        compute_ssimulacra2_with_config(&a.as_view(), &b.as_view(), &Ssimulacra2Config::simd())
             .unwrap(),
     )
 }
@@ -201,12 +201,12 @@ fn planes512() -> ([Vec<f32>; 3], [Vec<f32>; 3]) {
 
 use pipeline::{Opts, XybFlavor};
 
-fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuffer {
-    PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuf {
+    PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        fast_ssim2::PixelDescriptor::RGBF32_LINEAR,
+        fast_ssim2::PixelFormat::RGBF32_LINEAR,
     )
     .unwrap()
 }

@@ -26,18 +26,18 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use fast_ssim2::{PixelDescriptor, PixelSlice};
+use fast_ssim2::{PixelView, formats};
 use fast_ssim2::{Ssimulacra2Config, compute_ssimulacra2_with_config};
 
 include!(concat!(env!("CARGO_MANIFEST_DIR"), "/dev/testcases.rs"));
 
-fn to_rgb(data: &[u8], width: usize, height: usize) -> PixelSlice<'_> {
-    PixelSlice::new(
+fn to_rgb(data: &[u8], width: usize, height: usize) -> PixelView<'_> {
+    PixelView::new(
         data,
         width as u32,
         height as u32,
         width * 3,
-        PixelDescriptor::RGB8_SRGB,
+        &formats::RGB8_SRGB,
     )
     .unwrap()
 }

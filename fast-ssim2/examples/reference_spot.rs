@@ -2,8 +2,8 @@
 //! `SSIM2_SPOT_METADATA=icc|cicp|icc+cicp` controls PNG color signaling;
 //! `SSIM2_SPOT_FORMATS` selects comma-separated format names.
 use fast_ssim2::{
-    PixelDescriptor, PixelSlice, Ssimulacra2Config, Ssimulacra2Reference, StripConfig,
-    TransferFunction, compute_ssimulacra2, compute_ssimulacra2_with_config,
+    PixelFormat, PixelView, Ssimulacra2Config, Ssimulacra2Reference, StripConfig, Transfer,
+    compute_ssimulacra2, compute_ssimulacra2_with_config,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -14,7 +14,7 @@ use std::{
     path::Path,
     process::{Command, Stdio},
 };
-use zenpixels::ColorPrimaries;
+use zenpixels::{HlgMode, Primaries};
 
 #[derive(Clone, Copy)]
 struct Format {
@@ -28,26 +28,26 @@ struct Format {
 }
 
 impl Format {
-    fn descriptor(self) -> PixelDescriptor {
+    fn pixel_format(self) -> PixelFormat {
         let base = match (self.gray, self.alpha, self.depth, self.floats) {
-            (true, false, _, false) => PixelDescriptor::GRAY16_SRGB,
-            (false, false, 8, false) => PixelDescriptor::RGB8_SRGB,
-            (false, true, 8, false) => PixelDescriptor::RGBA8_SRGB,
-            (false, false, 16, false) => PixelDescriptor::RGB16_SRGB,
-            (false, true, 16, false) => PixelDescriptor::RGBA16_SRGB,
-            (false, false, _, true) => PixelDescriptor::RGBF32_LINEAR,
+            (true, false, _, false) => PixelFormat::GRAY16_SRGB,
+            (false, false, 8, false) => PixelFormat::RGB8_SRGB,
+            (false, true, 8, false) => PixelFormat::RGBA8_SRGB,
+            (false, false, 16, false) => PixelFormat::RGB16_SRGB,
+            (false, true, 16, false) => PixelFormat::RGBA16_SRGB,
+            (false, false, _, true) => PixelFormat::RGBF32_LINEAR,
             _ => panic!("unsupported spot format"),
         };
         base.with_transfer(match self.transfer {
-            8 => TransferFunction::Linear,
-            13 => TransferFunction::Srgb,
-            16 => TransferFunction::Pq,
-            18 => TransferFunction::Hlg,
+            8 => Transfer::Linear,
+            13 => Transfer::Srgb,
+            16 => Transfer::Pq,
+            18 => Transfer::Hlg(HlgMode::Scene),
             _ => panic!("transfer"),
         })
         .with_primaries(match self.primaries {
-            1 => ColorPrimaries::Bt709,
-            9 => ColorPrimaries::Bt2020,
+            1 => Primaries::Bt709,
+            9 => Primaries::Bt2020,
             _ => panic!("primaries"),
         })
     }
@@ -337,25 +337,20 @@ fn main() {
                     })
                     .collect()
             });
-            let bytes: [Vec<u8>; 2] = core::array::from_fn(|i| {
-                if format.floats {
-                    bytemuck::cast_slice(&float_data[i]).to_vec()
+            let u8_data: [Vec<u8>; 2] = data
+                .each_ref()
+                .map(|v| v.iter().map(|&s| s as u8).collect());
+            let pixel_format = format.pixel_format();
+            let stride = width * pixel_format.layout.bytes_per_pixel();
+            let images: [PixelView<'_>; 2] = core::array::from_fn(|i| {
+                let slice: &[u8] = if format.floats {
+                    bytemuck::cast_slice(&float_data[i])
                 } else if format.depth == 8 {
-                    data[i].iter().map(|&v| v as u8).collect()
+                    &u8_data[i]
                 } else {
-                    bytemuck::cast_slice(&data[i]).to_vec()
-                }
-            });
-            let descriptor = format.descriptor();
-            let images = bytes.each_ref().map(|b| {
-                PixelSlice::new(
-                    b,
-                    width as u32,
-                    height as u32,
-                    width * descriptor.format.bytes_per_pixel(),
-                    descriptor,
-                )
-                .unwrap()
+                    bytemuck::cast_slice(&data[i])
+                };
+                PixelView::new(slice, width as u32, height as u32, stride, &pixel_format).unwrap()
             });
             let default = compute_ssimulacra2(&images[0], &images[1]).unwrap();
             let scalar = compute_ssimulacra2_with_config(

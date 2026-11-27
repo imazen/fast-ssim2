@@ -1,7 +1,7 @@
 // Timing+RSS sweep: sizes × modes. Prints CSV lines.
 use fast_ssim2::pipeline::{self, EncodedData, EncodedSrgb, Kernel};
 use std::time::Instant;
-use zenpixels::{PixelDescriptor, PixelSlice};
+use zenpixels::{PixelView, formats};
 fn load(p: &str) -> (EncodedSrgb, Vec<[u8; 3]>, u32, u32) {
     let i = image::open(p).unwrap().into_rgb8();
     let (w, h) = i.dimensions();
@@ -42,20 +42,20 @@ fn main() {
         (
             "full",
             Box::new(|| {
-                let a = PixelSlice::new(
+                let a = PixelView::new(
                     img1.as_flattened(),
                     w,
                     h,
                     (w * 3) as usize,
-                    PixelDescriptor::RGB8_SRGB,
+                    &formats::RGB8_SRGB,
                 )
                 .unwrap();
-                let b = PixelSlice::new(
+                let b = PixelView::new(
                     img2.as_flattened(),
                     w,
                     h,
                     (w * 3) as usize,
-                    PixelDescriptor::RGB8_SRGB,
+                    &formats::RGB8_SRGB,
                 )
                 .unwrap();
                 fast_ssim2::compute_ssimulacra2(&a, &b).unwrap()
@@ -68,20 +68,20 @@ fn main() {
         (
             "strip64",
             Box::new(|| {
-                let a = PixelSlice::new(
+                let a = PixelView::new(
                     img1.as_flattened(),
                     w,
                     h,
                     (w * 3) as usize,
-                    PixelDescriptor::RGB8_SRGB,
+                    &formats::RGB8_SRGB,
                 )
                 .unwrap();
-                let b = PixelSlice::new(
+                let b = PixelView::new(
                     img2.as_flattened(),
                     w,
                     h,
                     (w * 3) as usize,
-                    PixelDescriptor::RGB8_SRGB,
+                    &formats::RGB8_SRGB,
                 )
                 .unwrap();
                 fast_ssim2::compute_ssimulacra2_with_config(

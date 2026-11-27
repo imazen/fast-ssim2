@@ -16,12 +16,12 @@ use reference_data::{REFERENCE_CASES, ReferenceCase};
 use sha2::{Digest, Sha256};
 
 /// Owned encoded-sRGB `f32` pixels (k/255 grid stays LUT-exact).
-fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+        zenpixels::PixelFormat::RGBF32_LINEAR.with_transfer(zenpixels::Transfer::Srgb),
     )
     .unwrap()
 }
@@ -409,7 +409,7 @@ fn test_reference_parity() {
 
         let distorted = srgb_f32_owned(distorted_rgb, nz_width.get(), nz_height.get());
 
-        let score = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
+        let score = compute_ssimulacra2(&source.as_view(), &distorted.as_view()).unwrap();
         let error = (score - case.expected_score).abs();
         max_error = max_error.max(error);
 
@@ -500,7 +500,7 @@ fn test_reference_parity() {
             let nz_height = std::num::NonZeroUsize::new(case.height).unwrap();
             let source = srgb_f32_owned(source_rgb, nz_width.get(), nz_height.get());
             let distorted = srgb_f32_owned(distorted_rgb, nz_width.get(), nz_height.get());
-            let score = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
+            let score = compute_ssimulacra2(&source.as_view(), &distorted.as_view()).unwrap();
             ErrorCase {
                 name: case.name,
                 expected: case.expected_score,

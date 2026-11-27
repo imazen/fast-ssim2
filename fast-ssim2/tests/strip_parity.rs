@@ -18,17 +18,17 @@ use fast_ssim2::{
     Ssimulacra2Config, Ssimulacra2Reference, compute_ssimulacra2, compute_ssimulacra2_with_config,
 };
 
-fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32_LINEAR,
+        zenpixels::PixelFormat::RGBF32_LINEAR,
     )
     .unwrap()
 }
 
-fn generate_image(width: usize, height: usize, seed: u32) -> zenpixels::PixelBuffer {
+fn generate_image(width: usize, height: usize, seed: u32) -> zenpixels::PixelBuf {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -68,10 +68,10 @@ const SCORE_TOLERANCE: f64 = 0.5;
 fn strip_parity_identical_64x64() {
     let img = generate_image(64, 64, 42);
     // Identical inputs MUST score very close to 100 in both modes.
-    let full = compute_ssimulacra2(&img.as_slice(), &img.as_slice()).unwrap();
+    let full = compute_ssimulacra2(&img.as_view(), &img.as_view()).unwrap();
     let strip = compute_ssimulacra2_with_config(
-        &img.as_slice(),
-        &img.as_slice(),
+        &img.as_view(),
+        &img.as_view(),
         &Ssimulacra2Config::strips(32),
     )
     .unwrap();
@@ -85,10 +85,10 @@ fn strip_parity_identical_64x64() {
 fn strip_parity_different_64x64() {
     let source = generate_image(64, 64, 0);
     let distorted = generate_image(64, 64, 1);
-    let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
+    let full = compute_ssimulacra2(&source.as_view(), &distorted.as_view()).unwrap();
     let strip = compute_ssimulacra2_with_config(
-        &source.as_slice(),
-        &distorted.as_slice(),
+        &source.as_view(),
+        &distorted.as_view(),
         &Ssimulacra2Config::strips(32),
     )
     .unwrap();
@@ -104,11 +104,11 @@ fn strip_parity_512x512_jpeg_like() {
     let height = 512;
     let source = generate_image(width, height, 7);
     let distorted = generate_image(width, height, 8);
-    let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
+    let full = compute_ssimulacra2(&source.as_view(), &distorted.as_view()).unwrap();
     for strip_h in [32u32, 64, 128, 256] {
         let strip = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::strips(strip_h as usize),
         )
         .unwrap();
@@ -125,10 +125,10 @@ fn strip_parity_1024x1024_jpeg_like() {
     let height = 1024;
     let source = generate_image(width, height, 11);
     let distorted = generate_image(width, height, 12);
-    let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
+    let full = compute_ssimulacra2(&source.as_view(), &distorted.as_view()).unwrap();
     let strip = compute_ssimulacra2_with_config(
-        &source.as_slice(),
-        &distorted.as_slice(),
+        &source.as_view(),
+        &distorted.as_view(),
         &Ssimulacra2Config::strips(128),
     )
     .unwrap();
@@ -144,10 +144,10 @@ fn warm_ref_strip_parity_512x512() {
     let height = 512;
     let source = generate_image(width, height, 21);
     let distorted = generate_image(width, height, 22);
-    let full = compute_ssimulacra2(&source.as_slice(), &distorted.as_slice()).unwrap();
-    let reference = Ssimulacra2Reference::new(&source.as_slice()).unwrap();
+    let full = compute_ssimulacra2(&source.as_view(), &distorted.as_view()).unwrap();
+    let reference = Ssimulacra2Reference::new(&source.as_view()).unwrap();
     let strip = reference
-        .compare_with_config(&distorted.as_slice(), &Ssimulacra2Config::strips(64))
+        .compare_with_config(&distorted.as_view(), &Ssimulacra2Config::strips(64))
         .unwrap();
     assert!(
         (full - strip).abs() < SCORE_TOLERANCE,
@@ -163,10 +163,10 @@ fn warm_ref_strip_matches_compare() {
     // SIMD ops, so the differences are bounded by the strip halo's
     // exponential decay.
     let img = generate_image(256, 256, 99);
-    let reference = Ssimulacra2Reference::new(&img.as_slice()).unwrap();
-    let compare = reference.compare(&img.as_slice()).unwrap();
+    let reference = Ssimulacra2Reference::new(&img.as_view()).unwrap();
+    let compare = reference.compare(&img.as_view()).unwrap();
     let strip = reference
-        .compare_with_config(&img.as_slice(), &Ssimulacra2Config::strips(64))
+        .compare_with_config(&img.as_view(), &Ssimulacra2Config::strips(64))
         .unwrap();
     assert!(
         (compare - strip).abs() < SCORE_TOLERANCE,
@@ -178,8 +178,8 @@ fn warm_ref_strip_matches_compare() {
 fn strip_height_below_minimum_errors() {
     let img = generate_image(64, 64, 0);
     let err = compute_ssimulacra2_with_config(
-        &img.as_slice(),
-        &img.as_slice(),
+        &img.as_view(),
+        &img.as_view(),
         &Ssimulacra2Config::strips(4),
     )
     .expect_err("strip_height=4 < MIN_STRIP_HEIGHT must error");
@@ -195,8 +195,8 @@ fn strip_height_zero_errors() {
     let img = generate_image(64, 64, 0);
     assert!(
         compute_ssimulacra2_with_config(
-            &img.as_slice(),
-            &img.as_slice(),
+            &img.as_view(),
+            &img.as_view(),
             &Ssimulacra2Config::strips(0)
         )
         .is_err()
@@ -208,12 +208,8 @@ fn strip_mismatched_dimensions_errors() {
     let a = generate_image(64, 64, 0);
     let b = generate_image(32, 32, 0);
     assert!(
-        compute_ssimulacra2_with_config(
-            &a.as_slice(),
-            &b.as_slice(),
-            &Ssimulacra2Config::strips(32)
-        )
-        .is_err()
+        compute_ssimulacra2_with_config(&a.as_view(), &b.as_view(), &Ssimulacra2Config::strips(32))
+            .is_err()
     );
 }
 
@@ -221,7 +217,7 @@ fn strip_mismatched_dimensions_errors() {
 // Match-official strip parity
 // ============================================================================
 
-fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> zenpixels::PixelBuffer {
+fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> zenpixels::PixelBuf {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -246,11 +242,11 @@ fn generate_encoded_rgb(width: usize, height: usize, seed: u32) -> zenpixels::Pi
             data.push([v, g, b]);
         }
     }
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+    zenpixels::PixelBuf::from_typed(
+        data,
         width as u32,
         height as u32,
-        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+        zenpixels::PixelFormat::RGBF32_LINEAR.with_transfer(zenpixels::Transfer::Srgb),
     )
     .unwrap()
 }
@@ -263,15 +259,15 @@ fn strip_parity_official_512x512() {
     let source = generate_encoded_rgb(512, 512, 7);
     let distorted = generate_encoded_rgb(512, 512, 8);
     let full = compute_ssimulacra2_with_config(
-        &source.as_slice(),
-        &distorted.as_slice(),
+        &source.as_view(),
+        &distorted.as_view(),
         &Ssimulacra2Config::default(),
     )
     .unwrap();
     for strip_h in [64usize, 128, 256] {
         let strip = compute_ssimulacra2_with_config(
-            &source.as_slice(),
-            &distorted.as_slice(),
+            &source.as_view(),
+            &distorted.as_view(),
             &Ssimulacra2Config::strips(strip_h),
         )
         .unwrap();
@@ -294,10 +290,10 @@ fn strip_parallel_deterministic() {
         let mut par_cfg = Ssimulacra2Config::strips(strip_h);
         par_cfg.strip.as_mut().unwrap().parallel_strips = true;
         let serial =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &serial_cfg)
+            compute_ssimulacra2_with_config(&source.as_view(), &distorted.as_view(), &serial_cfg)
                 .unwrap();
         let par =
-            compute_ssimulacra2_with_config(&source.as_slice(), &distorted.as_slice(), &par_cfg);
+            compute_ssimulacra2_with_config(&source.as_view(), &distorted.as_view(), &par_cfg);
         #[cfg(feature = "rayon")]
         assert_eq!(
             serial,

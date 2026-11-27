@@ -17,23 +17,17 @@
 //!
 //! Run: `cargo bench -p fast-ssim2 --bench blur_stride`
 
-use fast_ssim2::{PixelBuffer, PixelDescriptor, compute_ssimulacra2};
+use fast_ssim2::{PixelBuf, PixelFormat, compute_ssimulacra2};
 fn srgb_u8_to_linear(v: u8) -> f32 {
     linear_srgb::default::srgb_to_linear(v as f32 / 255.0)
 }
-fn linear_buffer(pixels: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuffer {
-    PixelBuffer::from_vec(
-        bytemuck::cast_slice(&pixels).to_vec(),
-        w as u32,
-        h as u32,
-        PixelDescriptor::RGBF32_LINEAR,
-    )
-    .unwrap()
+fn linear_buffer(pixels: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuf {
+    PixelBuf::from_typed(pixels, w as u32, h as u32, PixelFormat::RGBF32_LINEAR).unwrap()
 }
 use zenbench::criterion_compat::*;
 use zenbench::{criterion_group, criterion_main};
 
-fn make_pair(w: usize, h: usize) -> (PixelBuffer, PixelBuffer) {
+fn make_pair(w: usize, h: usize) -> (PixelBuf, PixelBuf) {
     let mut s: u64 = 0x5dee_ce66d;
     let mut next = || {
         s = s
@@ -67,7 +61,7 @@ fn bench(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("stride_{w}x{h}"));
         group.bench_function("compute_ssimulacra2", |bencher| {
             bencher.iter(|| {
-                let s = compute_ssimulacra2(&a.as_slice(), &b.as_slice()).unwrap();
+                let s = compute_ssimulacra2(&a.as_view(), &b.as_view()).unwrap();
                 std::hint::black_box(s);
             })
         });

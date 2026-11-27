@@ -7,3 +7,7 @@ edition = "2021"
 ssimulacra2 = "=0.5.1"
 fast-ssim2 = { path = "../fast-ssim2" }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+
+[patch.crates-io]
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
+linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }

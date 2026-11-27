@@ -171,16 +171,16 @@ fn calc_score<S: Pixel, D: Pixel, E: Decoder, F: Decoder>(
 
     // YUV → linear RGB via yuvxyb (matrix+transfer+ranging), then the
     // metric's linear-input path.
-    let conv = |y: &Yuv<u8>| -> zenpixels::PixelBuffer {
+    let conv = |y: &Yuv<u8>| -> zenpixels::PixelBuf {
         let lin =
             yuvxyb::LinearRgb::try_from(y.clone()).expect("Yuv to LinearRgb conversion failed");
         let (w, h) = (lin.width().get(), lin.height().get());
         let data = lin.into_data();
-        zenpixels::PixelBuffer::from_vec(
-            bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+        zenpixels::PixelBuf::from_typed(
+            data,
             w as u32,
             h as u32,
-            zenpixels::PixelDescriptor::RGBF32_LINEAR,
+            zenpixels::PixelFormat::RGBF32_LINEAR,
         )
         .unwrap()
     };
@@ -188,7 +188,7 @@ fn calc_score<S: Pixel, D: Pixel, E: Decoder, F: Decoder>(
 
     Some((
         frame_idx,
-        compute_ssimulacra2(&src_lin.as_slice(), &dst_lin.as_slice())
+        compute_ssimulacra2(&src_lin.as_view(), &dst_lin.as_view())
             .expect("Failed to calculate ssimulacra2"),
     ))
 }

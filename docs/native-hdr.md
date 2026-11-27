@@ -13,9 +13,9 @@ for registry/git packages. Explicitly allowing deprecated calls retains the
 PU21 score definition while callers migrate; changing to native HDR requires
 separate score baselines.
 
-## Descriptors and samples
+## Formats and samples
 
-Every image supplies a `zenpixels::PixelSlice`. Its descriptor determines
+Every image supplies a `zenpixels::PixelView`. Its `PixelFormat` determines
 transfer, primaries, channel order, alpha and signal range.
 
 | Transfer | Samples | Supported layouts |
@@ -30,7 +30,7 @@ Signal range must be `Full`; limited-range samples must be expanded first.
 Supported RGB primaries are BT.709, BT.2020 and Display P3, with D65 white.
 Grayscale has no RGB gamut conversion. RGB and grayscale images can be compared.
 
-Rows may have padding: set the byte stride in `PixelSlice::new`. Native HDR
+Rows may have padding: set the byte stride in `PixelView::new`. Native HDR
 supports that stride directly. Native HDR requires whole-image processing;
 `StripConfig` options return `InvalidConfiguration`, including cached
 comparisons with a native HDR reference or distorted image.
@@ -39,9 +39,9 @@ strip support; a luminance anchor or wide RGB gamut selects the native path.
 
 ## Luminance anchors
 
-`PixelSlice::with_diffuse_white(DiffuseWhite::new(nits))` supplies the
+`PixelFormat::with_white(DiffuseWhite::new(nits).unwrap())` supplies the
 reference's intensity target. This is per image, including when source and
-distorted images use different descriptors.
+distorted images use different formats.
 
 | Input | Default | Meaning of a custom anchor |
 |---|---|---|
@@ -57,17 +57,16 @@ XYB processing; it does not tone-map or clip them into SDR.
 For example, these linear BT.2020 samples represent fractions of 1000 nits:
 
 ```rust
-use fast_ssim2::{compute_ssimulacra2, PixelDescriptor, PixelSlice};
-use zenpixels::{ColorPrimaries, DiffuseWhite};
+use fast_ssim2::{PixelFormat, PixelView, compute_ssimulacra2};
+use zenpixels::{DiffuseWhite, Primaries};
 
 let source = [0.25_f32, 0.5, 0.75];
 let distorted = [0.26_f32, 0.5, 0.74];
-let descriptor = PixelDescriptor::RGBF32_LINEAR
-    .with_primaries(ColorPrimaries::Bt2020);
-let a = PixelSlice::new(bytemuck::cast_slice(&source), 1, 1, 12, descriptor)?
-    .with_diffuse_white(DiffuseWhite::new(1000.0));
-let b = PixelSlice::new(bytemuck::cast_slice(&distorted), 1, 1, 12, descriptor)?
-    .with_diffuse_white(DiffuseWhite::new(1000.0));
+let format = PixelFormat::RGBF32_LINEAR
+    .with_primaries(Primaries::Bt2020)
+    .with_white(DiffuseWhite::new(1000.0).unwrap());
+let a = PixelView::new(bytemuck::cast_slice(&source), 1, 1, 12, &format)?;
+let b = PixelView::new(bytemuck::cast_slice(&distorted), 1, 1, 12, &format)?;
 let score = compute_ssimulacra2(&a, &b)?;
 assert!(score.is_finite());
 # Ok::<(), Box<dyn std::error::Error>>(())

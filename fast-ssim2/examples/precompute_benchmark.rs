@@ -6,12 +6,12 @@ use fast_ssim2::{Ssimulacra2Reference, compute_ssimulacra2};
 use std::time::Instant;
 
 /// Owned encoded-sRGB `f32` pixels (k/255 grid stays LUT-exact).
-fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn srgb_f32_owned(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32.with_transfer(zenpixels::TransferFunction::Srgb),
+        zenpixels::PixelFormat::RGBF32_LINEAR.with_transfer(zenpixels::Transfer::Srgb),
     )
     .unwrap()
 }
@@ -49,20 +49,20 @@ fn main() {
         for _ in 0..iterations {
             let _ = {
                 let (a, b) = (mk(&reference_data), mk(&distorted_data));
-                compute_ssimulacra2(&a.as_slice(), &b.as_slice())
+                compute_ssimulacra2(&a.as_view(), &b.as_view())
             }
             .unwrap();
         }
         let full_time = start.elapsed() / iterations as u32;
 
         let reference = mk(&reference_data);
-        let precomputed = Ssimulacra2Reference::new(&reference.as_slice()).unwrap();
+        let precomputed = Ssimulacra2Reference::new(&reference.as_view()).unwrap();
 
         let start = Instant::now();
         for _ in 0..iterations {
             let _ = {
                 let d = mk(&distorted_data);
-                precomputed.compare(&d.as_slice())
+                precomputed.compare(&d.as_view())
             }
             .unwrap();
         }

@@ -19,18 +19,18 @@ use fast_ssim2::{
     Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Reference, compute_ssimulacra2_with_config,
 };
 
-fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuffer {
-    zenpixels::PixelBuffer::from_vec(
-        bytemuck::cast_slice::<f32, u8>(data.as_flattened()).to_vec(),
+fn lin_f32_buf(data: Vec<[f32; 3]>, w: usize, h: usize) -> zenpixels::PixelBuf {
+    zenpixels::PixelBuf::from_typed(
+        data,
         w as u32,
         h as u32,
-        zenpixels::PixelDescriptor::RGBF32_LINEAR,
+        zenpixels::PixelFormat::RGBF32_LINEAR,
     )
     .unwrap()
 }
 
 /// Build a deterministic non-trivial `width`x`height` linear-RGB image.
-fn generate_image(width: usize, height: usize, seed: u32) -> zenpixels::PixelBuffer {
+fn generate_image(width: usize, height: usize, seed: u32) -> zenpixels::PixelBuf {
     let mut data = Vec::with_capacity(width * height);
     for y in 0..height {
         for x in 0..width {
@@ -63,8 +63,8 @@ fn one_shot_cancelled_token_returns_cancelled() {
     let source = generate_image(64, 64, 0);
     let distorted = generate_image(64, 64, 1);
     let result = compute_ssimulacra2_with_config(
-        &source.as_slice(),
-        &distorted.as_slice(),
+        &source.as_view(),
+        &distorted.as_view(),
         &Ssimulacra2Config::default().with_stop(&Stopper::cancelled()),
     );
     match result {
@@ -79,8 +79,8 @@ fn one_shot_cancelled_token_returns_cancelled() {
 fn one_shot_unstoppable_token_computes_score() {
     let img = generate_image(64, 64, 42);
     let score = compute_ssimulacra2_with_config(
-        &img.as_slice(),
-        &img.as_slice(),
+        &img.as_view(),
+        &img.as_view(),
         &Ssimulacra2Config::default().with_stop(&Unstoppable),
     )
     .expect("Unstoppable must Ok");
@@ -96,8 +96,8 @@ fn strip_cancelled_token_returns_cancelled() {
     let source = generate_image(64, 64, 7);
     let distorted = generate_image(64, 64, 8);
     let result = compute_ssimulacra2_with_config(
-        &source.as_slice(),
-        &distorted.as_slice(),
+        &source.as_view(),
+        &distorted.as_view(),
         &Ssimulacra2Config::strips(32).with_stop(&Stopper::cancelled()),
     );
     match result {
@@ -112,8 +112,8 @@ fn strip_cancelled_token_returns_cancelled() {
 fn strip_unstoppable_token_computes_score() {
     let img = generate_image(64, 64, 99);
     let score = compute_ssimulacra2_with_config(
-        &img.as_slice(),
-        &img.as_slice(),
+        &img.as_view(),
+        &img.as_view(),
         &Ssimulacra2Config::strips(32).with_stop(&Unstoppable),
     )
     .expect("Unstoppable must Ok");
@@ -128,10 +128,10 @@ fn strip_unstoppable_token_computes_score() {
 #[test]
 fn cached_ref_compare_cancelled_returns_cancelled() {
     let img = generate_image(64, 64, 3);
-    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
+    let reference = Ssimulacra2Reference::new(&img.as_view()).expect("reference build");
     let distorted = generate_image(64, 64, 4);
     match reference.compare_with_config(
-        &distorted.as_slice(),
+        &distorted.as_view(),
         &Ssimulacra2Config::default().with_stop(&Stopper::cancelled()),
     ) {
         Err(Ssimulacra2Error::Cancelled(reason)) => assert_eq!(reason, StopReason::Cancelled),
@@ -142,10 +142,10 @@ fn cached_ref_compare_cancelled_returns_cancelled() {
 #[test]
 fn cached_ref_compare_unstoppable_computes_score() {
     let img = generate_image(64, 64, 5);
-    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
+    let reference = Ssimulacra2Reference::new(&img.as_view()).expect("reference build");
     let score = reference
         .compare_with_config(
-            &img.as_slice(),
+            &img.as_view(),
             &Ssimulacra2Config::default().with_stop(&Unstoppable),
         )
         .expect("Unstoppable must Ok");
@@ -158,10 +158,10 @@ fn cached_ref_compare_unstoppable_computes_score() {
 #[test]
 fn cached_ref_strip_cancelled_returns_cancelled() {
     let img = generate_image(64, 64, 6);
-    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
+    let reference = Ssimulacra2Reference::new(&img.as_view()).expect("reference build");
     let distorted = generate_image(64, 64, 7);
     match reference.compare_with_config(
-        &distorted.as_slice(),
+        &distorted.as_view(),
         &Ssimulacra2Config::strips(32).with_stop(&Stopper::cancelled()),
     ) {
         Err(Ssimulacra2Error::Cancelled(reason)) => assert_eq!(reason, StopReason::Cancelled),
@@ -172,10 +172,10 @@ fn cached_ref_strip_cancelled_returns_cancelled() {
 #[test]
 fn cached_ref_strip_unstoppable_computes_score() {
     let img = generate_image(64, 64, 8);
-    let reference = Ssimulacra2Reference::new(&img.as_slice()).expect("reference build");
+    let reference = Ssimulacra2Reference::new(&img.as_view()).expect("reference build");
     let score = reference
         .compare_with_config(
-            &img.as_slice(),
+            &img.as_view(),
             &Ssimulacra2Config::strips(32).with_stop(&Unstoppable),
         )
         .expect("Unstoppable must Ok");

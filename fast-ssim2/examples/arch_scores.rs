@@ -20,18 +20,12 @@
 //! disagreement that says nothing about the arch (same reason the compiled-in
 //! reference table's `uniform_shift` family is not a usable gate).
 
-use fast_ssim2::{PixelBuffer, PixelDescriptor, compute_ssimulacra2};
+use fast_ssim2::{PixelBuf, PixelFormat, compute_ssimulacra2};
 fn srgb_u8_to_linear(v: u8) -> f32 {
     linear_srgb::default::srgb_to_linear(v as f32 / 255.0)
 }
-fn linear_buffer(pixels: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuffer {
-    PixelBuffer::from_vec(
-        bytemuck::cast_slice(&pixels).to_vec(),
-        w as u32,
-        h as u32,
-        PixelDescriptor::RGBF32_LINEAR,
-    )
-    .unwrap()
+fn linear_buffer(pixels: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuf {
+    PixelBuf::from_typed(pixels, w as u32, h as u32, PixelFormat::RGBF32_LINEAR).unwrap()
 }
 
 struct Lcg(u64);
@@ -78,7 +72,7 @@ fn source(w: usize, h: usize, seed: u64) -> Vec<u8> {
     px
 }
 
-fn to_linear(px: &[u8], w: usize, h: usize) -> PixelBuffer {
+fn to_linear(px: &[u8], w: usize, h: usize) -> PixelBuf {
     let data: Vec<[f32; 3]> = px
         .as_chunks::<3>()
         .0
@@ -153,7 +147,7 @@ fn main() {
             ("quantise_32", quantise(&src, 32)),
         ] {
             let b = to_linear(&dist, w, h);
-            let score = compute_ssimulacra2(&a.as_slice(), &b.as_slice()).expect("score");
+            let score = compute_ssimulacra2(&a.as_view(), &b.as_view()).expect("score");
             // Full f64 precision: the point is bit-for-bit comparison.
             println!("{w}x{h}\t{name}\t{score:.17e}");
         }

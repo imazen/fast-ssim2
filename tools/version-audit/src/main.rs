@@ -145,12 +145,12 @@ fn main() {
                             })
                         });
                     }
-                    let a = current::PixelSlice::new(
+                    let a = current::PixelView::new(
                         bytemuck::cast_slice(src.as_slice()),
                         w as u32,
                         h as u32,
                         w * 3,
-                        current::PixelDescriptor::RGB8_SRGB,
+                        &current::formats::RGB8_SRGB,
                     )
                     .unwrap();
                     let cfg = current::Ssimulacra2Config::simd();
@@ -158,12 +158,12 @@ fn main() {
                         current::Ssimulacra2Reference::new_with_config(&a, &cfg).unwrap();
                     g.bench("current_compare", move |b| {
                         b.iter(|| {
-                            let d = current::PixelSlice::new(
+                            let d = current::PixelView::new(
                                 bytemuck::cast_slice(dst.as_slice()),
                                 w as u32,
                                 h as u32,
                                 w * 3,
-                                current::PixelDescriptor::RGB8_SRGB,
+                                &current::formats::RGB8_SRGB,
                             )
                             .unwrap();
                             reference.compare_with_config(&d, &cfg).unwrap()
@@ -183,20 +183,20 @@ fn score(src: &[[u8; 3]], dst: &[[u8; 3]], w: usize, h: usize, version: usize) -
         1 => v082::compute_ssimulacra2(imgref::Img::new(src, w, h), imgref::Img::new(dst, w, h))
             .unwrap(),
         2 => {
-            let a = current::PixelSlice::new(
+            let a = current::PixelView::new(
                 bytemuck::cast_slice(src),
                 w as u32,
                 h as u32,
                 w * 3,
-                current::PixelDescriptor::RGB8_SRGB,
+                &current::formats::RGB8_SRGB,
             )
             .unwrap();
-            let b = current::PixelSlice::new(
+            let b = current::PixelView::new(
                 bytemuck::cast_slice(dst),
                 w as u32,
                 h as u32,
                 w * 3,
-                current::PixelDescriptor::RGB8_SRGB,
+                &current::formats::RGB8_SRGB,
             )
             .unwrap();
             current::compute_ssimulacra2_with_config(&a, &b, &current::Ssimulacra2Config::simd())

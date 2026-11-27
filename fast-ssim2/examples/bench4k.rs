@@ -13,18 +13,12 @@
 
 use std::time::Instant;
 
-use fast_ssim2::{PixelBuffer, PixelDescriptor, compute_ssimulacra2};
+use fast_ssim2::{PixelBuf, PixelFormat, compute_ssimulacra2};
 fn srgb_u8_to_linear(v: u8) -> f32 {
     linear_srgb::default::srgb_to_linear(v as f32 / 255.0)
 }
-fn linear_buffer(pixels: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuffer {
-    PixelBuffer::from_vec(
-        bytemuck::cast_slice(&pixels).to_vec(),
-        w as u32,
-        h as u32,
-        PixelDescriptor::RGBF32_LINEAR,
-    )
-    .unwrap()
+fn linear_buffer(pixels: Vec<[f32; 3]>, w: usize, h: usize) -> PixelBuf {
+    PixelBuf::from_typed(pixels, w as u32, h as u32, PixelFormat::RGBF32_LINEAR).unwrap()
 }
 
 fn main() {
@@ -71,12 +65,12 @@ fn main() {
     let b = linear_buffer(dist, w, h);
 
     // Warm up: first call touches pages and grows the blur's buffers.
-    let warm = compute_ssimulacra2(&a.as_slice(), &b.as_slice()).expect("score");
+    let warm = compute_ssimulacra2(&a.as_view(), &b.as_view()).expect("score");
 
     let mut times = Vec::with_capacity(iters);
     for _ in 0..iters {
         let t = Instant::now();
-        let s = compute_ssimulacra2(&a.as_slice(), &b.as_slice()).expect("score");
+        let s = compute_ssimulacra2(&a.as_view(), &b.as_view()).expect("score");
         times.push(t.elapsed().as_secs_f64() * 1000.0);
         std::hint::black_box(s);
     }

@@ -9,6 +9,9 @@ publish = false
 [dependencies]
 fast-ssim2 = { path = "../../fast-ssim2", default-features = false }
 
+[patch.crates-io]
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
+
 [features]
 hdr-pu = ["fast-ssim2/hdr-pu"]
 

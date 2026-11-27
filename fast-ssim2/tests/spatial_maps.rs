@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use enough::{Stop, StopReason};
 use fast_ssim2::{
-    PixelDescriptor, PixelSlice, Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Maps,
+    PixelFormat, PixelView, Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Maps,
     Ssimulacra2Reference, compute_ssimulacra2_maps, compute_ssimulacra2_maps_with_config,
-    compute_ssimulacra2_with_config,
+    compute_ssimulacra2_with_config, formats,
 };
 
 /// Deterministic photo-like texture: smooth structure plus hashed noise.
@@ -29,12 +29,18 @@ fn textured(w: usize, h: usize, seed: u32) -> Vec<u8> {
     out
 }
 
-fn rgb(bytes: &[u8], w: usize, h: usize) -> PixelSlice<'_> {
-    strided(bytes, w, h, w * 3, PixelDescriptor::RGB8_SRGB)
+fn rgb(bytes: &[u8], w: usize, h: usize) -> PixelView<'_> {
+    strided(bytes, w, h, w * 3, &formats::RGB8_SRGB)
 }
 
-fn strided(bytes: &[u8], w: usize, h: usize, stride: usize, d: PixelDescriptor) -> PixelSlice<'_> {
-    PixelSlice::new(bytes, w as u32, h as u32, stride, d).unwrap()
+fn strided<'a>(
+    bytes: &'a [u8],
+    w: usize,
+    h: usize,
+    stride: usize,
+    fmt: &'a PixelFormat,
+) -> PixelView<'a> {
+    PixelView::new(bytes, w as u32, h as u32, stride, fmt).unwrap()
 }
 
 /// `distorted` with a `size × size` patch at `(px, py)` brightened.
@@ -52,8 +58,8 @@ fn with_patch(src: &[u8], w: usize, px: usize, py: usize, size: usize) -> Vec<u8
 }
 
 fn assert_same_score(
-    a: &PixelSlice<'_>,
-    b: &PixelSlice<'_>,
+    a: &PixelView<'_>,
+    b: &PixelView<'_>,
     cfg: &Ssimulacra2Config<'_>,
 ) -> Ssimulacra2Maps {
     let score = compute_ssimulacra2_with_config(a, b, cfg).unwrap();
@@ -151,8 +157,8 @@ fn strided_and_linear_inputs_keep_the_score() {
     let cfg = Ssimulacra2Config::default();
     let packed = assert_same_score(&rgb(&a, w, h), &rgb(&b, w, h), &cfg);
     let padded = assert_same_score(
-        &strided(&pa, w, h, stride, PixelDescriptor::RGB8_SRGB),
-        &strided(&pb, w, h, stride, PixelDescriptor::RGB8_SRGB),
+        &strided(&pa, w, h, stride, &formats::RGB8_SRGB),
+        &strided(&pb, w, h, stride, &formats::RGB8_SRGB),
         &cfg,
     );
     assert_eq!(packed.score.to_bits(), padded.score.to_bits());
@@ -181,14 +187,14 @@ fn strided_and_linear_inputs_keep_the_score() {
             w,
             h,
             w * 12,
-            PixelDescriptor::RGBF32_LINEAR,
+            &formats::RGBF32_LINEAR,
         ),
         &strided(
             bytemuck::cast_slice(&lb),
             w,
             h,
             w * 12,
-            PixelDescriptor::RGBF32_LINEAR,
+            &formats::RGBF32_LINEAR,
         ),
         &cfg,
     );
@@ -209,8 +215,8 @@ fn alpha_maps_come_from_the_lower_scoring_background() {
     };
     let (a, b) = (mk(5), mk(6));
     let maps = assert_same_score(
-        &strided(&a, w, h, w * 4, PixelDescriptor::RGBA8_SRGB),
-        &strided(&b, w, h, w * 4, PixelDescriptor::RGBA8_SRGB),
+        &strided(&a, w, h, w * 4, &formats::RGBA8_SRGB),
+        &strided(&b, w, h, w * 4, &formats::RGBA8_SRGB),
         &Ssimulacra2Config::default(),
     );
     check_geometry(&maps, w, h);
@@ -411,12 +417,12 @@ fn cached_reference_maps_equal_the_cold_maps() {
             with_alpha(&la, |i| ((i * 37) % 256) as f32 / 255.0),
             with_alpha(&lb, |i| ((i * 53 + 9) % 256) as f32 / 255.0),
         );
-        let inputs: [(PixelSlice<'_>, PixelSlice<'_>, &str); 5] = [
+        let inputs: [(PixelView<'_>, PixelView<'_>, &str); 5] = [
             (rgb(&a, w, h), rgb(&b, w, h), "rgb8"),
             (rgb(&a, w, h), rgb(&a, w, h), "identical"),
             (
-                strided(&ra, w, h, w * 4, PixelDescriptor::RGBA8_SRGB),
-                strided(&rb, w, h, w * 4, PixelDescriptor::RGBA8_SRGB),
+                strided(&ra, w, h, w * 4, &formats::RGBA8_SRGB),
+                strided(&rb, w, h, w * 4, &formats::RGBA8_SRGB),
                 "rgba8",
             ),
             (
@@ -425,14 +431,14 @@ fn cached_reference_maps_equal_the_cold_maps() {
                     w,
                     h,
                     w * 12,
-                    PixelDescriptor::RGBF32_LINEAR,
+                    &formats::RGBF32_LINEAR,
                 ),
                 strided(
                     bytemuck::cast_slice(&lb),
                     w,
                     h,
                     w * 12,
-                    PixelDescriptor::RGBF32_LINEAR,
+                    &formats::RGBF32_LINEAR,
                 ),
                 "rgbf32",
             ),
@@ -442,14 +448,14 @@ fn cached_reference_maps_equal_the_cold_maps() {
                     w,
                     h,
                     w * 16,
-                    PixelDescriptor::RGBAF32_LINEAR,
+                    &formats::RGBAF32_LINEAR,
                 ),
                 strided(
                     bytemuck::cast_slice(&lrb),
                     w,
                     h,
                     w * 16,
-                    PixelDescriptor::RGBAF32_LINEAR,
+                    &formats::RGBAF32_LINEAR,
                 ),
                 "rgbaf32",
             ),

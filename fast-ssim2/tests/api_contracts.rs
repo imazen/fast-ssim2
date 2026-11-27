@@ -1,19 +1,19 @@
 //! Cross-path API contracts: original dimensions, options, and pixel semantics.
 use fast_ssim2::{
-    PixelDescriptor, PixelSlice, Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Reference,
-    compute_ssimulacra2_with_config,
+    PixelFormat, PixelView, Ssimulacra2Config, Ssimulacra2Error, Ssimulacra2Reference,
+    compute_ssimulacra2_with_config, formats,
 };
 
-fn rgb(bytes: &[u8], w: u32, h: u32) -> PixelSlice<'_> {
-    PixelSlice::new(bytes, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap()
+fn rgb(bytes: &[u8], w: u32, h: u32) -> PixelView<'_> {
+    PixelView::new(bytes, w, h, w as usize * 3, &formats::RGB8_SRGB).unwrap()
 }
-fn floats(data: &[f32], w: u32, h: u32, desc: PixelDescriptor) -> PixelSlice<'_> {
-    PixelSlice::new(
+fn floats<'a>(data: &'a [f32], w: u32, h: u32, fmt: &'a PixelFormat) -> PixelView<'a> {
+    PixelView::new(
         bytemuck::cast_slice(data),
         w,
         h,
-        w as usize * desc.format.bytes_per_pixel(),
-        desc,
+        w as usize * fmt.layout.bytes_per_pixel(),
+        fmt,
     )
     .unwrap()
 }
@@ -27,12 +27,12 @@ fn original_dimensions_must_match_on_every_path() {
         let bf = vec![0.5; dw * dh * 3];
         for linear in [false, true] {
             let a = if linear {
-                floats(&af, w as u32, h as u32, PixelDescriptor::RGBF32_LINEAR)
+                floats(&af, w as u32, h as u32, &formats::RGBF32_LINEAR)
             } else {
                 rgb(&a, w as u32, h as u32)
             };
             let b = if linear {
-                floats(&bf, dw as u32, dh as u32, PixelDescriptor::RGBF32_LINEAR)
+                floats(&bf, dw as u32, dh as u32, &formats::RGBF32_LINEAR)
             } else {
                 rgb(&b, dw as u32, dh as u32)
             };
@@ -95,33 +95,19 @@ fn alpha_only_on_distorted_side_matches_explicit_opaque_reference() {
         let raf: Vec<f32> = rgba8.iter().map(|&v| v as f32 / 255.0).collect();
         let df: Vec<f32> = dist8.iter().map(|&v| v as f32 / 255.0).collect();
         let a = if linear {
-            floats(&rf, w as u32, w as u32, PixelDescriptor::RGBF32_LINEAR)
+            floats(&rf, w as u32, w as u32, &formats::RGBF32_LINEAR)
         } else {
             rgb(&rgb8, w as u32, w as u32)
         };
         let aa = if linear {
-            floats(&raf, w as u32, w as u32, PixelDescriptor::RGBAF32_LINEAR)
+            floats(&raf, w as u32, w as u32, &formats::RGBAF32_LINEAR)
         } else {
-            PixelSlice::new(
-                &rgba8,
-                w as u32,
-                w as u32,
-                w * 4,
-                PixelDescriptor::RGBA8_SRGB,
-            )
-            .unwrap()
+            PixelView::new(&rgba8, w as u32, w as u32, w * 4, &formats::RGBA8_SRGB).unwrap()
         };
         let d = if linear {
-            floats(&df, w as u32, w as u32, PixelDescriptor::RGBAF32_LINEAR)
+            floats(&df, w as u32, w as u32, &formats::RGBAF32_LINEAR)
         } else {
-            PixelSlice::new(
-                &dist8,
-                w as u32,
-                w as u32,
-                w * 4,
-                PixelDescriptor::RGBA8_SRGB,
-            )
-            .unwrap()
+            PixelView::new(&dist8, w as u32, w as u32, w * 4, &formats::RGBA8_SRGB).unwrap()
         };
         for backend in [Ssimulacra2Config::scalar(), Ssimulacra2Config::simd()] {
             let cache = Ssimulacra2Reference::new_with_config(&a, &backend).unwrap();
@@ -151,9 +137,8 @@ fn hdr_composites_in_nits_and_rejects_strips() {
     let other: Vec<f32> = (0..64)
         .flat_map(|i| [40.0, 80.0 + i as f32, 200.0, 0.75])
         .collect();
-    let desc = PixelDescriptor::RGBAF32_LINEAR;
-    let a = floats(&data, 8, 8, desc);
-    let b = floats(&other, 8, 8, desc);
+    let a = floats(&data, 8, 8, &formats::RGBAF32_LINEAR);
+    let b = floats(&other, 8, 8, &formats::RGBAF32_LINEAR);
     let mut expected = f64::INFINITY;
     for bg in [20.0, 200.0] {
         let composite = |p: &[f32]| {
@@ -173,8 +158,8 @@ fn hdr_composites_in_nits_and_rejects_strips() {
         let bc = composite(&other);
         expected = expected.min(
             compute_ssimulacra2_pu(
-                &floats(&ac, 8, 8, PixelDescriptor::RGBF32_LINEAR),
-                &floats(&bc, 8, 8, PixelDescriptor::RGBF32_LINEAR),
+                &floats(&ac, 8, 8, &formats::RGBF32_LINEAR),
+                &floats(&bc, 8, 8, &formats::RGBF32_LINEAR),
             )
             .unwrap(),
         );
@@ -188,34 +173,25 @@ fn hdr_composites_in_nits_and_rejects_strips() {
 
 #[test]
 fn integer_grayscale_matches_expanded_rgb() {
-    for bits in [8, 16] {
-        let gray: Vec<u8> = (0..64).map(|i| (i * 37 % 255) as u8).collect();
-        let other: Vec<u8> = gray.iter().map(|&v| v.saturating_add(7)).collect();
-        let expand = |data: &[u8], channels: usize| -> Vec<u8> {
+    fn mk<'a>(data: &'a [u8], fmt: &'a PixelFormat) -> PixelView<'a> {
+        PixelView::new(data, 8, 8, 8 * fmt.layout.bytes_per_pixel(), fmt).unwrap()
+    }
+
+    let gray: Vec<u8> = (0..64).map(|i| (i * 37 % 255) as u8).collect();
+    let other: Vec<u8> = gray.iter().map(|&v| v.saturating_add(7)).collect();
+
+    // 8-bit
+    {
+        let expand8 = |data: &[u8], channels: usize| -> Vec<u8> {
             data.iter()
-                .flat_map(|&v| {
-                    (0..channels).flat_map(move |_| {
-                        if bits == 8 {
-                            vec![v]
-                        } else {
-                            (v as u16 * 257).to_ne_bytes().to_vec()
-                        }
-                    })
-                })
+                .flat_map(|&v| std::iter::repeat_n(v, channels))
                 .collect()
         };
-        let a = expand(&gray, 1);
-        let b = expand(&other, 1);
-        let ar = expand(&gray, 3);
-        let br = expand(&other, 3);
-        let (gd, rd) = if bits == 8 {
-            (PixelDescriptor::GRAY8_SRGB, PixelDescriptor::RGB8_SRGB)
-        } else {
-            (PixelDescriptor::GRAY16_SRGB, PixelDescriptor::RGB16_SRGB)
-        };
-        let mk = |data, desc: PixelDescriptor| {
-            PixelSlice::new(data, 8, 8, 8 * desc.format.bytes_per_pixel(), desc).unwrap()
-        };
+        let a = expand8(&gray, 1);
+        let b = expand8(&other, 1);
+        let ar = expand8(&gray, 3);
+        let br = expand8(&other, 3);
+        let (gd, rd) = (&formats::GRAY8_SRGB, &formats::RGB8_SRGB);
         for cfg in [Ssimulacra2Config::default(), Ssimulacra2Config::strips(8)] {
             let expected =
                 compute_ssimulacra2_with_config(&mk(&ar, rd), &mk(&br, rd), &cfg).unwrap();
@@ -227,6 +203,39 @@ fn integer_grayscale_matches_expanded_rgb() {
                 Ssimulacra2Reference::new(&mk(&a, gd))
                     .unwrap()
                     .compare_with_config(&mk(&b, gd), &cfg)
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    // 16-bit (backed by Vec<u16> for guaranteed 2-byte alignment)
+    {
+        let expand16 = |data: &[u8], channels: usize| -> Vec<u16> {
+            data.iter()
+                .flat_map(|&v| std::iter::repeat_n(v as u16 * 257, channels))
+                .collect()
+        };
+        let a = expand16(&gray, 1);
+        let b = expand16(&other, 1);
+        let ar = expand16(&gray, 3);
+        let br = expand16(&other, 3);
+        let (gd, rd) = (&formats::GRAY16_SRGB, &formats::RGB16_SRGB);
+        let a_b = bytemuck::cast_slice(&a);
+        let b_b = bytemuck::cast_slice(&b);
+        let ar_b = bytemuck::cast_slice(&ar);
+        let br_b = bytemuck::cast_slice(&br);
+        for cfg in [Ssimulacra2Config::default(), Ssimulacra2Config::strips(8)] {
+            let expected =
+                compute_ssimulacra2_with_config(&mk(ar_b, rd), &mk(br_b, rd), &cfg).unwrap();
+            assert_eq!(
+                compute_ssimulacra2_with_config(&mk(a_b, gd), &mk(b_b, gd), &cfg).unwrap(),
+                expected
+            );
+            assert_eq!(
+                Ssimulacra2Reference::new(&mk(a_b, gd))
+                    .unwrap()
+                    .compare_with_config(&mk(b_b, gd), &cfg)
                     .unwrap(),
                 expected
             );

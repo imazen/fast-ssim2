@@ -4,7 +4,7 @@
 
 use crate::pipeline::precompute::ReferenceCache;
 use crate::{MAX_IMAGE_PIXELS, Ssimulacra2Config, Ssimulacra2Error};
-use zenpixels::PixelSlice;
+use zenpixels::PixelView;
 
 /// Precomputed SSIMULACRA2 reference state for fast repeated comparisons.
 ///
@@ -31,7 +31,7 @@ pub struct Ssimulacra2Reference {
 impl Ssimulacra2Reference {
     /// Precompute the reference pipeline for `source`.
     ///
-    /// Inputs use the same descriptor-driven conversion as
+    /// Inputs use the same format-driven conversion as
     /// [`crate::compute_ssimulacra2`].
     ///
     /// # Errors
@@ -39,7 +39,7 @@ impl Ssimulacra2Reference {
     ///   (0×0).
     /// - [`Ssimulacra2Error::ImageTooLarge`] if the (padded) image
     ///   exceeds [`MAX_IMAGE_PIXELS`].
-    pub fn new(source: &PixelSlice<'_>) -> Result<Self, Ssimulacra2Error> {
+    pub fn new(source: &PixelView<'_>) -> Result<Self, Ssimulacra2Error> {
         Self::new_with_config(source, &Ssimulacra2Config::default())
     }
 
@@ -49,7 +49,7 @@ impl Ssimulacra2Reference {
     /// `strip` must be `None`; otherwise returns
     /// [`crate::Ssimulacra2Error::InvalidConfiguration`].
     pub fn new_with_config(
-        source: &PixelSlice<'_>,
+        source: &PixelView<'_>,
         config: &Ssimulacra2Config<'_>,
     ) -> Result<Self, Ssimulacra2Error> {
         config.check_stop()?;
@@ -142,7 +142,7 @@ impl Ssimulacra2Reference {
     /// # Errors
     /// - [`Ssimulacra2Error::NonMatchingImageDimensions`] if dimensions
     ///   differ from the source used at construction.
-    pub fn compare(&self, distorted: &PixelSlice<'_>) -> Result<f64, Ssimulacra2Error> {
+    pub fn compare(&self, distorted: &PixelView<'_>) -> Result<f64, Ssimulacra2Error> {
         self.compare_with_config(distorted, &Ssimulacra2Config::default())
     }
 
@@ -155,7 +155,7 @@ impl Ssimulacra2Reference {
     /// As [`Self::compare`], plus [`Ssimulacra2Error::Cancelled`].
     pub fn compare_with_config(
         &self,
-        distorted: &PixelSlice<'_>,
+        distorted: &PixelView<'_>,
         config: &Ssimulacra2Config<'_>,
     ) -> Result<f64, Ssimulacra2Error> {
         config.check_stop()?;
@@ -225,7 +225,7 @@ impl Ssimulacra2Reference {
     /// As [`Self::compare`].
     pub fn compare_with_maps(
         &self,
-        distorted: &PixelSlice<'_>,
+        distorted: &PixelView<'_>,
     ) -> Result<crate::Ssimulacra2Maps, Ssimulacra2Error> {
         self.compare_with_maps_with_config(distorted, &Ssimulacra2Config::default())
     }
@@ -238,7 +238,7 @@ impl Ssimulacra2Reference {
     /// [`Ssimulacra2Error::InvalidConfiguration`] when `strip` is set.
     pub fn compare_with_maps_with_config(
         &self,
-        distorted: &PixelSlice<'_>,
+        distorted: &PixelView<'_>,
         config: &Ssimulacra2Config<'_>,
     ) -> Result<crate::Ssimulacra2Maps, Ssimulacra2Error> {
         config.check_stop()?;
@@ -345,26 +345,26 @@ fn pad_or_pass(planes: [Vec<f32>; 3], w: usize, h: usize, pw: usize, ph: usize) 
 mod tests {
     use super::*;
     use crate::{compute_ssimulacra2, compute_ssimulacra2_with_config};
-    use zenpixels::{PixelDescriptor, PixelSlice, TransferFunction};
+    use zenpixels::{FormatCow, PixelFormat, PixelView, Transfer, formats};
 
-    fn srgb_f32(data: &[[f32; 3]], w: usize, h: usize) -> PixelSlice<'_> {
-        PixelSlice::new(
+    fn srgb_f32(data: &[[f32; 3]], w: usize, h: usize) -> PixelView<'_> {
+        PixelView::new_with_format_cow(
             bytemuck::cast_slice(data),
             w as u32,
             h as u32,
             w * 12,
-            PixelDescriptor::RGBF32.with_transfer(TransferFunction::Srgb),
+            FormatCow::from_owned(PixelFormat::RGBF32_LINEAR.with_transfer(Transfer::Srgb)),
         )
         .unwrap()
     }
 
-    fn lin_f32(data: &[[f32; 3]], w: usize, h: usize) -> PixelSlice<'_> {
-        PixelSlice::new(
+    fn lin_f32(data: &[[f32; 3]], w: usize, h: usize) -> PixelView<'_> {
+        PixelView::new(
             bytemuck::cast_slice(data),
             w as u32,
             h as u32,
             w * 12,
-            PixelDescriptor::RGBF32_LINEAR,
+            &formats::RGBF32_LINEAR,
         )
         .unwrap()
     }
