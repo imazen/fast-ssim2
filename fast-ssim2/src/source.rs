@@ -15,7 +15,7 @@ use zenpixels::{
 use crate::Ssimulacra2Error;
 use crate::pipeline::{EncodedData, EncodedSrgb};
 
-mod native_hdr;
+pub(crate) mod native_hdr;
 mod native_hdr_pow;
 
 pub(crate) struct ColorParams {
@@ -136,7 +136,16 @@ fn validate_alpha_layout(fmt: &PixelFormat) -> Result<(), Ssimulacra2Error> {
 /// planes the pipeline needs. See the crate docs for which formats
 /// are rejected. Native PQ/HLG and supported linear HDR formats use the
 /// reference color conversion; the encoded sRGB path keeps its captured LUT.
+#[cfg(test)]
 pub(crate) fn funnel(view: &PixelView<'_>) -> Result<PreparedInput, Ssimulacra2Error> {
+    funnel_stoppable(view, &enough::Unstoppable)
+}
+
+pub(crate) fn funnel_stoppable(
+    view: &PixelView<'_>,
+    stop: &dyn enough::Stop,
+) -> Result<PreparedInput, Ssimulacra2Error> {
+    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
     let fmt = view.format();
     let (w, h) = (view.width() as usize, view.height() as usize);
     let npix = checked_dimensions(w, h)?;
@@ -151,7 +160,7 @@ pub(crate) fn funnel(view: &PixelView<'_>) -> Result<PreparedInput, Ssimulacra2E
         || (color.transfer == Transfer::Linear
             && ((!color.is_gray && color.primaries != Primaries::Bt709) || color.white.is_some()))
     {
-        return native_hdr::NativeInput::new(view).map(PreparedInput::Native);
+        return native_hdr::NativeInput::new_stoppable(view, stop).map(PreparedInput::Native);
     }
     validate_alpha_layout(fmt)?;
 
@@ -203,283 +212,348 @@ pub(crate) fn funnel(view: &PixelView<'_>) -> Result<PreparedInput, Ssimulacra2E
     // Premultiplied alpha is un-multiplied into an owned buffer; every
     // other layout is consumed borrowed (zero-copy).
     let data: Cow<'_, [u8]> = if color.alpha == AlphaMode::Premultiplied {
-        Cow::Owned(unpremultiply(view))
+        Cow::Owned(unpremultiply_stoppable(view, stop)?)
     } else {
         Cow::Borrowed(view.as_strided_bytes())
     };
     let stride = view.stride_bytes();
     let premult_alpha = matches!(color.alpha, AlphaMode::Straight | AlphaMode::Premultiplied);
 
-    let f32_alpha_of = |data: &[u8], stride: usize, bpp: usize| -> Vec<f32> {
-        let mut a = Vec::with_capacity(npix);
-        for y in 0..h {
-            let row = &data[y * stride..];
-            for px in row[..w * bpp].chunks_exact(bpp) {
-                a.push(f32::from_ne_bytes([px[12], px[13], px[14], px[15]]));
+    let f32_alpha_of =
+        |data: &[u8], stride: usize, bpp: usize| -> Result<Vec<f32>, Ssimulacra2Error> {
+            let mut a = Vec::with_capacity(npix);
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for px in row[..w * bpp].chunks_exact(bpp) {
+                    a.push(f32::from_ne_bytes([px[12], px[13], px[14], px[15]]));
+                }
+            }
+            Ok(a)
+        };
+
+    let out = match (fmt.layout.sample, fmt.layout.order, color.transfer) {
+        // ---------------------------------------------------- encoded u8
+        (SampleType::U8, ChannelOrder::Rgb, _) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                rgb.extend_from_slice(&row[..w * 3]);
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::U8(rgb),
+                alpha: None,
+            })
+        }
+        (SampleType::U8, ChannelOrder::Rgba | ChannelOrder::Rgbx, _) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for px in row[..w * 4].chunks_exact(4) {
+                    rgb.extend_from_slice(&px[..3]);
+                    if let Some(a) = alpha.as_mut() {
+                        a.push(px[3] as f32 * (1.0 / 255.0));
+                    }
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::U8(rgb),
+                alpha,
+            })
+        }
+        (SampleType::U8, ChannelOrder::Bgra | ChannelOrder::Bgrx, _) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for px in row[..w * 4].chunks_exact(4) {
+                    rgb.extend_from_slice(&[px[2], px[1], px[0]]);
+                    if let Some(a) = alpha.as_mut() {
+                        a.push(px[3] as f32 * (1.0 / 255.0));
+                    }
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::U8(rgb),
+                alpha,
+            })
+        }
+        (SampleType::U8, ChannelOrder::Gray, _) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for &v in &row[..w] {
+                    rgb.extend_from_slice(&[v; 3]);
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::U8(rgb),
+                alpha: None,
+            })
+        }
+        // --------------------------------------------------- encoded u16
+        (SampleType::U16, ChannelOrder::Rgb, _) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for c in row[..w * 6].chunks_exact(2) {
+                    rgb.push(u16::from_ne_bytes([c[0], c[1]]));
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::U16(rgb),
+                alpha: None,
+            })
+        }
+        (SampleType::U16, ChannelOrder::Rgba, _) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for px in row[..w * 8].chunks_exact(8) {
+                    for c in 0..3 {
+                        rgb.push(u16::from_ne_bytes([px[2 * c], px[2 * c + 1]]));
+                    }
+                    if let Some(a) = alpha.as_mut() {
+                        a.push(u16::from_ne_bytes([px[6], px[7]]) as f32 * (1.0 / 65535.0));
+                    }
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::U16(rgb),
+                alpha,
+            })
+        }
+        (SampleType::U16, ChannelOrder::Gray, _) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for c in row[..w * 2].chunks_exact(2) {
+                    let v = u16::from_ne_bytes([c[0], c[1]]);
+                    rgb.extend_from_slice(&[v; 3]);
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::U16(rgb),
+                alpha: None,
+            })
+        }
+        // -------------------------------------- encoded f32
+        (SampleType::F32, ChannelOrder::Rgb, Transfer::Srgb) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for c in row[..w * 12].chunks_exact(4) {
+                    rgb.push(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]));
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::F32(rgb),
+                alpha: None,
+            })
+        }
+        (SampleType::F32, ChannelOrder::Rgba, Transfer::Srgb) => {
+            let mut rgb = Vec::with_capacity(npix * 3);
+            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for px in row[..w * 16].chunks_exact(16) {
+                    for c in 0..3 {
+                        rgb.push(f32::from_ne_bytes([
+                            px[4 * c],
+                            px[4 * c + 1],
+                            px[4 * c + 2],
+                            px[4 * c + 3],
+                        ]));
+                    }
+                    if let Some(a) = alpha.as_mut() {
+                        a.push(f32::from_ne_bytes([px[12], px[13], px[14], px[15]]));
+                    }
+                }
+            }
+            PreparedInput::Encoded(EncodedSrgb {
+                width: w,
+                height: h,
+                data: EncodedData::F32(rgb),
+                alpha,
+            })
+        }
+        // ------------------------------------------------- linear f32
+        (SampleType::F32, ChannelOrder::Rgb, Transfer::Linear) => {
+            let mut planes = [
+                Vec::with_capacity(npix),
+                Vec::with_capacity(npix),
+                Vec::with_capacity(npix),
+            ];
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for px in row[..w * 12].chunks_exact(12) {
+                    for (c, ch) in px.chunks_exact(4).enumerate() {
+                        planes[c].push(f32::from_ne_bytes([ch[0], ch[1], ch[2], ch[3]]));
+                    }
+                }
+            }
+            PreparedInput::Linear {
+                planes,
+                alpha: None,
+                width: w,
+                height: h,
             }
         }
-        a
-    };
-
-    Ok(
-        match (fmt.layout.sample, fmt.layout.order, color.transfer) {
-            // ---------------------------------------------------- encoded u8
-            (SampleType::U8, ChannelOrder::Rgb, _) => {
-                let mut rgb = Vec::with_capacity(npix * 3);
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    rgb.extend_from_slice(&row[..w * 3]);
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::U8(rgb),
-                    alpha: None,
-                })
-            }
-            (SampleType::U8, ChannelOrder::Rgba | ChannelOrder::Rgbx, _) => {
-                let mut rgb = Vec::with_capacity(npix * 3);
-                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for px in row[..w * 4].chunks_exact(4) {
-                        rgb.extend_from_slice(&px[..3]);
-                        if let Some(a) = alpha.as_mut() {
-                            a.push(px[3] as f32 * (1.0 / 255.0));
-                        }
-                    }
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::U8(rgb),
-                    alpha,
-                })
-            }
-            (SampleType::U8, ChannelOrder::Bgra | ChannelOrder::Bgrx, _) => {
-                let mut rgb = Vec::with_capacity(npix * 3);
-                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for px in row[..w * 4].chunks_exact(4) {
-                        rgb.extend_from_slice(&[px[2], px[1], px[0]]);
-                        if let Some(a) = alpha.as_mut() {
-                            a.push(px[3] as f32 * (1.0 / 255.0));
-                        }
-                    }
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::U8(rgb),
-                    alpha,
-                })
-            }
-            (SampleType::U8, ChannelOrder::Gray, _) => {
-                let mut g = Vec::with_capacity(npix);
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    g.extend_from_slice(&row[..w]);
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::U8(g.into_iter().flat_map(|v| [v; 3]).collect()),
-                    alpha: None,
-                })
-            }
-            // --------------------------------------------------- encoded u16
-            (SampleType::U16, ChannelOrder::Rgb, _) => {
-                let mut rgb = Vec::with_capacity(npix * 3);
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for c in row[..w * 6].chunks_exact(2) {
-                        rgb.push(u16::from_ne_bytes([c[0], c[1]]));
-                    }
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::U16(rgb),
-                    alpha: None,
-                })
-            }
-            (SampleType::U16, ChannelOrder::Rgba, _) => {
-                let mut rgb = Vec::with_capacity(npix * 3);
-                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for px in row[..w * 8].chunks_exact(8) {
-                        for c in 0..3 {
-                            rgb.push(u16::from_ne_bytes([px[2 * c], px[2 * c + 1]]));
-                        }
-                        if let Some(a) = alpha.as_mut() {
-                            a.push(u16::from_ne_bytes([px[6], px[7]]) as f32 * (1.0 / 65535.0));
-                        }
-                    }
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::U16(rgb),
-                    alpha,
-                })
-            }
-            (SampleType::U16, ChannelOrder::Gray, _) => {
-                let mut g = Vec::with_capacity(npix);
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for c in row[..w * 2].chunks_exact(2) {
-                        g.push(u16::from_ne_bytes([c[0], c[1]]));
-                    }
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::U16(g.into_iter().flat_map(|v| [v; 3]).collect()),
-                    alpha: None,
-                })
-            }
-            // -------------------------------------- encoded f32
-            // sRGB-encoded f32 is the *general* path — a rational polynomial
-            // (`linear-srgb`), no grid tricks: encoded-f32 is a marginal input
-            // class (decoders emit integers; linear pipelines emit Linear-f32),
-            // and callers with u8-quantized data get bit-exact results by
-            // handing us u8 directly.
-            (SampleType::F32, ChannelOrder::Rgb, Transfer::Srgb) => {
-                let mut rgb = Vec::with_capacity(npix * 3);
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for c in row[..w * 12].chunks_exact(4) {
-                        rgb.push(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]));
-                    }
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::F32(rgb),
-                    alpha: None,
-                })
-            }
-            (SampleType::F32, ChannelOrder::Rgba, Transfer::Srgb) => {
-                let mut rgb = Vec::with_capacity(npix * 3);
-                let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for px in row[..w * 16].chunks_exact(16) {
-                        for c in 0..3 {
-                            rgb.push(f32::from_ne_bytes([
-                                px[4 * c],
-                                px[4 * c + 1],
-                                px[4 * c + 2],
-                                px[4 * c + 3],
-                            ]));
-                        }
-                        if let Some(a) = alpha.as_mut() {
-                            a.push(f32::from_ne_bytes([px[12], px[13], px[14], px[15]]));
-                        }
-                    }
-                }
-                PreparedInput::Encoded(EncodedSrgb {
-                    width: w,
-                    height: h,
-                    data: EncodedData::F32(rgb),
-                    alpha,
-                })
-            }
-            // ------------------------------------------------- linear f32
-            (SampleType::F32, ChannelOrder::Rgb, Transfer::Linear) => {
+        (SampleType::F32, ChannelOrder::Rgba, Transfer::Linear) => PreparedInput::Linear {
+            planes: {
                 let mut planes = [
                     Vec::with_capacity(npix),
                     Vec::with_capacity(npix),
                     Vec::with_capacity(npix),
                 ];
                 for y in 0..h {
+                    if y & 63 == 0 {
+                        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                    }
                     let row = &data[y * stride..];
-                    for px in row[..w * 12].chunks_exact(12) {
-                        for (c, ch) in px.chunks_exact(4).enumerate() {
-                            planes[c].push(f32::from_ne_bytes([ch[0], ch[1], ch[2], ch[3]]));
+                    for px in row[..w * 16].chunks_exact(16) {
+                        for c in 0..3 {
+                            planes[c].push(f32::from_ne_bytes([
+                                px[4 * c],
+                                px[4 * c + 1],
+                                px[4 * c + 2],
+                                px[4 * c + 3],
+                            ]));
                         }
                     }
                 }
-                PreparedInput::Linear {
-                    planes,
-                    alpha: None,
-                    width: w,
-                    height: h,
+                planes
+            },
+            alpha: if premult_alpha {
+                Some(f32_alpha_of(&data, stride, 16)?)
+            } else {
+                None
+            },
+            width: w,
+            height: h,
+        },
+        (SampleType::F32, ChannelOrder::Gray, Transfer::Linear) => {
+            let mut planes = [
+                Vec::with_capacity(npix),
+                Vec::with_capacity(npix),
+                Vec::with_capacity(npix),
+            ];
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for c in row[..w * 4].chunks_exact(4) {
+                    let v = f32::from_ne_bytes([c[0], c[1], c[2], c[3]]);
+                    planes[0].push(v);
+                    planes[1].push(v);
+                    planes[2].push(v);
                 }
             }
-            (SampleType::F32, ChannelOrder::Rgba, Transfer::Linear) => PreparedInput::Linear {
-                planes: {
-                    let mut planes = [
-                        Vec::with_capacity(npix),
-                        Vec::with_capacity(npix),
-                        Vec::with_capacity(npix),
-                    ];
-                    for y in 0..h {
-                        let row = &data[y * stride..];
-                        for px in row[..w * 16].chunks_exact(16) {
-                            for c in 0..3 {
-                                planes[c].push(f32::from_ne_bytes([
-                                    px[4 * c],
-                                    px[4 * c + 1],
-                                    px[4 * c + 2],
-                                    px[4 * c + 3],
-                                ]));
-                            }
-                        }
-                    }
-                    planes
-                },
-                alpha: premult_alpha.then(|| f32_alpha_of(&data, stride, 16)),
+            PreparedInput::Linear {
+                planes,
+                alpha: None,
                 width: w,
                 height: h,
-            },
-            (SampleType::F32, ChannelOrder::Gray, Transfer::Linear) => {
-                let mut g = Vec::with_capacity(npix);
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for c in row[..w * 4].chunks_exact(4) {
-                        g.push(f32::from_ne_bytes([c[0], c[1], c[2], c[3]]));
-                    }
-                }
-                PreparedInput::Linear {
-                    planes: [g.clone(), g.clone(), g],
-                    alpha: None,
-                    width: w,
-                    height: h,
-                }
             }
-            (SampleType::F32, ChannelOrder::GrayAlpha, Transfer::Linear) => {
-                let mut g = Vec::with_capacity(npix);
-                let mut a = Vec::with_capacity(npix);
-                for y in 0..h {
-                    let row = &data[y * stride..];
-                    for px in row[..w * 8].chunks_exact(8) {
-                        g.push(f32::from_ne_bytes([px[0], px[1], px[2], px[3]]));
+        }
+        (SampleType::F32, ChannelOrder::GrayAlpha, Transfer::Linear) => {
+            let mut planes = [
+                Vec::with_capacity(npix),
+                Vec::with_capacity(npix),
+                Vec::with_capacity(npix),
+            ];
+            let mut alpha = premult_alpha.then(|| Vec::with_capacity(npix));
+            for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
+                let row = &data[y * stride..];
+                for px in row[..w * 8].chunks_exact(8) {
+                    let v = f32::from_ne_bytes([px[0], px[1], px[2], px[3]]);
+                    planes[0].push(v);
+                    planes[1].push(v);
+                    planes[2].push(v);
+                    if let Some(a) = alpha.as_mut() {
                         a.push(f32::from_ne_bytes([px[4], px[5], px[6], px[7]]));
                     }
                 }
-                PreparedInput::Linear {
-                    planes: [g.clone(), g.clone(), g],
-                    alpha: premult_alpha.then_some(a),
-                    width: w,
-                    height: h,
-                }
             }
-            _ => {
-                return Err(Ssimulacra2Error::UnsupportedInput(
-                    "unsupported pixel format for SSIMULACRA2 — RGB/RGBA/BGRA/Gray \
+            PreparedInput::Linear {
+                planes,
+                alpha,
+                width: w,
+                height: h,
+            }
+        }
+        _ => {
+            return Err(Ssimulacra2Error::UnsupportedInput(
+                "unsupported pixel format for SSIMULACRA2 — RGB/RGBA/BGRA/Gray \
                  in u8/u16/f32-sRGB or f32-linear only",
-                ));
-            }
-        },
-    )
+            ));
+        }
+    };
+    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+    Ok(out)
 }
 
 /// Un-premultiply to straight alpha, native domain (ported from zensim's
 /// zenpixels adapter — quantizes back for integer formats).
-fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
+fn unpremultiply_stoppable(
+    view: &PixelView<'_>,
+    stop: &dyn enough::Stop,
+) -> Result<Vec<u8>, Ssimulacra2Error> {
+    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
     let (w, h) = (view.width() as usize, view.height() as usize);
     let stride = view.stride_bytes();
     let layout = view.format().layout;
@@ -490,6 +564,9 @@ fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
             ChannelOrder::Rgba | ChannelOrder::Bgra | ChannelOrder::Rgbx | ChannelOrder::Bgrx,
         ) => {
             for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
                 let row_start = y * stride;
                 for x in 0..w {
                     let off = row_start + x * 4;
@@ -511,6 +588,9 @@ fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
             let bpp = layout.bytes_per_pixel();
             let alpha_offset = bpp - 2;
             for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
                 let row_start = y * stride;
                 for x in 0..w {
                     let off = row_start + x * bpp;
@@ -534,6 +614,9 @@ fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
             let bpp = layout.bytes_per_pixel();
             let alpha_offset = bpp - 4;
             for y in 0..h {
+                if y & 63 == 0 {
+                    stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+                }
                 let row_start = y * stride;
                 for x in 0..w {
                     let off = row_start + x * bpp;
@@ -547,6 +630,7 @@ fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
                         out[off..off + alpha_offset].fill(0);
                     } else if a < 1.0 {
                         let inv = 1.0 / a;
+                        let finite_inv = inv.is_finite();
                         for c in 0..alpha_offset / 4 {
                             let co = off + c * 4;
                             let v = f32::from_ne_bytes([
@@ -555,7 +639,14 @@ fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
                                 out[co + 2],
                                 out[co + 3],
                             ]);
-                            out[co..co + 4].copy_from_slice(&(v * inv).to_ne_bytes());
+                            let unpremul = if finite_inv {
+                                v * inv
+                            } else if v == 0.0 {
+                                0.0
+                            } else {
+                                v / a
+                            };
+                            out[co..co + 4].copy_from_slice(&unpremul.to_ne_bytes());
                         }
                     }
                 }
@@ -563,7 +654,7 @@ fn unpremultiply(view: &PixelView<'_>) -> Vec<u8> {
         }
         _ => {}
     }
-    out
+    Ok(out)
 }
 
 // ============================================================================

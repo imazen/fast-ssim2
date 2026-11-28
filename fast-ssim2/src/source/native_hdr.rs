@@ -20,7 +20,16 @@ pub(crate) struct NativeInput {
 }
 
 impl NativeInput {
+    #[allow(dead_code)]
     pub(crate) fn new(view: &PixelView<'_>) -> Result<Self, Ssimulacra2Error> {
+        Self::new_stoppable(view, &enough::Unstoppable)
+    }
+
+    pub(crate) fn new_stoppable(
+        view: &PixelView<'_>,
+        stop: &dyn enough::Stop,
+    ) -> Result<Self, Ssimulacra2Error> {
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         let fmt = view.format();
         if fmt.layout.packing != BitPacking::Full {
             return Err(Ssimulacra2Error::UnsupportedInput(
@@ -80,7 +89,7 @@ impl NativeInput {
         let (width, height) = (view.width() as usize, view.height() as usize);
         let n = checked_dimensions(width, height)?;
         let data = if color.alpha == AlphaMode::Premultiplied {
-            Cow::Owned(unpremultiply(view))
+            Cow::Owned(unpremultiply_stoppable(view, stop)?)
         } else {
             Cow::Borrowed(view.as_strided_bytes())
         };
@@ -95,6 +104,9 @@ impl NativeInput {
         let mut alpha = matches!(color.alpha, AlphaMode::Straight | AlphaMode::Premultiplied)
             .then(|| Vec::with_capacity(n));
         for y in 0..height {
+            if y & 63 == 0 {
+                stop.check().map_err(Ssimulacra2Error::Cancelled)?;
+            }
             for px in data[y * stride..][..width * bpp].chunks_exact(bpp) {
                 for (c, plane) in encoded.iter_mut().enumerate() {
                     let c = if gray {
@@ -111,6 +123,7 @@ impl NativeInput {
                 }
             }
         }
+        stop.check().map_err(Ssimulacra2Error::Cancelled)?;
         Ok(Self {
             encoded,
             alpha,
@@ -201,6 +214,14 @@ fn hlg_inverse_oetf(v: f32) -> f32 {
     (scene as f32).copysign(v)
 }
 
+pub(crate) fn hlg_reference_gamma(target: f32) -> f32 {
+    if (295.0..=305.0).contains(&target) {
+        1.0
+    } else {
+        1.2 * 1.111_f32.powf((target * 1e-3).log2())
+    }
+}
+
 fn hlg_decode(rgb: [f32; 3], primaries: Primaries, target: f32, gray: bool) -> [f32; 3] {
     // Ingest expands grayscale into identical channels. Decode its single
     // stored channel once, as the reference CMS does, then expand the result.
@@ -212,7 +233,7 @@ fn hlg_decode(rgb: [f32; 3], primaries: Primaries, target: f32, gray: bool) -> [
     if (295.0..=305.0).contains(&target) {
         return rgb;
     }
-    let gamma = 1.2 * 1.111_f32.powf((target * 1e-3).log2());
+    let gamma = hlg_reference_gamma(target);
     if gray {
         // Keep the oracle's powf polynomial and rounding across platforms.
         return [super::native_hdr_pow::powf(rgb[0], gamma); 3];

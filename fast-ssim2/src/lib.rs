@@ -14,6 +14,8 @@ mod source;
 mod spatial;
 mod strip;
 mod weights;
+#[cfg(feature = "zenpsy-api")]
+mod zenpsy_compat;
 
 use enough::Stop;
 
@@ -21,6 +23,8 @@ pub use precompute::Ssimulacra2Reference;
 pub use spatial::{Ssimulacra2Maps, Ssimulacra2ScaleMaps};
 pub use strip::{HALO_ROWS_DEFAULT, MIN_STRIP_HEIGHT, StripConfig};
 pub use zenpixels::{PixelBuf, PixelFormat, PixelView, Transfer, formats};
+#[cfg(feature = "zenpsy-api")]
+pub use zenpsy_compat::{PreparedSsimulacra2, Ssimulacra2Evaluation, Ssimulacra2Metric};
 
 // sRGB→linear for callers: use `linear_srgb::default::*` directly.
 
@@ -510,8 +514,8 @@ fn compute_pair_impl(
     use source::PreparedInput;
 
     let stop = stop.may_stop().then_some(stop);
-    let p1 = source::funnel(source)?;
-    let p2 = source::funnel(distorted)?;
+    let p1 = source::funnel_stoppable(source, &stop)?;
+    let p2 = source::funnel_stoppable(distorted, &stop)?;
 
     if let (PreparedInput::Encoded(e1), PreparedInput::Encoded(e2)) = (&p1, &p2) {
         // Sub-8px inputs: the reference binary refuses them, but the

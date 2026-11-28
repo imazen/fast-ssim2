@@ -61,7 +61,7 @@ impl Ssimulacra2Reference {
         let kernel = crate::pipeline::Kernel::from_impl(config.impl_type);
         let stop = config.stop.unwrap_or(&enough::Unstoppable);
         use crate::source::PreparedInput;
-        match crate::source::funnel(source)? {
+        match crate::source::funnel_stoppable(source, stop)? {
             PreparedInput::Encoded(e) => {
                 let ow = e.width;
                 let oh = e.height;
@@ -164,7 +164,7 @@ impl Ssimulacra2Reference {
         }
         use crate::source::PreparedInput;
         let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
-        let p = crate::source::funnel(distorted)?;
+        let p = crate::source::funnel_stoppable(distorted, stop)?;
         if p.dims() != (self.original_width, self.original_height) {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }
@@ -250,7 +250,7 @@ impl Ssimulacra2Reference {
         use crate::source::PreparedInput;
         let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
         let kernel = crate::pipeline::Kernel::from_impl(config.impl_type);
-        let p = crate::source::funnel(distorted)?;
+        let p = crate::source::funnel_stoppable(distorted, stop)?;
         if p.dims() != (self.original_width, self.original_height) {
             return Err(Ssimulacra2Error::NonMatchingImageDimensions);
         }

@@ -17,9 +17,9 @@ opt-level = 1
 opt-level = 2
 
 [patch.crates-io]
-zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "7fa068834f8074c2630a352b25f355f7c90751f8" }
-zencodec = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
-zenmeta = { git = "https://github.com/imazen/zencodec", rev = "5d4f6c473404c09c95f404543f8a16a1e3cb8477" }
+zenpixels = { git = "https://github.com/imazen/zenpixels", rev = "83217972759fab02ff530fe50203a0c7fc3282f8" }
+zencodec = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
+zenmeta = { git = "https://github.com/imazen/zencodec", rev = "9500a8154bbb21a2d71e87019b002bc43a6094f2" }
 ultrahdr-core = { git = "https://github.com/imazen/ultrahdr", rev = "76e9aad431e1faf7782b0654857325246b15c28b" }
 linear-srgb = { git = "https://github.com/imazen/linear-srgb", rev = "ae83f19426737635fee3dd16f228681019f52585" }
 garb = { git = "https://github.com/imazen/garb", rev = "457ff8b9153e9d675a39dc098052b2ffeb6206fa" }

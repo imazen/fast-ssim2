@@ -107,8 +107,8 @@ pub(crate) fn compute_strip_inner(
         flavor: XybFlavor::CubeRoot,
     };
     let strip_height = sc.strip_height;
-    let p1 = crate::source::funnel(source)?;
-    let p2 = crate::source::funnel(distorted)?;
+    let p1 = crate::source::funnel_stoppable(source, stop)?;
+    let p2 = crate::source::funnel_stoppable(distorted, stop)?;
     if matches!(p1, PreparedInput::Native(_)) || matches!(p2, PreparedInput::Native(_)) {
         return Err(Ssimulacra2Error::InvalidConfiguration(
             "native HDR strip evaluation is not supported",
@@ -185,7 +185,7 @@ impl Ssimulacra2Reference {
         let stop: &dyn enough::Stop = config.stop.unwrap_or(&enough::Unstoppable);
         let strip_height = sc.strip_height;
         let cache = self.cache();
-        let p = crate::source::funnel(distorted)?;
+        let p = crate::source::funnel_stoppable(distorted, stop)?;
         if self.native_hdr || matches!(p, crate::source::PreparedInput::Native(_)) {
             return Err(Ssimulacra2Error::InvalidConfiguration(
                 "native HDR strip evaluation is not supported",

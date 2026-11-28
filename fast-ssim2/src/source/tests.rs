@@ -477,3 +477,144 @@ fn native_hdr_dense_frontend_matches_cpp() {
         println!("native frontend tf={tf}: {checked} cumulative pixels exactly match C++");
     }
 }
+
+#[test]
+fn unpremultiply_f32_preserves_normal_bits_and_avoids_subnormal_nan() {
+    let fmt = PixelFormat::RGBAF32_LINEAR.with_alpha(AlphaMode::Premultiplied);
+    let min_subnormal = f32::from_bits(1);
+    let pixels: [f32; 8] = [0.1, 0.2, 0.0, 0.3, 0.0, 0.0, 0.0, min_subnormal];
+    let bytes = bytemuck::cast_slice(&pixels);
+    let view = PixelView::new(bytes, 2, 1, 2 * 16, &fmt).unwrap();
+    let PreparedInput::Linear { planes, .. } = funnel(&view).unwrap() else {
+        panic!("expected linear prepared input");
+    };
+    assert_eq!(
+        planes[0][0].to_bits(),
+        0x3eaaaaab,
+        "normal-alpha unpremultiply must preserve exact reciprocal-multiply rounding"
+    );
+    for plane in &planes {
+        assert_eq!(
+            plane[1].to_bits(),
+            0.0_f32.to_bits(),
+            "zero RGB at minimum positive subnormal alpha must produce 0.0, not NaN"
+        );
+    }
+}
+
+#[test]
+fn funnel_stoppable_and_strip_unpack_poll_during_row_loops() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    struct TripStop {
+        checks: AtomicUsize,
+        trip_at: usize,
+    }
+    impl enough::Stop for TripStop {
+        fn check(&self) -> Result<(), enough::StopReason> {
+            let n = self.checks.fetch_add(1, Ordering::Relaxed);
+            if n == self.trip_at {
+                Err(enough::StopReason::TimedOut)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    let (w, h) = (16usize, 256usize);
+    // Gray U8, Gray U16, Linear Gray F32, Linear GrayAlpha F32
+    let g8 = vec![128u8; w * h];
+    let g16 = vec![32768u16; w * h];
+    let gf32 = vec![0.5f32; w * h];
+    let gaf32: Vec<f32> = (0..w * h).flat_map(|_| [0.5f32, 0.75f32]).collect();
+
+    let gray8_fmt = PixelFormat::GRAY8_SRGB;
+    let gray16_fmt = PixelFormat::GRAY16_SRGB;
+    let grayf32_fmt = PixelFormat::GRAYF32_LINEAR;
+    let graya_fmt = grayaf32_linear().with_alpha(AlphaMode::Straight);
+    let cases: Vec<(&str, PixelView<'_>)> = vec![
+        (
+            "gray8",
+            PixelView::new(&g8, w as u32, h as u32, w, &gray8_fmt).unwrap(),
+        ),
+        (
+            "gray16",
+            PixelView::new(
+                bytemuck::cast_slice(&g16),
+                w as u32,
+                h as u32,
+                w * 2,
+                &gray16_fmt,
+            )
+            .unwrap(),
+        ),
+        (
+            "grayf32",
+            PixelView::new(
+                bytemuck::cast_slice(&gf32),
+                w as u32,
+                h as u32,
+                w * 4,
+                &grayf32_fmt,
+            )
+            .unwrap(),
+        ),
+        (
+            "grayaf32",
+            PixelView::new(
+                bytemuck::cast_slice(&gaf32),
+                w as u32,
+                h as u32,
+                w * 8,
+                &graya_fmt,
+            )
+            .unwrap(),
+        ),
+    ];
+
+    for (label, view) in cases {
+        let count = TripStop {
+            checks: AtomicUsize::new(0),
+            trip_at: usize::MAX,
+        };
+        funnel_stoppable(&view, &count).unwrap();
+        let total = count.checks.load(Ordering::Relaxed);
+        // 1 entry + 4 row checks (y=0,64,128,192) + 1 exit = 6
+        assert!(
+            total >= 5,
+            "{label}: expected row-level unpack checks, saw {total}"
+        );
+        let trip = TripStop {
+            checks: AtomicUsize::new(0),
+            trip_at: 3,
+        };
+        let err = funnel_stoppable(&view, &trip)
+            .err()
+            .expect("expected mid-unpack cancellation");
+        assert!(
+            matches!(
+                err,
+                Ssimulacra2Error::Cancelled(enough::StopReason::TimedOut)
+            ),
+            "{label}: unexpected err {err:?}"
+        );
+    }
+
+    // Cold strip mode must also cancel during source unpack before strip execution.
+    let v1 = PixelView::new(&g8, w as u32, h as u32, w, &gray8_fmt).unwrap();
+    let trip = TripStop {
+        checks: AtomicUsize::new(0),
+        trip_at: 2,
+    };
+    let cfg = crate::Ssimulacra2Config::default()
+        .with_strip(crate::StripConfig::new(64))
+        .with_stop(&trip);
+    let err = crate::compute_ssimulacra2_with_config(&v1, &v1, &cfg).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Ssimulacra2Error::Cancelled(enough::StopReason::TimedOut)
+        ),
+        "cold strip unpack must respect stop, got {err:?}"
+    );
+}

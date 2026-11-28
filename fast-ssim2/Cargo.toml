@@ -37,7 +37,8 @@ rayon = { version = "1.12.0", optional = true }
 thiserror = "2.0.20"
 linear-srgb = { version = "0.6.7", default-features = false, features = ["transfer"] }
 bytemuck = { version = "1.25.2", default-features = false }
-zenpixels = { version = ">=0.5.0, <0.6.0", default-features = false }
+zenpixels = { version = ">=0.5.0, <0.6.0", git = "https://github.com/imazen/zenpixels", rev = "83217972759fab02ff530fe50203a0c7fc3282f8", default-features = false }
+zenpsy-api = { git = "https://github.com/imazen/zenpixels", rev = "83217972759fab02ff530fe50203a0c7fc3282f8", default-features = false, optional = true }
 
 [dev-dependencies]
 almost-enough = "0.4.4"
@@ -50,7 +51,7 @@ sha2 = "0.11.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 zenbench = { version = "0.1.2", features = ["criterion-compat"] }
-zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "80dac328d0b9279413d037c0291477c8df6ae53b" }
+zenjpeg = { git = "https://github.com/imazen/zenjpeg", rev = "213c04a440a89aaed0a71c5355d591acebbd2be3" }
 enough = "0.4.4"
 iai-callgrind = "0.16.1"
 # `testable_dispatch` lets benches/tier_isolation.rs disable the baseline SIMD
@@ -68,6 +69,7 @@ unstable-internals = []
 imgref = ["zenpixels/imgref"]  # ImgRef/ImgVec → PixelView conversions (rgb-crate pixel types)
 rayon = ["dep:rayon"]
 hdr-pu = []  # Deprecated PU21 scoring; native HDR uses the standard APIs.
+zenpsy-api = ["dep:zenpsy-api"]
 
 [[example]]
 name = "mem_strip"

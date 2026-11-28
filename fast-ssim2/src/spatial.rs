@@ -59,18 +59,29 @@ impl Ssimulacra2Maps {
     /// image. Computed from the stored `f32` terms.
     #[must_use]
     pub fn diffmap(&self) -> Vec<f32> {
+        self.diffmap_stoppable(&enough::Unstoppable)
+            .expect("Unstoppable never cancels")
+    }
+
+    pub(crate) fn diffmap_stoppable(
+        &self,
+        stop: &dyn enough::Stop,
+    ) -> Result<Vec<f32>, enough::StopReason> {
+        stop.check()?;
         let Some(s0) = self.scales.first() else {
-            return vec![0.0; self.width * self.height];
+            return Ok(vec![0.0; self.width * self.height]);
         };
         let (pw, ph) = (s0.width, s0.height);
         let npix = (pw * ph) as f64;
         let nscales = self.scales.len();
         let mut acc = vec![0f64; pw * ph];
         for (s, scale) in self.scales.iter().enumerate() {
+            stop.check()?;
             let n = scale.width * scale.height;
             let inv_n = 1.0 / n as f64;
             let mut share = vec![0f64; n];
             for c in 0..3 {
+                stop.check()?;
                 for (m, plane) in [&scale.ssim[c], &scale.artifact[c], &scale.detail_lost[c]]
                     .into_iter()
                     .enumerate()
@@ -86,21 +97,35 @@ impl Ssimulacra2Maps {
                         let v = f64::from(v);
                         (v * v) * (v * v)
                     };
-                    let l4 = (plane.iter().map(|&v| fourth(v)).sum::<f64>() * inv_n)
-                        .sqrt()
-                        .sqrt();
+                    const POLL_CHUNK: usize = 4096;
+                    let mut sum4 = 0.0_f64;
+                    for chunk in plane.chunks(POLL_CHUNK) {
+                        stop.check()?;
+                        for &v in chunk {
+                            sum4 += fourth(v);
+                        }
+                    }
+                    let l4 = (sum4 * inv_n).sqrt().sqrt();
                     let w4_unit = if l4 > 0.0 {
                         w4 * inv_n / (l4 * l4 * l4)
                     } else {
                         0.0
                     };
-                    for (o, &v) in share.iter_mut().zip(plane) {
-                        *o += w1 * inv_n * f64::from(v) + w4_unit * fourth(v);
+                    for (out_chunk, in_chunk) in
+                        share.chunks_mut(POLL_CHUNK).zip(plane.chunks(POLL_CHUNK))
+                    {
+                        stop.check()?;
+                        for (o, &v) in out_chunk.iter_mut().zip(in_chunk) {
+                            *o += w1 * inv_n * f64::from(v) + w4_unit * fourth(v);
+                        }
                     }
                 }
             }
             let side = 1usize << s;
             for y in 0..ph {
+                if y & 63 == 0 {
+                    stop.check()?;
+                }
                 let cy = y >> s;
                 let rows = side.min(ph - cy * side);
                 for x in 0..pw {
@@ -112,9 +137,13 @@ impl Ssimulacra2Maps {
         }
         let mut out = Vec::with_capacity(self.width * self.height);
         for y in 0..self.height {
+            if y & 63 == 0 {
+                stop.check()?;
+            }
             out.extend(acc[y * pw..y * pw + self.width].iter().map(|&v| v as f32));
         }
-        out
+        stop.check()?;
+        Ok(out)
     }
 }
 
@@ -267,5 +296,69 @@ mod tests {
             (maps.score - from_maps).abs()
         );
         assert!((maps.score - from_maps).abs() < 1e-5);
+    }
+
+    #[test]
+    fn diffmap_stoppable_polls_inside_pooling_loops_and_preserves_bits() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingStop {
+            checks: AtomicUsize,
+            trip_at: usize,
+        }
+        impl enough::Stop for CountingStop {
+            fn check(&self) -> Result<(), enough::StopReason> {
+                let n = self.checks.fetch_add(1, Ordering::Relaxed);
+                if n == self.trip_at {
+                    Err(enough::StopReason::TimedOut)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let (w, h) = (128usize, 128usize);
+        let a: Vec<u8> = (0..w * h * 3)
+            .map(|i| ((i * 29 + 11) % 256) as u8)
+            .collect();
+        let b: Vec<u8> = a
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| v.wrapping_add(((i * 7) % 19) as u8))
+            .collect();
+        let rgb8 = zenpixels::PixelFormat::RGB8_SRGB;
+        let va = zenpixels::PixelView::new(&a, w as u32, h as u32, w * 3, &rgb8).unwrap();
+        let vb = zenpixels::PixelView::new(&b, w as u32, h as u32, w * 3, &rgb8).unwrap();
+        let maps = crate::compute_ssimulacra2_maps(&va, &vb).unwrap();
+
+        let baseline = maps.diffmap();
+        let counter = CountingStop {
+            checks: AtomicUsize::new(0),
+            trip_at: usize::MAX,
+        };
+        let polled = maps.diffmap_stoppable(&counter).unwrap();
+        assert_eq!(
+            baseline.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            polled.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            "chunked stoppable diffmap must preserve exact f32 bits"
+        );
+        let total = counter.checks.load(Ordering::Relaxed);
+        // Scale 0 has 16384 pixels = 4 chunks per pass * 2 passes * up to 9 weighted terms.
+        assert!(
+            total > 50,
+            "expected inner pooling-loop stop checks in diffmap_stoppable, saw {total}"
+        );
+        // Directly trip inside scale-0 L4 sum (check ~4), share accumulation (check ~8),
+        // mid-fusion, and final upsample/crop.
+        for trip in [4, 8, total / 3, total / 2, total - 2] {
+            let stopper = CountingStop {
+                checks: AtomicUsize::new(0),
+                trip_at: trip,
+            };
+            let err = maps
+                .diffmap_stoppable(&stopper)
+                .expect_err("expected diffmap_stoppable cancellation");
+            assert_eq!(err, enough::StopReason::TimedOut, "trip={trip}/{total}");
+        }
     }
 }
